@@ -44,9 +44,15 @@ func (s styler) c(code string, bold bool, text string) string {
 type Styler struct{ s styler }
 
 // NewStyler returns a palette; color is off when false (NO_COLOR / non-TTY).
-func NewStyler(color bool) Styler    { return Styler{styler{on: color}} }
-func (x Styler) Dim(t string) string { return x.s.dim(t) }
-func (x Styler) AI(t string) string  { return x.s.c("212", true, t) } // magenta — distinctly "not the deterministic report"
+func NewStyler(color bool) Styler     { return Styler{styler{on: color}} }
+func (x Styler) Dim(t string) string  { return x.s.dim(t) }
+func (x Styler) Head(t string) string { return x.s.head(t) }
+func (x Styler) Good(t string) string { return x.s.good(t) }
+func (x Styler) Warn(t string) string { return x.s.warn(t) }
+func (x Styler) AI(t string) string   { return x.s.c("212", true, t) } // magenta — distinctly "not the deterministic report"
+
+// HumanBytes formats a byte count as KiB/MiB/GiB for sibling packages.
+func HumanBytes(b int64) string { return humanBytes(b) }
 
 func (s styler) dim(text string) string  { return s.c("240", false, text) }
 func (s styler) head(text string) string { return s.c("39", true, text) }
@@ -66,13 +72,13 @@ func Terminal(w io.Writer, c *model.Context, opts Options) error {
 	}
 	var b strings.Builder
 
-	// Header: <host>/<db> · PG <ver> · window <age>.
+	// Header: connected · <host|db> · postgres <ver> · read-only · <window> window.
 	target := c.Server.Database
 	if opts.Host != "" {
-		target = opts.Host + "/" + c.Server.Database
+		target = opts.Host
 	}
-	fmt.Fprintf(&b, "%s · %s · window %s\n\n",
-		st.head(target), pgShort(c.Server.VersionNum), windowLabel(c))
+	fmt.Fprintf(&b, "%s · %s · %s · %s · %s window\n\n",
+		st.good("connected"), st.head(target), pgLower(c.Server.VersionNum), st.dim("read-only"), windowLabel(c))
 
 	if !c.Server.HasPgMonitor {
 		fmt.Fprintln(&b, st.warn("! role lacks pg_monitor — some stats are partial. Fix: GRANT pg_monitor TO <role>;"))
@@ -116,10 +122,8 @@ func Terminal(w io.Writer, c *model.Context, opts Options) error {
 			fmt.Fprintln(&b, st.dim("baseline: "+opts.BaselinePath))
 		}
 	} else {
-		// Sentences-first summary: what needs attention, then what passed.
-		renderSummary(&b, st, c, width)
-		fmt.Fprintln(&b)
-		fmt.Fprintln(&b, st.dim("Details: pgbot inspect --full   Machine-readable: --json"))
+		// Vital-signs dashboard: headline gauges as bar meters, then what passed.
+		renderDashboard(&b, st, c, width)
 	}
 
 	_, err := io.WriteString(w, b.String())
@@ -193,97 +197,6 @@ func renderFindings(b *strings.Builder, st styler, fs []model.Finding, width int
 		}
 	}
 	fmt.Fprintln(b)
-}
-
-// renderSummary is the default view: the findings that need attention as short
-// sentences, informational notes, then the named checks that passed. It never
-// prints a section table — that's --full.
-func renderSummary(b *strings.Builder, st styler, c *model.Context, width int) {
-	var attention, notes []model.Finding
-	for _, f := range c.Findings {
-		switch f.Severity {
-		case model.SeverityCritical, model.SeverityWarn:
-			attention = append(attention, f)
-		default:
-			notes = append(notes, f)
-		}
-	}
-
-	if len(attention) == 0 {
-		fmt.Fprintln(b, st.good("✓ nothing needs attention"))
-	} else {
-		fmt.Fprintln(b, st.head(fmt.Sprintf("%d thing(s) need attention", len(attention))))
-	}
-	fmt.Fprintln(b)
-
-	for _, f := range attention {
-		icon, color := "⚠", st.warn
-		if f.Severity == model.SeverityCritical {
-			icon, color = "⛔", st.crit
-		}
-		title := f.Title
-		if f.Confidence > 0 && f.Confidence < 0.5 {
-			title += st.dim(" (possible)")
-		}
-		fmt.Fprintf(b, "  %s %s\n", color(icon), color(title))
-		if sub := impactLine(f); sub != "" {
-			fmt.Fprintf(b, "    %s\n", st.dim(sub))
-		}
-		// Caveats stay inline (never a footnote) even in the summary — they are the
-		// clauses that stop a confident recommendation from causing an outage.
-		for _, cav := range f.Caveats {
-			for i, line := range wrapText(cav, width-9) {
-				prefix := "⚠ but "
-				if i > 0 {
-					prefix = "      "
-				}
-				fmt.Fprintf(b, "    %s\n", st.warn(prefix)+st.dim(line))
-			}
-		}
-		fmt.Fprintln(b)
-	}
-
-	if len(notes) > 0 {
-		var titles []string
-		for _, n := range notes {
-			titles = append(titles, n.Title)
-		}
-		for i, line := range wrapText("Notes: "+strings.Join(titles, " · "), width-2) {
-			indent := ""
-			if i > 0 {
-				indent = "  "
-			}
-			fmt.Fprintf(b, "%s%s\n", indent, st.dim(line))
-		}
-		fmt.Fprintln(b)
-	}
-
-	// The ✓ line: name what pgbot checked and found healthy. A tool that only ever
-	// reports problems reads like an alarm; one that names the checks that passed
-	// reads like a colleague who looked.
-	if passed := passedChecks(c); len(passed) > 0 {
-		lines := wrapText(strings.Join(passed, " · "), width-4)
-		for i, line := range lines {
-			prefix := st.good("✓ ")
-			if i > 0 {
-				prefix = "  "
-			}
-			fmt.Fprintf(b, "%s%s\n", prefix, st.good(line))
-		}
-	}
-}
-
-// impactLine is the one-line context under an attention finding: the magnitude
-// and how it was derived, kept compact.
-func impactLine(f model.Finding) string {
-	parts := []string{}
-	if f.Impact.Estimate != "" {
-		parts = append(parts, f.Impact.Estimate)
-	}
-	if f.Impact.Basis != "" {
-		parts = append(parts, f.Impact.Basis)
-	}
-	return strings.Join(parts, " · ")
 }
 
 // check names one thing pgbot examines, its finding id (empty for scrape-only

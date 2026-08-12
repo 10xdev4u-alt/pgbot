@@ -109,8 +109,11 @@ type apiError struct {
 // caller degrades to the deterministic report alone.
 func (c *Client) Generate(ctx context.Context, system, user string) (string, error) {
 	reqBody := genRequest{
-		Contents:         []content{{Role: "user", Parts: []part{{Text: user}}}},
-		GenerationConfig: generationConfig{Temperature: 0.2, MaxOutputTokens: 2048},
+		Contents: []content{{Role: "user", Parts: []part{{Text: user}}}},
+		// Headroom for the answer AND for the internal "thinking" that current
+		// Gemini models spend before the visible text — a tight cap truncates the
+		// explanation mid-sentence.
+		GenerationConfig: generationConfig{Temperature: 0.2, MaxOutputTokens: 8192},
 	}
 	if system != "" {
 		reqBody.SystemInstruction = &content{Parts: []part{{Text: system}}}

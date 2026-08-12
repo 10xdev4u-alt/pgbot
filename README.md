@@ -11,28 +11,26 @@ pgbot inspect "postgres://pgbot_ro@host:5432/db"
 ```
 
 ```
-db.example.com/app · PG 17.10 · window 4h12m
+connected · db.example.com · postgres 17.4 · read-only · 6h20m window
 
-2 thing(s) need attention
+  cache hit  [████████████████████]  99.2%   ok
+  lock wait  [████████████████░░░░]  61.0%   query 4f2a
+  rollbacks  [███░░░░░░░░░░░░░░░░░]  12.0%   watch
+  idle idx   [███████░░░░░░░░░░░░░]  43 GiB  review
 
-  ⚠ 3 unused index(es) · 4.2 GiB
-    ≈4.2 GiB reclaimable · 3 zero-scan index(es), size×write-rate weighted
-    ⚠ but replication is active — these scan counts are from THIS node only
-
-  ⚠ orders UPDATE spending 44% of its time waiting on locks
-    44% of query 4f2a on locks · ASH: 22/50 samples on Lock:*
-
-✓ invalid indexes · table bloat · sequential scans · cache hit · WAL
-  · checkpoints · connections · replication · settings
+checked · invalid indexes · table bloat · sequential scans · vacuum
+          · replication · WAL · checkpoints · connections · settings
 
 Details: pgbot inspect --full   Machine-readable: --json
+Ask it: pgbot ask "why is it slow?"
 ```
 
-The default report leads with **sentences, not charts** — what needs attention,
-each with its impact and the caveats that matter, then the checks that came back
-clean (a tool that names what it verified reads like a colleague who looked, not
-an alarm). `--full` adds the section tables; `--json` is the complete, versioned
-contract for agents and scripts.
+The default report is a **vital-signs dashboard** — a few headline gauges as bar
+meters, then the checks that came back clean (a tool that names what it verified
+reads like a colleague who looked, not an alarm). `pgbot inspect --full` adds the
+section tables and per-finding caveats; `pgbot indexes` drills into zero-scan
+indexes; `pgbot ask "…"` and `pgbot explain` put an AI explanation on top of the
+same findings. `--json` is the complete, versioned contract for agents and scripts.
 
 Why it's not just another stats reader: **pgbot remembers.** Every run writes a
 local baseline, so from the third run on it can tell you *what changed and why
@@ -85,7 +83,9 @@ pgbot baselines list                # what's stored locally, per database
 pgbot baselines prune <fingerprint> # delete a database's snapshots
 pgbot baselines export <fingerprint># dump stored snapshots as JSON
 
+pgbot indexes <connection-string>   # zero-scan indexes + what NOT to drop
 pgbot explain <connection-string>   # inspect, then have an AI explain the findings
+pgbot ask "why is it slow?"         # AI answer grounded on the findings ($DATABASE_URL)
   --yes                  skip the "this sends data to Google" confirmation
 ```
 

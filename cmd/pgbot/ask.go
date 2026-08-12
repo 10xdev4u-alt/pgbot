@@ -1,0 +1,79 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/pgrundev/pgbot/internal/ai"
+	"github.com/spf13/cobra"
+)
+
+// newAskCmd — `pgbot ask "why is it slow?"`. Collects the same read-only report,
+// then answers the question grounded ONLY on those deterministic findings. Like
+// `explain` but question-driven and AI-first (no report printed above).
+func newAskCmd() *cobra.Command {
+	var f inspectFlags
+	var yes bool
+	var url string
+	cmd := &cobra.Command{
+		Use:   `ask "<question>"`,
+		Short: "Ask an AI about your database, grounded on pgbot's findings",
+		Long: "Runs the same read-only inspection, then answers your question using ONLY the\n" +
+			"deterministic findings (the model can't reach into the database). Connection\n" +
+			"comes from --url or $DATABASE_URL. Sends the PII-free findings to Gemini —\n" +
+			"$GEMINI_API_KEY must be set.",
+		Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runAsk(cmd, strings.Join(args, " "), url, f, yes)
+		},
+	}
+	fl := cmd.Flags()
+	fl.StringVar(&url, "url", "", "connection string (else $DATABASE_URL)")
+	fl.DurationVar(&f.window, "window", 5*time.Second, "active-session sampling window")
+	fl.IntVar(&f.ashHz, "ash-hz", 10, "active-session sampling rate in Hz (0 disables)")
+	fl.BoolVar(&f.noStore, "no-store", false, "do not read or write the local baseline store")
+	fl.BoolVar(&f.strictPooler, "strict-pooler", false, "refuse (exit 3) behind a transaction pooler")
+	fl.BoolVar(&yes, "yes", false, "skip the 'this sends data to Google' confirmation prompt")
+	return cmd
+}
+
+func runAsk(cmd *cobra.Command, question, url string, f inspectFlags, yes bool) error {
+	client, err := ai.NewFromEnv()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "pgbot ask: this sends the PII-free findings to Google Gemini (model %s).\n", client.Model)
+	if !yes && isInteractive() && !confirm() {
+		return fmt.Errorf("aborted")
+	}
+
+	connString := firstNonEmpty(url, os.Getenv("DATABASE_URL"), os.Getenv("PGBOT_DATABASE_URL"))
+	if connString == "" {
+		return fmt.Errorf("no connection string (pass --url or set $DATABASE_URL)")
+	}
+	f.interval = time.Second
+
+	ctx, cancel := context.WithTimeout(cmd.Context(), 45*time.Second)
+	defer cancel()
+
+	c, _, err := gather(ctx, connString, f)
+	if err != nil {
+		return err
+	}
+
+	answer, aiErr := ai.Ask(ctx, client, c, question)
+	printAISection(useColor(false), client.Model, answer, aiErr)
+	return nil
+}
+
+// confirm reads a y/N from stdin.
+func confirm() bool {
+	fmt.Fprint(os.Stderr, "Continue? [y/N] ")
+	var resp string
+	fmt.Fscanln(os.Stdin, &resp)
+	r := strings.ToLower(strings.TrimSpace(resp))
+	return r == "y" || r == "yes"
+}

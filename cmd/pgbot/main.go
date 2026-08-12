@@ -26,6 +26,8 @@ func main() {
 	root.AddCommand(newInspectCmd())
 	root.AddCommand(newBaselinesCmd())
 	root.AddCommand(newExplainCmd())
+	root.AddCommand(newAskCmd())
+	root.AddCommand(newIndexesCmd())
 
 	if err := root.Execute(); err != nil {
 		// Exit-code contract: connection/exec failure is 3. Command handlers that

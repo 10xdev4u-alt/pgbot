@@ -55,9 +55,9 @@ type eventSummary struct {
 	Confidence float64 `json:"confidence"`
 }
 
-// BuildExplainPrompt returns the (system, user) prompt for a Context. The user
-// prompt is the curated JSON payload; nothing PII-bearing is included.
-func BuildExplainPrompt(c *model.Context) (system, user string) {
+// payloadJSON is the curated, PII-free report we send. The full Context is
+// already PII-free; this is a focused view so the model reasons about signals.
+func payloadJSON(c *model.Context) string {
 	p := explainPayload{
 		Database:   c.Server.Database,
 		Version:    c.Server.VersionText,
@@ -78,9 +78,23 @@ func BuildExplainPrompt(c *model.Context) (system, user string) {
 	for _, e := range c.Events {
 		p.Events = append(p.Events, eventSummary{Kind: e.Kind, Object: e.Object, Confidence: e.Confidence})
 	}
-
 	blob, _ := json.MarshalIndent(p, "", "  ")
-	user = "Here is the pgbot report as JSON. Explain it per your rules.\n\n" + string(blob)
+	return string(blob)
+}
+
+// BuildExplainPrompt returns the (system, user) prompt for a Context. The user
+// prompt is the curated JSON payload; nothing PII-bearing is included.
+func BuildExplainPrompt(c *model.Context) (system, user string) {
+	return systemPrompt, "Here is the pgbot report as JSON. Explain it per your rules.\n\n" + payloadJSON(c)
+}
+
+// BuildAskPrompt grounds a user's question in the same report. The model must
+// answer ONLY from the report and its rules — it can't reach into the database.
+func BuildAskPrompt(c *model.Context, question string) (system, user string) {
+	user = "A user asked: \"" + question + "\"\n\n" +
+		"Answer it using ONLY the pgbot report below and your rules. If the report doesn't\n" +
+		"contain the answer, say what pgbot would need to collect to find out — do not guess.\n\n" +
+		payloadJSON(c)
 	return systemPrompt, user
 }
 
@@ -92,6 +106,15 @@ func Explain(ctx context.Context, c *Client, mc *model.Context) (string, error) 
 		return "", fmt.Errorf("no Gemini client")
 	}
 	system, user := BuildExplainPrompt(mc)
+	return c.Generate(ctx, system, user)
+}
+
+// Ask answers a specific question grounded on the report.
+func Ask(ctx context.Context, c *Client, mc *model.Context, question string) (string, error) {
+	if c == nil {
+		return "", fmt.Errorf("no Gemini client")
+	}
+	system, user := BuildAskPrompt(mc, question)
 	return c.Generate(ctx, system, user)
 }
 

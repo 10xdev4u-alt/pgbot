@@ -21,12 +21,13 @@ func sampleContext() *model.Context {
 		Health:        &model.Health{Section: model.Section{Exactness: model.ExactnessSampled}, Connections: 24, TPS: &tps, CacheHitRatio: &hit},
 		Activity:      &model.Activity{Section: model.Section{Exactness: model.ExactnessScraped}, Total: 24, Active: 6},
 		Findings: []model.Finding{
-			{ID: "unused_indexes", Severity: model.SeverityWarn, Title: "1 unused index"},
+			{ID: "unused_indexes", Severity: model.SeverityWarn, Title: "1 unused index",
+				Impact: model.Impact{Score: 60, Dimension: model.DimStorage, Estimate: "≈4.2 GiB reclaimable"}},
 		},
 	}
 }
 
-func TestTerminal_noColorHasNoANSI(t *testing.T) {
+func TestTerminal_dashboardIsDefault(t *testing.T) {
 	var buf bytes.Buffer
 	if err := Terminal(&buf, sampleContext(), Options{Color: false}); err != nil {
 		t.Fatal(err)
@@ -35,53 +36,19 @@ func TestTerminal_noColorHasNoANSI(t *testing.T) {
 		t.Error("no-color output must contain no ANSI escapes")
 	}
 	out := buf.String()
-	// Default is the concise summary: the header, the attention finding, the
-	// pointer to --full. Section tables are NOT here.
-	for _, want := range []string{"app", "PG 17", "1 unused index", "need attention", "--full"} {
+	// Dashboard header + a vital meter (cache hit) + the finding meter (idle idx)
+	// + its bar + the "checked" line + the --full pointer. No section tables.
+	for _, want := range []string{"connected", "postgres 17", "cache hit", "[", "idle idx", "review", "checked", "--full"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("summary output missing %q", want)
+			t.Errorf("dashboard output missing %q", want)
 		}
 	}
-	// Section headers (which only appear in --full) must be absent. ("cache hit"
-	// is intentionally not checked here — it doubles as a passed-check label.)
 	if strings.Contains(out, "HEALTH") || strings.Contains(out, "ACTIVITY") {
-		t.Error("default summary must not print section tables")
+		t.Error("default dashboard must not print section tables")
 	}
 }
 
-func TestTerminal_fullShowsSections(t *testing.T) {
-	var buf bytes.Buffer
-	if err := Terminal(&buf, sampleContext(), Options{Color: false, Full: true}); err != nil {
-		t.Fatal(err)
-	}
-	out := buf.String()
-	for _, want := range []string{"HEALTH", "cache hit", "1 unused index"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("--full output missing %q", want)
-		}
-	}
-}
-
-func TestTerminal_cleanReportNamesPassedChecks(t *testing.T) {
-	c := sampleContext()
-	c.Findings = nil
-	var buf bytes.Buffer
-	if err := Terminal(&buf, c, Options{Color: false}); err != nil {
-		t.Fatal(err)
-	}
-	out := buf.String()
-	if !strings.Contains(out, "nothing needs attention") {
-		t.Error("a clean report should say nothing needs attention")
-	}
-	// The ✓ line must NAME checks that were examined and passed.
-	for _, want := range []string{"cache hit", "connections"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("passed-checks line missing %q", want)
-		}
-	}
-}
-
-func TestTerminal_summaryKeepsCaveatsInline(t *testing.T) {
+func TestTerminal_fullShowsSectionsAndCaveats(t *testing.T) {
 	c := sampleContext()
 	c.Findings = []model.Finding{{
 		ID: "unused_indexes", Severity: model.SeverityWarn, Title: "3 unused indexes",
@@ -89,15 +56,33 @@ func TestTerminal_summaryKeepsCaveatsInline(t *testing.T) {
 		Impact: model.Impact{Score: 50, Dimension: model.DimStorage, Estimate: "≈43 GB"},
 	}}
 	var buf bytes.Buffer
+	if err := Terminal(&buf, c, Options{Color: false, Full: true}); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	// --full carries the detail the dashboard omits: sections, caveats inline,
+	// and the low-confidence "(possible)" marker.
+	for _, want := range []string{"HEALTH", "cache hit", "3 unused indexes", "replication is active", "(possible)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("--full output missing %q", want)
+		}
+	}
+}
+
+func TestTerminal_cleanDashboardNamesPassedChecks(t *testing.T) {
+	c := sampleContext()
+	c.Findings = nil
+	var buf bytes.Buffer
 	if err := Terminal(&buf, c, Options{Color: false}); err != nil {
 		t.Fatal(err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "replication is active") {
-		t.Error("caveats must render inline in the summary, not be dropped")
-	}
-	if !strings.Contains(out, "(possible)") {
-		t.Error("a <0.5 confidence finding should render as possible")
+	// Healthy: the cache-hit vital reads "ok", and the checked line names what
+	// was examined and passed.
+	for _, want := range []string{"cache hit", "ok", "checked", "connections"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("clean dashboard missing %q", want)
+		}
 	}
 }
 
