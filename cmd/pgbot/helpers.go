@@ -32,6 +32,15 @@ func useColor(noColorFlag bool) bool {
 	return term.IsTerminal(int(os.Stdout.Fd()))
 }
 
+// terminalWidth returns the stdout width, or 100 when not a TTY (piped output).
+// The renderer clamps to a minimum of 80.
+func terminalWidth() int {
+	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
+		return w
+	}
+	return 100
+}
+
 // hostPort pulls the host/port off the pool's config for the baseline
 // fingerprint fallback (used only when the system identifier isn't readable).
 func hostPort(t *conn.Target) (string, string) {

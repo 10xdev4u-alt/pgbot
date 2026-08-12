@@ -36,6 +36,31 @@ func humanNum(v float64) string {
 
 func pct(v float64) string { return fmt.Sprintf("%.1f%%", v*100) }
 
+// wrapText word-wraps prose to width columns (for width-adaptive output). An
+// empty string yields no lines, so callers emit nothing.
+func wrapText(text string, width int) []string {
+	if width < 20 {
+		width = 20
+	}
+	var lines []string
+	cur := ""
+	for _, w := range strings.Fields(text) {
+		switch {
+		case cur == "":
+			cur = w
+		case len(cur)+1+len(w) > width:
+			lines = append(lines, cur)
+			cur = w
+		default:
+			cur += " " + w
+		}
+	}
+	if cur != "" {
+		lines = append(lines, cur)
+	}
+	return lines
+}
+
 // f2 dereferences an optional float, or "—" when absent.
 func f2(p *float64, f func(float64) string) string {
 	if p == nil {

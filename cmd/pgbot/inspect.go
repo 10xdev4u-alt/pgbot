@@ -72,7 +72,13 @@ func runInspect(cmd *cobra.Command, args []string, f inspectFlags) error {
 	}
 	defer target.Close()
 
-	c, err := collect.Run(ctx, target, collect.Options{Interval: f.interval})
+	// --raw-query-text keeps literal SQL from pg_stat_activity (a PII vector).
+	// There is no LLM/remote destination in slice 1, so it only affects local
+	// output; warn loudly regardless.
+	if f.rawQueries {
+		fmt.Fprintln(os.Stderr, "pgbot: --raw-query-text is set — blocking-chain query text is NOT scrubbed and may contain literal values (PII).")
+	}
+	c, err := collect.Run(ctx, target, collect.Options{Interval: f.interval, RawQueryText: f.rawQueries})
 	if err != nil {
 		return fmt.Errorf("collect: %s", conn.RedactConnString(err.Error()))
 	}
@@ -97,7 +103,7 @@ func runInspect(cmd *cobra.Command, args []string, f inspectFlags) error {
 			return err
 		}
 	} else {
-		opts := render.Options{Color: useColor(f.noColor), Trends: trends, BaselinePath: baselinePath}
+		opts := render.Options{Color: useColor(f.noColor), Trends: trends, BaselinePath: baselinePath, Width: terminalWidth()}
 		if err := render.Terminal(os.Stdout, c, opts); err != nil {
 			return err
 		}

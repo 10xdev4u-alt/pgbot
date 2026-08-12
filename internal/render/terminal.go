@@ -19,6 +19,7 @@ type Options struct {
 	Color        bool
 	Trends       map[string][]float64
 	BaselinePath string
+	Width        int // terminal width; clamped to a minimum of 80
 }
 
 // styler applies lipgloss styles, or no-ops when color is disabled (NO_COLOR,
@@ -46,6 +47,10 @@ func (s styler) good(text string) string { return s.c("42", false, text) }
 // Terminal writes the human report: findings first (sentences), then sections.
 func Terminal(w io.Writer, c *model.Context, opts Options) error {
 	st := styler{on: opts.Color}
+	width := opts.Width
+	if width < 80 {
+		width = 80 // spec: width-adaptive down to 80 columns
+	}
 	var b strings.Builder
 
 	// Header line.
@@ -60,7 +65,7 @@ func Terminal(w io.Writer, c *model.Context, opts Options) error {
 		fmt.Fprintln(&b)
 	}
 
-	renderFindings(&b, st, c.Findings)
+	renderFindings(&b, st, c.Findings, width)
 	renderHealth(&b, st, c, opts)
 	renderActivity(&b, st, c)
 	renderLocks(&b, st, c)
@@ -80,7 +85,7 @@ func Terminal(w io.Writer, c *model.Context, opts Options) error {
 	return err
 }
 
-func renderFindings(b *strings.Builder, st styler, fs []model.Finding) {
+func renderFindings(b *strings.Builder, st styler, fs []model.Finding, width int) {
 	if len(fs) == 0 {
 		fmt.Fprintln(b, st.good("✓ no findings — nothing stood out"))
 		fmt.Fprintln(b)
@@ -112,14 +117,20 @@ func renderFindings(b *strings.Builder, st styler, fs []model.Finding) {
 			icon, color = "⚠", st.warn
 		}
 		fmt.Fprintf(b, "  %s %s\n", color(icon), color(f.Title))
-		if f.Detail != "" {
-			fmt.Fprintf(b, "     %s\n", st.dim(f.Detail))
+		for _, line := range wrapText(f.Detail, width-5) {
+			fmt.Fprintf(b, "     %s\n", st.dim(line))
 		}
 		if len(f.Evidence) > 0 {
-			fmt.Fprintf(b, "     %s\n", st.dim(strings.Join(f.Evidence, ", ")))
+			for _, line := range wrapText(strings.Join(f.Evidence, ", "), width-5) {
+				fmt.Fprintf(b, "     %s\n", st.dim(line))
+			}
 		}
-		if f.Impact != "" {
-			fmt.Fprintf(b, "     %s\n", st.dim("→ "+f.Impact))
+		for i, line := range wrapText(f.Impact, width-7) {
+			prefix := "→ "
+			if i > 0 {
+				prefix = "  "
+			}
+			fmt.Fprintf(b, "     %s\n", st.dim(prefix+line))
 		}
 	}
 	fmt.Fprintln(b)
