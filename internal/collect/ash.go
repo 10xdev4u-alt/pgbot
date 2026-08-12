@@ -2,6 +2,7 @@ package collect
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"time"
 
@@ -88,6 +89,18 @@ func sampleWaits(ctx context.Context, t *conn.Target, caps conn.Capabilities, hz
 			poll()
 		}
 	}
+}
+
+// profileFrom turns a sampling result into a profile, distinguishing a BROKEN
+// sampler (every poll errored → unavailable) from an IDLE database (polls
+// succeeded, nothing active → a real 0-sample profile). Either way the run
+// completes — the sampler never fails it.
+func profileFrom(ash ashResult, texts map[int64]string) *model.WaitProfile {
+	if ash.attempts > 0 && ash.failures == ash.attempts {
+		return &model.WaitProfile{Available: false,
+			Reason: fmt.Sprintf("wait sampler failed: all %d polls errored", ash.attempts)}
+	}
+	return buildWaitProfile(ash.samples, ash.span, texts)
 }
 
 // buildWaitProfile rolls raw samples into shares by wait_event_type (with a

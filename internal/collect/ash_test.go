@@ -90,6 +90,24 @@ func TestBuildWaitProfile_empty(t *testing.T) {
 	}
 }
 
+// T12 #7: a sampler whose every poll errored yields an UNAVAILABLE profile
+// (not a misleading empty one), while the run itself completes normally.
+func TestProfileFrom_failureVsIdle(t *testing.T) {
+	// Broken sampler: all polls failed.
+	broken := profileFrom(ashResult{attempts: 50, failures: 50}, nil)
+	if broken.Available {
+		t.Error("all-failed sampler must be marked unavailable")
+	}
+	if broken.Reason == "" {
+		t.Error("unavailable profile should explain why")
+	}
+	// Idle DB: polls succeeded, just nothing active.
+	idle := profileFrom(ashResult{attempts: 50, failures: 0}, nil)
+	if !idle.Available || idle.Samples != 0 {
+		t.Errorf("idle DB should be an available 0-sample profile, got %+v", idle)
+	}
+}
+
 func TestAshSQL_versionGate(t *testing.T) {
 	pg13 := ashSQL(conn.Capabilities{VersionNum: 130000})
 	if !strings.Contains(pg13, "NULL::bigint") {

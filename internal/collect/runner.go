@@ -2,7 +2,6 @@ package collect
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -121,15 +120,7 @@ func Run(ctx context.Context, t *conn.Target, opts Options) (*model.Context, err
 	// attribution comes from the queries collector's already-scrubbed normals.
 	if ashOn {
 		<-ashDone
-		// Every poll errored (permissions, statement timeout, connection loss): the
-		// sampler is broken, not the database idle. Mark it unavailable so the
-		// render/findings never mistake a failure for a quiet server.
-		if ash.attempts > 0 && ash.failures == ash.attempts {
-			out.WaitProfile = &model.WaitProfile{Available: false,
-				Reason: fmt.Sprintf("wait sampler failed: all %d polls errored", ash.attempts)}
-		} else {
-			out.WaitProfile = buildWaitProfile(ash.samples, ash.span, queryTexts(out))
-		}
+		out.WaitProfile = profileFrom(ash, queryTexts(out))
 	} else {
 		out.WaitProfile = &model.WaitProfile{Available: false, Reason: "sampler disabled (--ash-hz 0)"}
 	}

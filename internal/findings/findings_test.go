@@ -80,6 +80,7 @@ func TestColdWindow_suppressesCounterFindings_keepsGauges(t *testing.T) {
 		// Gauges — must still fire on a cold window:
 		Locks:   &model.Locks{BlockedCount: 1, Chains: []model.BlockingRow{{BlockedPID: 7, WaitSeconds: 12}}},
 		Queries: &model.Queries{Enabled: true},
+		Schema:  &model.SchemaFingerprint{Objects: []model.SchemaObject{{Kind: "index", Identity: "public.t.bad", Invalid: true}}},
 	}
 	fs := Compute(c)
 	for _, suppressed := range []string{"unused_indexes", "low_cache_hit", "seq_scan_heavy"} {
@@ -89,6 +90,28 @@ func TestColdWindow_suppressesCounterFindings_keepsGauges(t *testing.T) {
 	}
 	if has(fs, "blocking_chains") == nil {
 		t.Error("blocking chains is a gauge and must still fire on a cold window")
+	}
+	if has(fs, "index_invalid") == nil {
+		t.Error("index_invalid is a gauge and must still fire on a cold window")
+	}
+}
+
+// T12 #5: a failed CREATE INDEX CONCURRENTLY (indisvalid=false) fires
+// index_invalid as a critical gauge.
+func TestIndexInvalid_firesCritical(t *testing.T) {
+	c := &model.Context{Schema: &model.SchemaFingerprint{Objects: []model.SchemaObject{
+		{Kind: "index", Identity: "public.orders.orders_uidx", Invalid: true},
+		{Kind: "index", Identity: "public.orders.orders_pkey", Invalid: false}, // valid, must be ignored
+	}}}
+	f := has(Compute(c), "index_invalid")
+	if f == nil {
+		t.Fatal("an invalid index must fire index_invalid")
+	}
+	if f.Severity != model.SeverityCritical {
+		t.Errorf("index_invalid should be critical, got %s", f.Severity)
+	}
+	if f.Impact.Dimension != model.DimRisk {
+		t.Errorf("index_invalid should be a risk, got %s", f.Impact.Dimension)
 	}
 }
 
