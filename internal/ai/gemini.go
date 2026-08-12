@@ -20,7 +20,10 @@ import (
 )
 
 const (
-	defaultModel   = "gemini-2.5-flash"
+	// A moving alias, on purpose: pinned versions get retired (e.g. gemini-2.5-flash
+	// now 404s for new projects), and an explanation feature doesn't need a frozen
+	// model. Override with $PGBOT_GEMINI_MODEL to pin one.
+	defaultModel   = "gemini-flash-latest"
 	defaultBaseURL = "https://generativelanguage.googleapis.com/v1beta"
 )
 
@@ -33,12 +36,17 @@ type Client struct {
 }
 
 // NewFromEnv builds a client from the environment. The key comes ONLY from
-// GEMINI_API_KEY — never a flag, so it can't leak into shell history or the
-// process list. PGBOT_GEMINI_MODEL and PGBOT_GEMINI_URL override the defaults.
+// GEMINI_API_KEY (or GOOGLE_API_KEY, the SDK's other convention) — never a flag,
+// so it can't leak into shell history or the process list. PGBOT_GEMINI_MODEL and
+// PGBOT_GEMINI_URL override the defaults. Both AI-Studio "auth" keys (AQ.…) and
+// legacy standard keys (AIza…) work — they travel in the same header.
 func NewFromEnv() (*Client, error) {
 	key := strings.TrimSpace(os.Getenv("GEMINI_API_KEY"))
 	if key == "" {
-		return nil, fmt.Errorf("GEMINI_API_KEY is not set — export it to use `pgbot explain` (the key is never read from a flag)")
+		key = strings.TrimSpace(os.Getenv("GOOGLE_API_KEY"))
+	}
+	if key == "" {
+		return nil, fmt.Errorf("GEMINI_API_KEY (or GOOGLE_API_KEY) is not set — export it to use `pgbot explain` (the key is never read from a flag)")
 	}
 	model := envOr("PGBOT_GEMINI_MODEL", defaultModel)
 	base := envOr("PGBOT_GEMINI_URL", defaultBaseURL)
