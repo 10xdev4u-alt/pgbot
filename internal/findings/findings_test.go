@@ -66,6 +66,46 @@ func TestCompute_missingPgssIsInfo(t *testing.T) {
 	}
 }
 
+func TestColdWindow_suppressesCounterFindings_keepsGauges(t *testing.T) {
+	cold := int64(120) // 2 min — below the 900s threshold
+	c := &model.Context{
+		Window: model.Window{WindowAgeSeconds: &cold},
+		Health: &model.Health{CacheHitRatio: ptr(0.50)}, // would fire low_cache_hit on a warm window
+		Indexes: &model.Indexes{Unused: []model.IndexStat{
+			{Schema: "public", Table: "orders", Name: "big_idx", Bytes: 50 << 20},
+		}},
+		Tables: &model.Tables{Top: []model.TableStat{
+			{Schema: "public", Name: "orders", LiveTuples: 1_000_000, SeqScans: 9000, IndexScans: 10},
+		}},
+		// Gauges — must still fire on a cold window:
+		Locks:   &model.Locks{BlockedCount: 1, Chains: []model.BlockingRow{{BlockedPID: 7, WaitSeconds: 12}}},
+		Queries: &model.Queries{Enabled: true},
+	}
+	fs := Compute(c)
+	for _, suppressed := range []string{"unused_indexes", "low_cache_hit", "seq_scan_heavy"} {
+		if has(fs, suppressed) != nil {
+			t.Errorf("cold window must suppress %q", suppressed)
+		}
+	}
+	if has(fs, "blocking_chains") == nil {
+		t.Error("blocking chains is a gauge and must still fire on a cold window")
+	}
+}
+
+func TestSeqScanHeavy_firesOnWarmWindow(t *testing.T) {
+	warm := int64(7200)
+	c := &model.Context{
+		Window: model.Window{WindowAgeSeconds: &warm},
+		Tables: &model.Tables{Top: []model.TableStat{
+			{Schema: "public", Name: "orders", LiveTuples: 1_000_000, SeqScans: 9000, IndexScans: 10},
+		}},
+		Queries: &model.Queries{Enabled: true},
+	}
+	if has(Compute(c), "seq_scan_heavy") == nil {
+		t.Error("expected seq_scan_heavy on a large seq-scanned table over a warm window")
+	}
+}
+
 func TestUnusedIndexes_belowThresholdIgnored(t *testing.T) {
 	c := &model.Context{Indexes: &model.Indexes{Unused: []model.IndexStat{
 		{Schema: "public", Table: "t", Name: "tiny", Bytes: 100 << 10}, // 100 KiB < 1 MiB

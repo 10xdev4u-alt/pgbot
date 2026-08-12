@@ -3,7 +3,21 @@ package render
 import (
 	"fmt"
 	"strings"
+	"time"
 )
+
+// shortDur formats a second count as a compact human duration (3m12s, 1h4m).
+func shortDur(sec int64) string {
+	d := time.Duration(sec) * time.Second
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", sec)
+	case d < time.Hour:
+		return fmt.Sprintf("%dm%ds", sec/60, sec%60)
+	default:
+		return fmt.Sprintf("%dh%dm", sec/3600, (sec%3600)/60)
+	}
+}
 
 // humanBytes / humanNum keep the report scannable.
 func humanBytes(b int64) string {

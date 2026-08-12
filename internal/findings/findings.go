@@ -19,8 +19,9 @@ const (
 	cacheHitWarn          = 0.90 // sustained cache hit below this is disk-bound
 	longXactWarnSec       = 300  // a transaction open > 5 min
 	idleInTxnWarnSec      = 60
-	rollbackRatioWarn     = 0.10 // >10% of transactions rolling back
-	staleStatsWarnDays    = 30   // rates computed over a very old window are near-meaningless
+	rollbackRatioWarn     = 0.10  // >10% of transactions rolling back
+	staleStatsWarnDays    = 30    // rates computed over a very old window are near-meaningless
+	seqScanTableMinRows   = 50000 // only flag seq-scan-heavy on tables big enough to matter
 )
 
 // Compute returns findings sorted most-severe first. Order among equal
@@ -31,6 +32,7 @@ func Compute(c *model.Context) []model.Finding {
 
 	blockingChains(c, add)
 	unusedIndexes(c, add)
+	seqScanHeavy(c, add)
 	bloatedTables(c, add)
 	lowCacheHit(c, add)
 	idleInTransaction(c, add)
@@ -77,6 +79,11 @@ func blockingChains(c *model.Context, add func(model.Finding)) {
 
 func unusedIndexes(c *model.Context, add func(model.Finding)) {
 	if c.Indexes == nil {
+		return
+	}
+	// Cold window (serverless just woke): index-scan counts start from zero, so
+	// "unused" is meaningless and acting on it is actively dangerous. Suppress.
+	if c.Window.ColdWindow() {
 		return
 	}
 	var ev []string
@@ -129,8 +136,38 @@ func bloatedTables(c *model.Context, add func(model.Finding)) {
 	})
 }
 
+// seqScanHeavy flags a large table doing far more sequential scans than index
+// scans — often a query that lost (or never had) an index path.
+func seqScanHeavy(c *model.Context, add func(model.Finding)) {
+	if c.Tables == nil || c.Window.ColdWindow() { // scan counts are cold-window-sensitive
+		return
+	}
+	var ev []string
+	for _, t := range c.Tables.Top {
+		total := t.SeqScans + t.IndexScans
+		if t.LiveTuples >= seqScanTableMinRows && total >= 100 && t.SeqScans > t.IndexScans*2 {
+			ev = append(ev, fmt.Sprintf("%s.%s %s seq scans vs %s index (%s rows)",
+				t.Schema, t.Name, human(t.SeqScans), human(t.IndexScans), human(t.LiveTuples)))
+		}
+	}
+	if len(ev) == 0 {
+		return
+	}
+	add(model.Finding{
+		ID: "seq_scan_heavy", Severity: model.SeverityWarn,
+		Title:    fmt.Sprintf("%d table(s) sequential-scanning heavily", len(ev)),
+		Detail:   "These tables are read mostly by full scans rather than index lookups. On a large table that's CPU and IO the database repeats on every query.",
+		Evidence: cap10(ev), Impact: "Add an index for the hot predicate, or confirm the full scans are intended (small lookup tables, analytics).",
+	})
+}
+
 func lowCacheHit(c *model.Context, add func(model.Finding)) {
 	if c.Health == nil || c.Health.CacheHitRatio == nil {
+		return
+	}
+	// Cache-hit over a cold window is dominated by cold-cache misses at wake and
+	// says nothing about steady state. Suppress.
+	if c.Window.ColdWindow() {
 		return
 	}
 	if *c.Health.CacheHitRatio >= cacheHitWarn {
@@ -227,6 +264,19 @@ func cap10(s []string) []string {
 		return append(s[:10:10], "…")
 	}
 	return s
+}
+
+func human(v int64) string {
+	switch {
+	case v >= 1e9:
+		return fmt.Sprintf("%.1fG", float64(v)/1e9)
+	case v >= 1e6:
+		return fmt.Sprintf("%.1fM", float64(v)/1e6)
+	case v >= 1e3:
+		return fmt.Sprintf("%.1fk", float64(v)/1e3)
+	default:
+		return fmt.Sprintf("%d", v)
+	}
 }
 
 func humanBytes(b int64) string {

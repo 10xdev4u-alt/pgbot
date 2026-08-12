@@ -89,16 +89,22 @@ func newContext(caps conn.Capabilities, tB time.Time, dt time.Duration) *model.C
 		Capabilities: caps.Satisfied(),
 		HasPgMonitor: caps.HasPgMonitor,
 	}
+	window := model.Window{SampleSeconds: round2(dt.Seconds())}
 	if !caps.StartedAt.IsZero() {
 		started := caps.StartedAt.UTC()
 		srv.StartedAt = &started
 		srv.UptimeSeconds = int64(tB.Sub(started).Seconds())
+		window.PostmasterStartAt = &started
+		// Provisional window age (server uptime); the health collector refines it
+		// to the stats-reset age when pg_stat_database.stats_reset is present.
+		age := int64(tB.Sub(started).Seconds())
+		window.WindowAgeSeconds = &age
 	}
 	return &model.Context{
 		SchemaVersion: model.SchemaVersion,
 		CollectedAt:   tB,
 		Server:        srv,
-		Window:        model.Window{SampleSeconds: round2(dt.Seconds())},
+		Window:        window,
 		Findings:      []model.Finding{},
 	}
 }

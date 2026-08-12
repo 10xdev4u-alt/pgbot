@@ -87,7 +87,9 @@ func (healthCollector) Assemble(c *model.Context, _ conn.Capabilities, s sampled
 }
 
 // setStatsWindow records the stats-reset age on the window (health is where we
-// learn it). T2 uses these fields for cold-start / reset detection.
+// learn it). T2 uses these fields for cold-start / reset detection. stats_reset
+// is the effective start of the cumulative window, so it overrides the
+// provisional (uptime-based) age set in newContext.
 func setStatsWindow(c *model.Context, statsReset *time.Time) {
 	if statsReset == nil {
 		return
@@ -95,4 +97,6 @@ func setStatsWindow(c *model.Context, statsReset *time.Time) {
 	c.Window.StatsResetAt = statsReset
 	days := c.CollectedAt.Sub(*statsReset).Hours() / 24
 	c.Window.StatsWindowDays = round2p(rate.Ptr(days))
+	age := int64(c.CollectedAt.Sub(*statsReset).Seconds())
+	c.Window.WindowAgeSeconds = &age
 }

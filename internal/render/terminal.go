@@ -65,6 +65,25 @@ func Terminal(w io.Writer, c *model.Context, opts Options) error {
 		fmt.Fprintln(&b)
 	}
 
+	// Cold-window / reset surfacing — front and center, not buried.
+	if c.Window.ColdWindow() {
+		age := int64(0)
+		if c.Window.WindowAgeSeconds != nil {
+			age = *c.Window.WindowAgeSeconds
+		}
+		reset := ""
+		if c.Window.StatsResetAt != nil {
+			reset = " (reset at " + c.Window.StatsResetAt.Format("15:04") + " — likely a compute restart)"
+		}
+		fmt.Fprintln(&b, st.warn(fmt.Sprintf("Statistics window: %s%s", shortDur(age), reset)))
+		fmt.Fprintln(&b, st.dim("Counter-based findings (unused indexes, cache hit, seq scans) are suppressed until the window exceeds 15m."))
+		fmt.Fprintln(&b)
+	}
+	if c.DeltaSuppressedReason != "" {
+		fmt.Fprintln(&b, st.dim("Changes: "+c.DeltaSuppressedReason))
+		fmt.Fprintln(&b)
+	}
+
 	renderFindings(&b, st, c.Findings, width)
 	renderHealth(&b, st, c, opts)
 	renderActivity(&b, st, c)

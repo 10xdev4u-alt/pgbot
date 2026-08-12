@@ -149,11 +149,17 @@ func withStore(path string, c *model.Context) (map[string][]float64, string) {
 		prev, _ = st.Previous(c.Fingerprint, now, 0)
 	}
 	if prev != nil {
-		var yday *diff.Baseline
-		if y, err := st.SameHourYesterday(c.Fingerprint, now); err == nil && y != nil {
-			yday = &diff.Baseline{CollectedAt: y.CollectedAt, Context: y.Context}
+		// A stats reset / restart between runs makes every delta fiction — suppress
+		// the whole section rather than reporting a wake as a -99.97% change.
+		if reason := diff.StatsResetBetween(prev.Context, c); reason != "" {
+			c.DeltaSuppressedReason = reason
+		} else {
+			var yday *diff.Baseline
+			if y, err := st.SameHourYesterday(c.Fingerprint, now); err == nil && y != nil {
+				yday = &diff.Baseline{CollectedAt: y.CollectedAt, Context: y.Context}
+			}
+			c.Deltas = diff.Compute(c, &diff.Baseline{CollectedAt: prev.CollectedAt, Context: prev.Context}, yday)
 		}
-		c.Deltas = diff.Compute(c, &diff.Baseline{CollectedAt: prev.CollectedAt, Context: prev.Context}, yday)
 	}
 
 	if _, err := st.Save(c); err != nil {

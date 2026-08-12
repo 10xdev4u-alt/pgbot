@@ -47,7 +47,10 @@ type Context struct {
 	Replication   *Replication `json:"replication,omitempty"`
 	Settings      *Settings    `json:"settings,omitempty"`
 	Deltas        *Deltas      `json:"deltas,omitempty"` // vs baseline; nil on first run
-	Findings      []Finding    `json:"findings"`
+	// Set (with Deltas nil) when a stats reset / restart between runs makes any
+	// comparison fiction — e.g. serverless scale-to-zero. See T2.
+	DeltaSuppressedReason string    `json:"delta_suppressed_reason,omitempty"`
+	Findings              []Finding `json:"findings"`
 }
 
 // ServerInfo is what we learned at connect time.
@@ -63,11 +66,25 @@ type ServerInfo struct {
 	HasPgMonitor  bool       `json:"has_pg_monitor"`
 }
 
-// Window describes the sampling interval and how old the underlying stats are.
+// Window describes the sampling interval and how old the underlying cumulative
+// statistics are — the latter matters because scale-to-zero serverless Postgres
+// discards in-memory stats on each wake, making cache-hit ratios, unused-index
+// findings and cross-run deltas meaningless on a cold window (see T2).
 type Window struct {
-	SampleSeconds   float64    `json:"sample_seconds"`              // gap between the two counter samples
-	StatsResetAt    *time.Time `json:"stats_reset_at,omitempty"`    // pg_stat_database.stats_reset
-	StatsWindowDays *float64   `json:"stats_window_days,omitempty"` // now - stats_reset, in days
+	SampleSeconds     float64    `json:"sample_seconds"`                // gap between the two counter samples
+	StatsResetAt      *time.Time `json:"stats_reset_at,omitempty"`      // pg_stat_database.stats_reset
+	PostmasterStartAt *time.Time `json:"postmaster_start_at,omitempty"` // pg_postmaster_start_time()
+	WindowAgeSeconds  *int64     `json:"window_age_seconds,omitempty"`  // age of the effective stats window (since reset, else start)
+	StatsWindowDays   *float64   `json:"stats_window_days,omitempty"`   // now - stats_reset, in days
+}
+
+// ColdWindowThresholdSeconds is the age below which cumulative counters haven't
+// accumulated enough to trust — counter-based findings degrade below it.
+const ColdWindowThresholdSeconds = 900
+
+// ColdWindow reports whether the stats window is too young to trust counters.
+func (w Window) ColdWindow() bool {
+	return w.WindowAgeSeconds != nil && *w.WindowAgeSeconds < ColdWindowThresholdSeconds
 }
 
 // Health is derived from pg_stat_database — the double-sampled aggregate rates.

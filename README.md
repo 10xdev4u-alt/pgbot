@@ -119,6 +119,27 @@ Collectors degrade rather than fail when a capability is absent:
 
 Tested against PostgreSQL 13–18.
 
+## Serverless Postgres (Neon, scale-to-zero)
+
+Scale-to-zero databases (Neon, Databricks Lakebase, and similar) **discard
+in-memory statistics when the compute suspends** — by default after ~5 minutes
+idle. After each wake, `pg_stat_statements` history, cache-hit counters and
+index-scan counts all start again from zero.
+
+pgbot detects this and **degrades rather than lies**:
+
+- If the statistics were reset (or the server restarted) since the last run, the
+  entire `deltas` section is suppressed with a reason — a counter going from 40M
+  to 12k is a wake, not a −99.97% change.
+- On a cold window (younger than 15 minutes), counter-based findings — unused
+  indexes, cache-hit, sequential-scan-heavy — are suppressed, because they'd be
+  meaningless or actively dangerous. Gauges (blocking chains, idle-in-transaction,
+  replication lag, invalid indexes) are valid immediately and still reported.
+- The report header states the window age plainly.
+
+If you want continuous history, disable scale-to-zero or raise the suspend
+timeout so the statistics survive between runs.
+
 ## Not in scope (yet)
 
 Slice 1 is honest about its edges:
