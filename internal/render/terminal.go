@@ -137,7 +137,12 @@ func renderFindings(b *strings.Builder, st styler, fs []model.Finding, width int
 		case model.SeverityWarn:
 			icon, color = "⚠", st.warn
 		}
-		fmt.Fprintf(b, "  %s %s\n", color(icon), color(f.Title))
+		// Below 0.5 confidence we present a possibility, not an assertion.
+		title := f.Title
+		if f.Confidence > 0 && f.Confidence < 0.5 {
+			title += st.dim(" (possible)")
+		}
+		fmt.Fprintf(b, "  %s %s\n", color(icon), color(title))
 		for _, line := range wrapText(f.Detail, width-5) {
 			fmt.Fprintf(b, "     %s\n", st.dim(line))
 		}
@@ -146,12 +151,25 @@ func renderFindings(b *strings.Builder, st styler, fs []model.Finding, width int
 				fmt.Fprintf(b, "     %s\n", st.dim(line))
 			}
 		}
-		for i, line := range wrapText(f.Impact, width-7) {
-			prefix := "→ "
-			if i > 0 {
-				prefix = "  "
+		// Caveats render inline under the finding, never in a footnote — these are
+		// the "but…" clauses that stop a confident recommendation from causing harm.
+		for _, cav := range f.Caveats {
+			for i, line := range wrapText(cav, width-9) {
+				prefix := "⚠ but "
+				if i > 0 {
+					prefix = "      "
+				}
+				fmt.Fprintf(b, "     %s\n", st.warn(prefix)+st.dim(line))
 			}
-			fmt.Fprintf(b, "     %s\n", st.dim(prefix+line))
+		}
+		if f.Remediation != "" {
+			for i, line := range wrapText(f.Remediation, width-7) {
+				prefix := "→ "
+				if i > 0 {
+					prefix = "  "
+				}
+				fmt.Fprintf(b, "     %s\n", st.dim(prefix+line))
+			}
 		}
 	}
 	fmt.Fprintln(b)

@@ -171,3 +171,124 @@ func TestWaitFindings_idleDatabaseSilent(t *testing.T) {
 		}
 	}
 }
+
+// --- T9: impact scoring, confidence, caveats ---
+
+func longWindow() model.Window {
+	age := int64(30 * 24 * 3600) // 30 days: not cold, not short
+	return model.Window{WindowAgeSeconds: &age}
+}
+
+func TestUnusedIndex_scoreDrivenBySizeAndWrite(t *testing.T) {
+	c := &model.Context{
+		Window: longWindow(),
+		Tables: &model.Tables{Top: []model.TableStat{
+			{Schema: "public", Name: "orders", ModsSinceAnalyze: 500000}, // write-heavy
+			{Schema: "public", Name: "countries", ModsSinceAnalyze: 0},   // static
+		}},
+		Indexes: &model.Indexes{Unused: []model.IndexStat{
+			{Schema: "public", Table: "countries", Name: "small_idx", Bytes: 2 << 20},   // 2 MiB, static
+			{Schema: "public", Table: "orders", Name: "big_idx", Bytes: 12 * (1 << 30)}, // 12 GiB, write-heavy
+		}},
+	}
+	f := has(Compute(c), "unused_indexes")
+	if f == nil {
+		t.Fatal("expected unused_indexes finding")
+	}
+	if f.Impact.Dimension != model.DimStorage {
+		t.Errorf("dimension should be storage, got %q", f.Impact.Dimension)
+	}
+	// Evidence must lead with the 12 GiB write-heavy index (highest score).
+	if len(f.Evidence) == 0 || !contains(f.Evidence[0], "big_idx") {
+		t.Errorf("evidence should lead with the 12 GiB write-heavy index, got %v", f.Evidence)
+	}
+	if f.Impact.Score < 90 {
+		t.Errorf("a 12 GiB write-heavy unused index should score high, got %.1f", f.Impact.Score)
+	}
+}
+
+func TestUnusedIndex_replicationCaveatMandatory(t *testing.T) {
+	c := &model.Context{
+		Window:      longWindow(),
+		Replication: &model.Replication{Replicas: []model.ReplicaRow{{ClientAddr: "10.0.0.2", State: "streaming"}}},
+		Indexes:     &model.Indexes{Unused: []model.IndexStat{{Schema: "public", Table: "t", Name: "idx", Bytes: 50 << 20}}},
+	}
+	f := has(Compute(c), "unused_indexes")
+	if f == nil {
+		t.Fatal("expected unused_indexes finding")
+	}
+	found := false
+	for _, cav := range f.Caveats {
+		if contains(cav, "replica") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("replication MUST add a per-node caveat, got caveats %v", f.Caveats)
+	}
+}
+
+func TestUnusedIndex_shortWindowLowConfidence(t *testing.T) {
+	age := int64(2 * 24 * 3600) // 2 days: not cold (>900s) but < 7d
+	c := &model.Context{
+		Window:  model.Window{WindowAgeSeconds: &age},
+		Indexes: &model.Indexes{Unused: []model.IndexStat{{Schema: "public", Table: "t", Name: "idx", Bytes: 50 << 20}}},
+	}
+	f := has(Compute(c), "unused_indexes")
+	if f == nil {
+		t.Fatal("expected unused_indexes finding")
+	}
+	if f.Confidence > 0.4 {
+		t.Errorf("a < 7-day window should cap confidence at 0.4, got %.2f", f.Confidence)
+	}
+}
+
+func TestUnusedIndex_partialAndExpressionCaveats(t *testing.T) {
+	c := &model.Context{
+		Window: longWindow(),
+		Indexes: &model.Indexes{Unused: []model.IndexStat{
+			{Schema: "public", Table: "t", Name: "pidx", Bytes: 40 << 20, Partial: true},
+			{Schema: "public", Table: "t", Name: "eidx", Bytes: 40 << 20, Expression: true},
+		}},
+	}
+	f := has(Compute(c), "unused_indexes")
+	if f == nil {
+		t.Fatal("expected unused_indexes finding")
+	}
+	joined := ""
+	for _, cav := range f.Caveats {
+		joined += cav + "\n"
+	}
+	if !contains(joined, "partial") || !contains(joined, "expression") {
+		t.Errorf("partial/expression indexes should each add a caveat, got %v", f.Caveats)
+	}
+}
+
+func TestOrdering_riskPinnedThenScore(t *testing.T) {
+	c := &model.Context{
+		Window:  longWindow(),
+		Locks:   &model.Locks{BlockedCount: 1, Chains: []model.BlockingRow{{BlockedPID: 9, WaitSeconds: 5}}},
+		Indexes: &model.Indexes{Unused: []model.IndexStat{{Schema: "public", Table: "t", Name: "idx", Bytes: 12 * (1 << 30)}}},
+	}
+	fs := Compute(c)
+	if len(fs) < 2 {
+		t.Fatalf("expected at least 2 findings, got %d", len(fs))
+	}
+	// blocking_chains is a risk dimension → pinned above the (high-score) storage win.
+	if fs[0].ID != "blocking_chains" {
+		t.Errorf("risk finding should be pinned to the top, got %q first", fs[0].ID)
+	}
+}
+
+func contains(s, sub string) bool {
+	return len(sub) == 0 || (len(s) >= len(sub) && indexOf(s, sub) >= 0)
+}
+
+func indexOf(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
+}

@@ -273,6 +273,8 @@ type IndexStat struct {
 	Scans      int64  `json:"scans"`
 	Bytes      int64  `json:"bytes"`
 	Definition string `json:"definition,omitempty"`
+	Partial    bool   `json:"partial,omitempty"`    // has a WHERE predicate — may serve a narrow but critical path
+	Expression bool   `json:"expression,omitempty"` // indexes an expression, not bare columns
 }
 
 // WAL is pg_stat_wal (PG14+), double-sampled.
@@ -318,13 +320,38 @@ type Settings struct {
 // Finding is deterministic, rule-based analysis computed in Go — never by the
 // LLM. The model layer explains and prioritises Findings; it does not create them.
 type Finding struct {
-	ID       string   `json:"id"` // stable slug, e.g. "unused_indexes"
-	Severity string   `json:"severity"`
-	Title    string   `json:"title"`
-	Detail   string   `json:"detail"`
-	Evidence []string `json:"evidence,omitempty"`
-	Impact   string   `json:"impact,omitempty"`
+	ID          string   `json:"id"` // stable slug, e.g. "unused_indexes"
+	Severity    string   `json:"severity"`
+	Title       string   `json:"title"`
+	Detail      string   `json:"detail"`
+	Evidence    []string `json:"evidence,omitempty"`
+	Remediation string   `json:"remediation,omitempty"` // the actionable "what to do", human-facing
+	// Impact ranks findings against each other; Confidence says how sure we are;
+	// Caveats are the load-bearing "but…" clauses that render inline, never in a
+	// footnote — the ones that stop pgbot from confidently recommending an outage.
+	Impact     Impact   `json:"impact"`
+	Confidence float64  `json:"confidence"` // 0.0–1.0; below 0.5 renders as "possible", not an assertion
+	Caveats    []string `json:"caveats,omitempty"`
 }
+
+// Impact is why a finding matters and how much, in ONE dimension. Two findings
+// in different dimensions (43 GB of storage vs 2.1s/min of latency) are not
+// commensurable, so the renderer sorts within a dimension and labels which one.
+type Impact struct {
+	Score     float64 `json:"score"`     // 0–100 sort key WITHIN a dimension
+	Dimension string  `json:"dimension"` // latency | throughput | storage | risk | cost
+	Estimate  string  `json:"estimate"`  // magnitude, e.g. "≈43 GB", "≈2.1s/min of query time"
+	Basis     string  `json:"basis"`     // how it was derived — must be human-checkable
+}
+
+// Impact dimensions.
+const (
+	DimLatency    = "latency"
+	DimThroughput = "throughput"
+	DimStorage    = "storage"
+	DimRisk       = "risk" // time-to-incident; pinned to the top of the report
+	DimCost       = "cost"
+)
 
 // Deltas is the temporal differentiator: what changed vs the baseline store.
 type Deltas struct {

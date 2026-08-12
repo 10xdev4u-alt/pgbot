@@ -17,14 +17,18 @@ var sqlIndexes string
 type indexesCollector struct{}
 
 type indexRow struct {
-	Schema     string `db:"schema"`
-	Table      string `db:"table"`
-	Index      string `db:"index"`
-	Scans      int64  `db:"scans"`
-	Bytes      int64  `db:"bytes"`
-	Definition string `db:"definition"`
-	IsPrimary  bool   `db:"is_primary"`
-	IsUnique   bool   `db:"is_unique"`
+	Schema          string `db:"schema"`
+	Table           string `db:"table"`
+	Index           string `db:"index"`
+	Scans           int64  `db:"scans"`
+	Bytes           int64  `db:"bytes"`
+	Definition      string `db:"definition"`
+	IsPrimary       bool   `db:"is_primary"`
+	IsUnique        bool   `db:"is_unique"`
+	IsExclusion     bool   `db:"is_exclusion"`
+	IsPartial       bool   `db:"is_partial"`
+	IsExpression    bool   `db:"is_expression"`
+	BacksConstraint bool   `db:"backs_constraint"`
 }
 
 func (indexesCollector) Name() string                     { return "indexes" }
@@ -43,8 +47,16 @@ func (indexesCollector) Assemble(c *model.Context, _ conn.Capabilities, s sample
 	}
 	idx := &model.Indexes{Section: model.Section{Exactness: model.ExactnessScraped}, Total: len(rows)}
 	for _, r := range rows {
-		st := model.IndexStat{Schema: r.Schema, Table: r.Table, Name: r.Index, Scans: r.Scans, Bytes: r.Bytes, Definition: r.Definition}
-		if r.Scans == 0 && r.Bytes > 16384 && !r.IsPrimary && !r.IsUnique && len(idx.Unused) < 50 {
+		st := model.IndexStat{
+			Schema: r.Schema, Table: r.Table, Name: r.Index, Scans: r.Scans, Bytes: r.Bytes,
+			Definition: r.Definition, Partial: r.IsPartial, Expression: r.IsExpression,
+		}
+		// An index that enforces ANY constraint (PK, UNIQUE, EXCLUSION, or a FK's
+		// referenced key) can't be dropped, so it is never "unused" no matter its
+		// scan count. backs_constraint (pg_constraint.conindid) covers all of them;
+		// is_primary/is_unique/is_exclusion are belt-and-suspenders.
+		constraintBacked := r.BacksConstraint || r.IsPrimary || r.IsUnique || r.IsExclusion
+		if r.Scans == 0 && r.Bytes > 16384 && !constraintBacked && len(idx.Unused) < 50 {
 			idx.Unused = append(idx.Unused, st)
 		}
 		if len(idx.Largest) < 10 {
