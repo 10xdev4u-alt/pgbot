@@ -83,6 +83,11 @@ pgbot baselines export <fingerprint># dump stored snapshots as JSON
 **Exit codes** (for CI): `0` clean · `1` warnings · `2` critical findings ·
 `3` connection/execution failure.
 
+> **Local Docker gotcha:** with a database in Docker Desktop, connect via
+> `127.0.0.1`, not `localhost`. `localhost` resolves to IPv6 (`::1`) first, which
+> Docker Desktop doesn't forward, so the connect stalls for ~10s before falling
+> back to IPv4. Managed hosts (RDS, Supabase, Neon…) aren't affected.
+
 The baseline store lives at `$XDG_STATE_HOME/pgbot/baselines.db` (7 days at full
 resolution, hourly rollups to 90 days, 100 MB cap). It's yours — inspect and
 delete it with `pgbot baselines`.
