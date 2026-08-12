@@ -1,0 +1,42 @@
+# Test matrix: the same collector suite runs against every supported major with
+# pg_stat_statements preloaded. CI points PGBOT_TEST_DSN at each in turn and
+# asserts: no collector errors, sections correctly marked unavailable where a
+# capability is absent, non-zero TPS under load, blocking chains identified,
+# no PII in JSON, < 5s wall time, and populated deltas on a second run.
+services:
+  pg13:
+    image: postgres:13
+    command: ["-c", "shared_preload_libraries=pg_stat_statements"]
+    environment: { POSTGRES_PASSWORD: pgbot }
+    ports: ["55413:5432"]
+  pg14:
+    image: postgres:14
+    command: ["-c", "shared_preload_libraries=pg_stat_statements"]
+    environment: { POSTGRES_PASSWORD: pgbot }
+    ports: ["55414:5432"]
+  pg15:
+    image: postgres:15
+    command: ["-c", "shared_preload_libraries=pg_stat_statements"]
+    environment: { POSTGRES_PASSWORD: pgbot }
+    ports: ["55415:5432"]
+  pg16:
+    image: postgres:16
+    command: ["-c", "shared_preload_libraries=pg_stat_statements"]
+    environment: { POSTGRES_PASSWORD: pgbot }
+    ports: ["55416:5432"]
+  pg17:
+    image: postgres:17
+    command: ["-c", "shared_preload_libraries=pg_stat_statements"]
+    environment: { POSTGRES_PASSWORD: pgbot }
+    ports: ["55417:5432"]
+  pg18:
+    image: postgres:18
+    command: ["-c", "shared_preload_libraries=pg_stat_statements"]
+    environment: { POSTGRES_PASSWORD: pgbot }
+    ports: ["55418:5432"]
+  # A PG that deliberately has NO pg_stat_statements, to exercise graceful
+  # degradation (queries section marked unavailable, install hint emitted).
+  pg17_nopgss:
+    image: postgres:17
+    environment: { POSTGRES_PASSWORD: pgbot }
+    ports: ["55427:5432"]

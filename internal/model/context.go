@@ -1,0 +1,239 @@
+// Package model defines Context — the single public contract every pgbot
+// surface is built on: the terminal renderer, --json, the future MCP server,
+// and the LLM layer all consume this shape. Treat it as an API. Field order is
+// stable (encoding/json preserves struct order) so --json diffs cleanly.
+package model
+
+import "time"
+
+// Exactness labels tell a consumer how much to trust a section's numbers.
+const (
+	ExactnessSampled     = "sampled"             // rate computed from a double-sample over Window.SampleSeconds
+	ExactnessCumulative  = "cumulative"          // counters since stats_reset; trend comes from the baseline store
+	ExactnessScraped     = "scraped"             // a point-in-time gauge read
+	ExactnessUnavailable = "unavailable"         // capability/extension absent; see Reason
+	ExactnessReset       = "reset_during_sample" // a counter reset between samples; rates omitted
+)
+
+// Severity levels for Finding, highest first.
+const (
+	SeverityCritical = "critical"
+	SeverityWarn     = "warn"
+	SeverityInfo     = "info"
+)
+
+// Section is embedded in every optional section so consumers can read its
+// provenance uniformly.
+type Section struct {
+	Exactness string `json:"exactness"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+// Context is the whole picture of one database at one moment.
+type Context struct {
+	SchemaVersion string       `json:"schema_version"`
+	CollectedAt   time.Time    `json:"collected_at"`
+	Fingerprint   string       `json:"fingerprint"` // stable per target database (see store)
+	Server        ServerInfo   `json:"server"`
+	Window        Window       `json:"window"`
+	Health        *Health      `json:"health,omitempty"`
+	Activity      *Activity    `json:"activity,omitempty"`
+	Locks         *Locks       `json:"locks,omitempty"`
+	Queries       *Queries     `json:"queries,omitempty"`
+	Tables        *Tables      `json:"tables,omitempty"`
+	Indexes       *Indexes     `json:"indexes,omitempty"`
+	WAL           *WAL         `json:"wal,omitempty"`
+	IO            *IO          `json:"io,omitempty"`
+	Replication   *Replication `json:"replication,omitempty"`
+	Settings      *Settings    `json:"settings,omitempty"`
+	Deltas        *Deltas      `json:"deltas,omitempty"` // vs baseline; nil on first run
+	Findings      []Finding    `json:"findings"`
+}
+
+// ServerInfo is what we learned at connect time.
+type ServerInfo struct {
+	VersionNum   int      `json:"version_num"`
+	VersionText  string   `json:"version_text"`
+	Database     string   `json:"database"`
+	Extensions   []string `json:"extensions"`
+	Capabilities []string `json:"capabilities"` // human-readable flags that were satisfied
+	HasPgMonitor bool     `json:"has_pg_monitor"`
+}
+
+// Window describes the sampling interval and how old the underlying stats are.
+type Window struct {
+	SampleSeconds   float64    `json:"sample_seconds"`              // gap between the two counter samples
+	StatsResetAt    *time.Time `json:"stats_reset_at,omitempty"`    // pg_stat_database.stats_reset
+	StatsWindowDays *float64   `json:"stats_window_days,omitempty"` // now - stats_reset, in days
+}
+
+// Health is derived from pg_stat_database — the double-sampled aggregate rates.
+type Health struct {
+	Section
+	Connections     int      `json:"connections"`
+	TPS             *float64 `json:"tps,omitempty"` // commits+rollbacks per second
+	CommitsPerSec   *float64 `json:"commits_per_sec,omitempty"`
+	RollbacksPerSec *float64 `json:"rollbacks_per_sec,omitempty"`
+	RollbackRatio   *float64 `json:"rollback_ratio,omitempty"`  // over the sample window
+	CacheHitRatio   *float64 `json:"cache_hit_ratio,omitempty"` // 0..1 over the sample window
+	DeadlocksPerMin *float64 `json:"deadlocks_per_min,omitempty"`
+	TempBytesPerSec *float64 `json:"temp_bytes_per_sec,omitempty"`
+	TupReturnedPerS *float64 `json:"tuples_returned_per_sec,omitempty"`
+	TupWrittenPerS  *float64 `json:"tuples_written_per_sec,omitempty"` // ins+upd+del
+}
+
+// Activity is a point-in-time read of pg_stat_activity.
+type Activity struct {
+	Section
+	Total             int            `json:"total"`
+	Active            int            `json:"active"`
+	Idle              int            `json:"idle"`
+	IdleInTransaction int            `json:"idle_in_transaction"`
+	Waiting           int            `json:"waiting"`
+	ByState           map[string]int `json:"by_state"`
+	WaitEvents        map[string]int `json:"wait_events,omitempty"`
+	LongestXactSec    float64        `json:"longest_xact_sec"`
+	LongestActiveSec  float64        `json:"longest_active_sec"`
+}
+
+// Locks holds current blocking chains (scrubbed query text).
+type Locks struct {
+	Section
+	BlockedCount int           `json:"blocked_count"`
+	Chains       []BlockingRow `json:"chains,omitempty"`
+}
+
+type BlockingRow struct {
+	BlockedPID   int     `json:"blocked_pid"`
+	BlockingPIDs []int64 `json:"blocking_pids"`
+	WaitEvent    string  `json:"wait_event,omitempty"`
+	WaitSeconds  float64 `json:"wait_seconds"`
+	BlockedQuery string  `json:"blocked_query"` // scrubbed
+}
+
+// Queries is the top of pg_stat_statements — cumulative since stats_reset; the
+// temporal view comes from Deltas, not from the short in-process sample.
+type Queries struct {
+	Section
+	Enabled bool        `json:"enabled"`
+	Top     []QueryStat `json:"top,omitempty"`
+}
+
+type QueryStat struct {
+	QueryID  int64    `json:"queryid"`
+	Query    string   `json:"query"` // normalized ($1 placeholders) — safe
+	Calls    int64    `json:"calls"`
+	TotalMS  float64  `json:"total_ms"`
+	MeanMS   float64  `json:"mean_ms"`
+	MaxMS    float64  `json:"max_ms"`
+	Rows     int64    `json:"rows"`
+	CacheHit *float64 `json:"cache_hit,omitempty"`
+	WALBytes int64    `json:"wal_bytes"`
+}
+
+// Tables is pg_stat_user_tables (cumulative counters + gauges).
+type Tables struct {
+	Section
+	DBSizeBytes int64       `json:"db_size_bytes"`
+	Top         []TableStat `json:"top,omitempty"` // by total size
+}
+
+type TableStat struct {
+	Schema           string     `json:"schema"`
+	Name             string     `json:"table"`
+	TotalBytes       int64      `json:"total_bytes"`
+	LiveTuples       int64      `json:"live_tuples"`
+	DeadTuples       int64      `json:"dead_tuples"`
+	DeadRatio        float64    `json:"dead_ratio"`
+	SeqScans         int64      `json:"seq_scans"`
+	IndexScans       int64      `json:"index_scans"`
+	ModsSinceAnalyze int64      `json:"mods_since_analyze"`
+	LastVacuum       *time.Time `json:"last_vacuum,omitempty"`
+	LastAutovac      *time.Time `json:"last_autovacuum,omitempty"`
+}
+
+// Indexes is pg_stat_user_indexes.
+type Indexes struct {
+	Section
+	Total   int         `json:"total"`
+	Unused  []IndexStat `json:"unused,omitempty"`
+	Largest []IndexStat `json:"largest,omitempty"`
+}
+
+type IndexStat struct {
+	Schema     string `json:"schema"`
+	Table      string `json:"table"`
+	Name       string `json:"index"`
+	Scans      int64  `json:"scans"`
+	Bytes      int64  `json:"bytes"`
+	Definition string `json:"definition,omitempty"`
+}
+
+// WAL is pg_stat_wal (PG14+), double-sampled.
+type WAL struct {
+	Section
+	BytesPerSec   *float64 `json:"bytes_per_sec,omitempty"`
+	RecordsPerSec *float64 `json:"records_per_sec,omitempty"`
+	BuffersFull   int64    `json:"buffers_full"`
+}
+
+// IO summarizes pg_stat_io (PG16+) or the bgwriter/checkpointer fallback.
+type IO struct {
+	Section
+	CheckpointsTimed   int64    `json:"checkpoints_timed"`
+	CheckpointsReq     int64    `json:"checkpoints_requested"`
+	BuffersWrittenPerS *float64 `json:"buffers_written_per_sec,omitempty"`
+	BackendFsyncs      int64    `json:"backend_fsyncs"`
+}
+
+// Replication is pg_stat_replication (primary) / pg_stat_wal_receiver (replica).
+type Replication struct {
+	Section
+	IsReplica      bool         `json:"is_replica"`
+	Replicas       []ReplicaRow `json:"replicas,omitempty"`
+	ReceiverLagSec *float64     `json:"receiver_lag_sec,omitempty"`
+}
+
+type ReplicaRow struct {
+	ClientAddr string `json:"client_addr"`
+	State      string `json:"state"`
+	SyncState  string `json:"sync_state"`
+	WriteLagB  int64  `json:"write_lag_bytes"`
+	FlushLagB  int64  `json:"flush_lag_bytes"`
+	ReplayLagB int64  `json:"replay_lag_bytes"`
+}
+
+// Settings is non-default pg_settings plus sizes worth surfacing.
+type Settings struct {
+	Section
+	Overrides map[string]string `json:"overrides"` // name -> current value where != boot_val
+}
+
+// Finding is deterministic, rule-based analysis computed in Go — never by the
+// LLM. The model layer explains and prioritises Findings; it does not create them.
+type Finding struct {
+	ID       string   `json:"id"` // stable slug, e.g. "unused_indexes"
+	Severity string   `json:"severity"`
+	Title    string   `json:"title"`
+	Detail   string   `json:"detail"`
+	Evidence []string `json:"evidence,omitempty"`
+	Impact   string   `json:"impact,omitempty"`
+}
+
+// Deltas is the temporal differentiator: what changed vs the baseline store.
+type Deltas struct {
+	Against       time.Time  `json:"against"` // timestamp of the baseline compared to
+	YesterdayHour *time.Time `json:"yesterday_hour,omitempty"`
+	Changes       []Delta    `json:"changes"`
+}
+
+type Delta struct {
+	ID            string     `json:"id"`      // e.g. "query.mean_ms", "table.seq_scans"
+	Subject       string     `json:"subject"` // object name / queryid
+	Severity      string     `json:"severity"`
+	Before        float64    `json:"before"`
+	After         float64    `json:"after"`
+	PctChange     *float64   `json:"pct_change,omitempty"` // nil when Before == 0 (new)
+	FirstObserved *time.Time `json:"first_observed,omitempty"`
+	Note          string     `json:"note,omitempty"`
+}

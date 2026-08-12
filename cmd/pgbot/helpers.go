@@ -1,0 +1,44 @@
+package main
+
+import (
+	"os"
+	"strconv"
+
+	"github.com/pgrundev/pgbot/internal/conn"
+	"golang.org/x/term"
+)
+
+func argAt(args []string, i int) string {
+	if i < len(args) {
+		return args[i]
+	}
+	return ""
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// useColor honors --no-color, the NO_COLOR convention, and a non-TTY stdout.
+func useColor(noColorFlag bool) bool {
+	if noColorFlag || os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	return term.IsTerminal(int(os.Stdout.Fd()))
+}
+
+// hostPort pulls the host/port off the pool's config for the baseline
+// fingerprint fallback (used only when the system identifier isn't readable).
+func hostPort(t *conn.Target) (string, string) {
+	cfg := t.Pool.Config().ConnConfig
+	port := "5432"
+	if cfg.Port != 0 {
+		port = strconv.Itoa(int(cfg.Port))
+	}
+	return cfg.Host, port
+}

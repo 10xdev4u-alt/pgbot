@@ -1,0 +1,83 @@
+version: 2
+
+project_name: pgbot
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: pgbot
+    main: ./cmd/pgbot
+    binary: pgbot
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: pgbot
+    formats: [tar.gz]
+    name_template: "pgbot_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+
+# SHA256 checksums — the install script verifies against this before chmod +x.
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+# Keyless signing of the checksum file with cosign. A curl|sh installer that
+# fetches an unverified binary is a supply-chain hazard; publishing a signed
+# checksum lets the paranoid verify provenance.
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
+      - "--yes"
+      - "${artifact}"
+    artifacts: checksum
+    output: true
+
+nfpms:
+  - id: pgbot
+    package_name: pgbot
+    vendor: pgrun.dev
+    homepage: https://pgbot.dev
+    maintainer: pgrun <hello@pgrun.dev>
+    description: In-database observability for PostgreSQL.
+    license: Apache-2.0
+    formats: [deb, rpm]
+    bindir: /usr/bin
+
+dockers:
+  - image_templates:
+      - "ghcr.io/pgrundev/pgbot:{{ .Version }}-amd64"
+    dockerfile: Dockerfile
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/amd64"
+    goarch: amd64
+
+release:
+  github:
+    owner: pgrundev
+    name: pgbot
+  prerelease: auto
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"

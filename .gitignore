@@ -1,0 +1,6 @@
+/bin/
+/dist/
+*.db
+*.db-wal
+*.db-shm
+pgrun_metrcis2.mp4
