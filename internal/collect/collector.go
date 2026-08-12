@@ -1,0 +1,140 @@
+// Package collect runs the read-only diagnostic SQL and turns it into a
+// model.Context. Each domain is a Collector; the runner double-samples counters
+// (each sample in its own short transaction) and rate-computes them, and reads
+// gauges once. One file per collector; SQL lives in go:embed'd .sql files.
+package collect
+
+import (
+	"context"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/pgrundev/pgbot/internal/conn"
+	"github.com/pgrundev/pgbot/internal/model"
+)
+
+// Kind decides how the runner samples a collector.
+type Kind int
+
+const (
+	KindGauge   Kind = iota // read once (current state)
+	KindCounter             // read twice; the delta over the interval is a rate
+)
+
+// Options tune a collection run.
+type Options struct {
+	Interval     time.Duration // gap between the two counter samples (default 1s, min 500ms)
+	Deadline     time.Duration // hard cap on total wall time (default 5s + interval)
+	RawQueryText bool          // keep raw pg_stat_activity query text (default: scrub — PII)
+}
+
+func (o Options) interval() time.Duration {
+	if o.Interval < 500*time.Millisecond {
+		return time.Second
+	}
+	return o.Interval
+}
+
+// sampled holds what one collector produced: A (and B for counters), or an error.
+type sampled struct {
+	A   any
+	B   any
+	Err error
+}
+
+// Collector reads one diagnostic domain and writes its section into the Context.
+// Availability is checked against the server's Capabilities; an unavailable or
+// failed collector marks its section unavailable rather than failing the run.
+type Collector interface {
+	Name() string
+	Kind() Kind
+	Available(caps conn.Capabilities) bool
+	Sample(ctx context.Context, t *conn.Target, caps conn.Capabilities) (any, error)
+	Assemble(c *model.Context, caps conn.Capabilities, s sampled, dt time.Duration, opts Options)
+}
+
+// registry is the fixed set of collectors, in report order.
+var registry = []Collector{
+	healthCollector{},
+	activityCollector{},
+	locksCollector{},
+	queriesCollector{},
+	tablesCollector{},
+	indexesCollector{},
+	walCollector{},
+	ioCollector{},
+	replicationCollector{},
+	settingsCollector{},
+}
+
+func nowUTC() time.Time { return time.Now().UTC() }
+
+// unavail builds an unavailable Section, using a (redacted) error as the reason
+// when there is one.
+func unavail(err error, fallback string) model.Section {
+	reason := fallback
+	if err != nil {
+		reason = conn.RedactConnString(err.Error())
+	}
+	return model.Section{Exactness: model.ExactnessUnavailable, Reason: reason}
+}
+
+// newContext seeds the server/window/findings shell that collectors fill in.
+func newContext(caps conn.Capabilities, tB time.Time, dt time.Duration) *model.Context {
+	srv := model.ServerInfo{
+		VersionNum:   caps.VersionNum,
+		VersionText:  caps.VersionText,
+		Database:     caps.Database,
+		Extensions:   caps.Extensions,
+		Capabilities: caps.Satisfied(),
+		HasPgMonitor: caps.HasPgMonitor,
+	}
+	if !caps.StartedAt.IsZero() {
+		started := caps.StartedAt.UTC()
+		srv.StartedAt = &started
+		srv.UptimeSeconds = int64(tB.Sub(started).Seconds())
+	}
+	return &model.Context{
+		SchemaVersion: model.SchemaVersion,
+		CollectedAt:   tB,
+		Server:        srv,
+		Window:        model.Window{SampleSeconds: round2(dt.Seconds())},
+		Findings:      []model.Finding{},
+	}
+}
+
+// ---- shared query helpers: each runs in its own READ ONLY transaction ----
+
+func queryOne[T any](ctx context.Context, t *conn.Target, sql string, args ...any) (T, error) {
+	var out T
+	err := t.ReadOnlyTx(ctx, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, sql, args...)
+		if err != nil {
+			return err
+		}
+		out, err = pgx.CollectExactlyOneRow(rows, pgx.RowToStructByNameLax[T])
+		return err
+	})
+	return out, err
+}
+
+func queryMany[T any](ctx context.Context, t *conn.Target, sql string, args ...any) ([]T, error) {
+	var out []T
+	err := t.ReadOnlyTx(ctx, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, sql, args...)
+		if err != nil {
+			return err
+		}
+		out, err = pgx.CollectRows(rows, pgx.RowToStructByNameLax[T])
+		return err
+	})
+	return out, err
+}
+
+func scalar[T any](ctx context.Context, t *conn.Target, sql string, args ...any) (T, error) {
+	var out T
+	err := t.ReadOnlyTx(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, sql, args...).Scan(&out)
+	})
+	return out, err
+}
