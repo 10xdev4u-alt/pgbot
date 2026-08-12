@@ -55,6 +55,7 @@ type ServerInfo struct {
 	VersionNum    int        `json:"version_num"`
 	VersionText   string     `json:"version_text"`
 	Database      string     `json:"database"`
+	ViaPooler     bool       `json:"via_pooler,omitempty"` // connected through a transaction pooler (rates still correct)
 	StartedAt     *time.Time `json:"started_at,omitempty"` // pg_postmaster_start_time()
 	UptimeSeconds int64      `json:"uptime_seconds"`
 	Extensions    []string   `json:"extensions"`

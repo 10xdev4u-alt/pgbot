@@ -82,11 +82,17 @@ func (healthCollector) Assemble(c *model.Context, _ conn.Capabilities, s sampled
 	} else {
 		h.Section = model.Section{Exactness: model.ExactnessSampled}
 	}
-	// The stats-reset age lives on the window (health is where we learn it).
-	if b.StatsReset != nil {
-		c.Window.StatsResetAt = b.StatsReset
-		days := c.CollectedAt.Sub(*b.StatsReset).Hours() / 24
-		c.Window.StatsWindowDays = round2p(rate.Ptr(days))
-	}
+	setStatsWindow(c, b.StatsReset)
 	c.Health = h
+}
+
+// setStatsWindow records the stats-reset age on the window (health is where we
+// learn it). T2 uses these fields for cold-start / reset detection.
+func setStatsWindow(c *model.Context, statsReset *time.Time) {
+	if statsReset == nil {
+		return
+	}
+	c.Window.StatsResetAt = statsReset
+	days := c.CollectedAt.Sub(*statsReset).Hours() / 24
+	c.Window.StatsWindowDays = round2p(rate.Ptr(days))
 }

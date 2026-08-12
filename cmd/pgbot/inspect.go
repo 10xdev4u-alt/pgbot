@@ -25,12 +25,13 @@ const (
 )
 
 type inspectFlags struct {
-	json       bool
-	interval   time.Duration
-	noColor    bool
-	noStore    bool
-	storePath  string
-	rawQueries bool
+	json         bool
+	interval     time.Duration
+	noColor      bool
+	noStore      bool
+	storePath    string
+	rawQueries   bool
+	strictPooler bool
 }
 
 func newInspectCmd() *cobra.Command {
@@ -54,6 +55,7 @@ func newInspectCmd() *cobra.Command {
 	fl.BoolVar(&f.noStore, "no-store", false, "do not read or write the local baseline store")
 	fl.StringVar(&f.storePath, "store", "", "baseline DB path (default: XDG state dir)")
 	fl.BoolVar(&f.rawQueries, "raw-query-text", false, "keep raw pg_stat_activity query text (never sent anywhere; PII risk)")
+	fl.BoolVar(&f.strictPooler, "strict-pooler", false, "refuse (exit 3) if connected through a transaction pooler; default proceeds since rates stay correct")
 	return cmd
 }
 
@@ -72,6 +74,19 @@ func runInspect(cmd *cobra.Command, args []string, f inspectFlags) error {
 	}
 	defer target.Close()
 
+	// Transaction poolers: pgbot's rates stay correct behind one (each counter is
+	// read in its own transaction; pg_stat_* are cluster-wide), so we proceed by
+	// default and just note it. --strict-pooler refuses for the cautious. We do
+	// automatically fall back to the simple wire protocol when the pooler rejects
+	// prepared statements (handled in conn.Connect).
+	if target.Pooler.Detected {
+		if f.strictPooler {
+			fmt.Fprintln(os.Stderr, target.Pooler.StrictMessage())
+			os.Exit(exitFailure)
+		}
+		fmt.Fprintln(os.Stderr, target.Pooler.Note())
+	}
+
 	// --raw-query-text keeps literal SQL from pg_stat_activity (a PII vector).
 	// There is no LLM/remote destination in slice 1, so it only affects local
 	// output; warn loudly regardless.
@@ -82,6 +97,7 @@ func runInspect(cmd *cobra.Command, args []string, f inspectFlags) error {
 	if err != nil {
 		return fmt.Errorf("collect: %s", conn.RedactConnString(err.Error()))
 	}
+	c.Server.ViaPooler = target.Pooler.Detected
 
 	// Fingerprint the target so baselines survive host/rename changes.
 	host, port := hostPort(target)

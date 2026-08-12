@@ -13,8 +13,9 @@ import (
 // pool is small (max 4) so a burst of concurrent collectors can't itself become
 // a connection storm on the database it was invoked to inspect.
 type Target struct {
-	Pool *pgxpool.Pool
-	Caps Capabilities
+	Pool   *pgxpool.Pool
+	Caps   Capabilities
+	Pooler PoolerInfo
 }
 
 const maxConns = 4
@@ -32,11 +33,15 @@ func Connect(ctx context.Context, connString string) (*Target, error) {
 	cfg.MaxConnLifetime = 5 * time.Minute
 	cfg.ConnConfig.RuntimeParams["application_name"] = "pgbot"
 
-	// Probe capabilities on a throwaway connection first so AfterConnect can
-	// apply only the GUCs this server version understands.
-	caps, err := probe(ctx, cfg.ConnConfig.Copy())
+	// Probe capabilities + pooler on a throwaway connection first, so AfterConnect
+	// applies only the GUCs this server understands and the pool uses the right
+	// wire protocol.
+	caps, pooler, err := probe(ctx, cfg.ConnConfig.Copy())
 	if err != nil {
 		return nil, err
+	}
+	if pooler.SimpleProtocol {
+		cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
 	}
 
 	cfg.AfterConnect = func(ctx context.Context, c *pgx.Conn) error {
@@ -47,7 +52,7 @@ func Connect(ctx context.Context, connString string) (*Target, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open pool: %w", err)
 	}
-	return &Target{Pool: pool, Caps: caps}, nil
+	return &Target{Pool: pool, Caps: caps, Pooler: pooler}, nil
 }
 
 func (t *Target) Close() {
@@ -85,12 +90,20 @@ func applySessionSetup(ctx context.Context, c *pgx.Conn, caps Capabilities) erro
 // probe reads server_version_num, installed extensions, role membership, and
 // the system identifier in one round trip (with a best-effort fallback for the
 // identifier, which needs elevated read access on some managed providers).
-func probe(ctx context.Context, cc *pgx.ConnConfig) (Capabilities, error) {
+func probe(ctx context.Context, cc *pgx.ConnConfig) (Capabilities, PoolerInfo, error) {
 	c, err := pgx.ConnectConfig(ctx, cc)
 	if err != nil {
-		return Capabilities{}, fmt.Errorf("connect: %w", err)
+		return Capabilities{}, PoolerInfo{}, fmt.Errorf("connect: %w", err)
 	}
 	defer c.Close(ctx)
+
+	// Detect the pooler first — if prepared statements are broken, every later
+	// query on this probe connection must use the simple protocol too.
+	pooler := detectPooler(ctx, c, cc)
+	mode := []any{}
+	if pooler.SimpleProtocol {
+		mode = []any{pgx.QueryExecModeSimpleProtocol}
+	}
 
 	var caps Capabilities
 	const q = `
@@ -101,25 +114,25 @@ func probe(ctx context.Context, cc *pgx.ConnConfig) (Capabilities, error) {
 		       (SELECT count(*) FROM pg_extension WHERE extname = 'pg_stat_statements') > 0,
 		       (SELECT count(*) FROM pg_extension WHERE extname = 'hypopg') > 0,
 		       pg_has_role(current_user, 'pg_monitor', 'MEMBER')`
-	err = c.QueryRow(ctx, q).Scan(&caps.VersionNum, &caps.VersionText, &caps.Database,
+	err = c.QueryRow(ctx, q, mode...).Scan(&caps.VersionNum, &caps.VersionText, &caps.Database,
 		&caps.StartedAt, &caps.HasStatStatements, &caps.HasHypopg, &caps.HasPgMonitor)
 	if err != nil {
-		return Capabilities{}, fmt.Errorf("probe capabilities: %w", err)
+		return Capabilities{}, pooler, fmt.Errorf("probe capabilities: %w", err)
 	}
 
 	// system_identifier makes the baseline fingerprint survive a restore/rename;
 	// it needs pg_monitor/superuser on some providers, so it's best-effort.
 	var sysID int64
-	if err := c.QueryRow(ctx, `SELECT system_identifier FROM pg_control_system()`).Scan(&sysID); err == nil {
+	if err := c.QueryRow(ctx, `SELECT system_identifier FROM pg_control_system()`, mode...).Scan(&sysID); err == nil {
 		caps.SystemIdentifier = fmt.Sprintf("%d", sysID)
 	}
 
-	if rows, err := c.Query(ctx, `SELECT extname FROM pg_extension ORDER BY extname`); err == nil {
+	if rows, err := c.Query(ctx, `SELECT extname FROM pg_extension ORDER BY extname`, mode...); err == nil {
 		if exts, err := pgx.CollectRows(rows, pgx.RowTo[string]); err == nil {
 			caps.Extensions = exts
 		}
 	}
-	return caps, nil
+	return caps, pooler, nil
 }
 
 // ReadOnlyTx runs fn inside its own short READ ONLY transaction and always rolls

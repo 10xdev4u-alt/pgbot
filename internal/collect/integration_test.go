@@ -65,6 +65,31 @@ func TestIntegration_fullPipeline(t *testing.T) {
 	}
 }
 
+// TestIntegration_poolerRatesStayCorrect asserts pgbot's central pooler claim:
+// behind a transaction pooler, rates are still correct (each counter is read in
+// its own transaction; pg_stat_* are cluster-wide). Point PGBOT_POOLER_DSN at a
+// PgBouncer/Supabase/Neon pooled endpoint with write load in flight.
+func TestIntegration_poolerRatesStayCorrect(t *testing.T) {
+	dsn := os.Getenv("PGBOT_POOLER_DSN")
+	if dsn == "" || os.Getenv("PGBOT_TEST_LOAD") == "" {
+		t.Skip("set PGBOT_POOLER_DSN + PGBOT_TEST_LOAD (with write load running) to run")
+	}
+	ctx := context.Background()
+	target, err := conn.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer target.Close()
+	t.Logf("pooler detected by signature: %v", target.Pooler.Detected)
+	c, err := collect.Run(ctx, target, collect.Options{Interval: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Health == nil || c.Health.TPS == nil || *c.Health.TPS <= 0 {
+		t.Errorf("rates must stay correct behind a pooler, got %+v", c.Health)
+	}
+}
+
 // TestIntegration_nonZeroTPS is the stats-caching regression guard: with write
 // load in flight, the double-sampled rate must be non-zero. Requires the caller
 // to generate concurrent commits (CI does).
