@@ -31,6 +31,7 @@ func Compute(c *model.Context) []model.Finding {
 	add := func(x model.Finding) { f = append(f, x) }
 
 	blockingChains(c, add)
+	invalidIndexes(c, add)
 	unusedIndexes(c, add)
 	seqScanHeavy(c, add)
 	bloatedTables(c, add)
@@ -74,6 +75,30 @@ func blockingChains(c *model.Context, add func(model.Finding)) {
 		Title:    fmt.Sprintf("%d session(s) blocked on locks right now", c.Locks.BlockedCount),
 		Detail:   "One or more sessions are waiting on locks held by others. Sustained blocking stalls throughput and can cascade.",
 		Evidence: ev, Impact: "Queries queue behind the lock holder; latency spikes until it commits or is terminated.",
+	})
+}
+
+// invalidIndexes flags indexes with indisvalid=false — a failed CREATE INDEX
+// CONCURRENTLY. It costs write throughput, serves no reads, and almost nobody
+// notices. This is a gauge (valid immediately, even on a cold window).
+func invalidIndexes(c *model.Context, add func(model.Finding)) {
+	if c.Schema == nil {
+		return
+	}
+	var ev []string
+	for _, o := range c.Schema.Objects {
+		if o.Kind == "index" && o.Invalid {
+			ev = append(ev, o.Identity)
+		}
+	}
+	if len(ev) == 0 {
+		return
+	}
+	add(model.Finding{
+		ID: "index_invalid", Severity: model.SeverityCritical,
+		Title:    fmt.Sprintf("%d invalid index(es) — failed CREATE INDEX CONCURRENTLY", len(ev)),
+		Detail:   "An invalid index is never used to serve reads but is still maintained on every write. It's the leftover of a CREATE INDEX CONCURRENTLY that failed partway.",
+		Evidence: cap10(ev), Impact: "Drop and recreate it: DROP INDEX CONCURRENTLY <name>; then rebuild.",
 	})
 }
 

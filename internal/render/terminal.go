@@ -92,6 +92,7 @@ func Terminal(w io.Writer, c *model.Context, opts Options) error {
 	renderTables(&b, st, c)
 	renderIndexes(&b, st, c)
 	renderInfra(&b, st, c)
+	renderEvents(&b, st, c)
 	renderChanges(&b, st, c)
 
 	// Footer.
@@ -309,6 +310,49 @@ func renderInfra(b *strings.Builder, st styler, c *model.Context) {
 		fmt.Fprintf(b, "%s  %s   %d non-default parameters (see --json)\n", st.head("SETTINGS"), st.dim("scraped"), len(keys))
 	}
 	fmt.Fprintln(b)
+}
+
+func renderEvents(b *strings.Builder, st styler, c *model.Context) {
+	if len(c.Events) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "%s\n", st.head("WHAT CHANGED"))
+	for _, e := range c.Events {
+		fmt.Fprintf(b, "  %s %s\n", st.dim("·"), eventLine(e))
+	}
+	fmt.Fprintln(b)
+}
+
+// eventLine renders an event with honest timing: a real timestamp when we have
+// one (reset/restart, confidence 1.0), otherwise a "between A and B" range —
+// never a precise time we merely inferred.
+func eventLine(e model.Event) string {
+	subject := e.Object
+	verb := strings.TrimPrefix(e.Kind, "schema.")
+	verb = strings.ReplaceAll(verb, "_", " ")
+
+	var change string
+	switch {
+	case e.Kind == "config.changed" && e.Before != "" && e.After != "":
+		change = fmt.Sprintf("config %s %s → %s", subject, e.Before, e.After)
+	case e.Kind == "config.changed":
+		change = fmt.Sprintf("config %s %s%s", subject, e.Before, e.After) // one side empty
+	case e.Kind == "server.restarted":
+		change = "server restarted"
+	case e.Kind == "stats.reset":
+		change = "statistics reset"
+	default:
+		change = fmt.Sprintf("%s %s", subject, verb) // e.g. "public.orders.idx dropped"
+	}
+
+	when := ""
+	switch {
+	case e.Confidence >= 1.0 && e.OccurredAfter != nil:
+		when = " at " + e.OccurredAfter.Format("15:04")
+	case e.OccurredAfter != nil && e.OccurredBefore != nil:
+		when = fmt.Sprintf(" between %s and %s", e.OccurredAfter.Format("15:04"), e.OccurredBefore.Format("15:04"))
+	}
+	return change + when
 }
 
 func renderChanges(b *strings.Builder, st styler, c *model.Context) {

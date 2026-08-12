@@ -50,7 +50,44 @@ type Context struct {
 	// Set (with Deltas nil) when a stats reset / restart between runs makes any
 	// comparison fiction — e.g. serverless scale-to-zero. See T2.
 	DeltaSuppressedReason string    `json:"delta_suppressed_reason,omitempty"`
+	Events                []Event   `json:"events,omitempty"` // what changed since the last run (T7)
 	Findings              []Finding `json:"findings"`
+
+	// Schema is the current schema fingerprint — used to derive events and stored
+	// separately; it is NOT part of the JSON contract (too large, and it can echo
+	// object names repeatedly).
+	Schema *SchemaFingerprint `json:"-"`
+}
+
+// Event is a derived change in the database's schema, configuration, or
+// lifecycle since the previous run. Most schema changes are only known to have
+// happened SOMEWHERE in a time range (OccurredAfter..OccurredBefore) — pgbot
+// never renders a precise time it merely inferred.
+type Event struct {
+	Kind           string     `json:"kind"` // schema.index_dropped, config.changed, server.restarted, stats.reset, ...
+	Object         string     `json:"object,omitempty"`
+	Before         string     `json:"before,omitempty"`
+	After          string     `json:"after,omitempty"`
+	OccurredAfter  *time.Time `json:"occurred_after,omitempty"`
+	OccurredBefore *time.Time `json:"occurred_before,omitempty"`
+	Confidence     float64    `json:"confidence"` // 1.0 for real timestamps (reset/restart), lower for inferred ranges
+}
+
+// SchemaFingerprint is the set of schema objects at one moment, hashed for
+// cheap diffing.
+type SchemaFingerprint struct {
+	Objects []SchemaObject
+}
+
+// SchemaObject identifies one catalog object and a hash of its definition.
+// Column definitions encode type/nullability/has-default only — never the
+// default EXPRESSION, which can contain literal values.
+type SchemaObject struct {
+	Kind           string // table | column | index | constraint | extension | sequence
+	Identity       string // e.g. "public.orders" or "public.orders.orders_pkey"
+	Definition     string
+	DefinitionHash string
+	Invalid        bool // indexes only: indisvalid = false (a failed CREATE INDEX CONCURRENTLY)
 }
 
 // ServerInfo is what we learned at connect time.

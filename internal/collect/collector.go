@@ -61,6 +61,7 @@ var registry = []Collector{
 	queriesCollector{},
 	tablesCollector{},
 	indexesCollector{},
+	schemaCollector{},
 	walCollector{},
 	ioCollector{},
 	replicationCollector{},

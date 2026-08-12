@@ -9,6 +9,7 @@ import (
 	"github.com/pgrundev/pgbot/internal/collect"
 	"github.com/pgrundev/pgbot/internal/conn"
 	"github.com/pgrundev/pgbot/internal/diff"
+	"github.com/pgrundev/pgbot/internal/events"
 	"github.com/pgrundev/pgbot/internal/findings"
 	"github.com/pgrundev/pgbot/internal/model"
 	"github.com/pgrundev/pgbot/internal/render"
@@ -141,29 +142,42 @@ func withStore(path string, c *model.Context) (map[string][]float64, string) {
 	defer st.Close()
 
 	now := c.CollectedAt
-	// Prefer a baseline at least 15 minutes old (avoids same-minute noise); fall
-	// back to the most recent prior run so two back-to-back inspects still diff.
-	// This runs before Save, so "most recent" is genuinely an earlier run.
-	prev, _ := st.Previous(c.Fingerprint, now, 15*time.Minute)
-	if prev == nil {
-		prev, _ = st.Previous(c.Fingerprint, now, 0)
-	}
-	if prev != nil {
+	// The immediately-previous run drives events + reset detection.
+	last, _ := st.Previous(c.Fingerprint, now, 0)
+	if last != nil {
+		// Derive what changed (schema/config/lifecycle) vs the last run.
+		prevSchema, _ := st.LoadLatestSchema(c.Fingerprint)
+		c.Events = events.Derive(c, prevSchema, settingsOf(last.Context), last.CollectedAt)
+
 		// A stats reset / restart between runs makes every delta fiction — suppress
 		// the whole section rather than reporting a wake as a -99.97% change.
-		if reason := diff.StatsResetBetween(prev.Context, c); reason != "" {
+		if reason := diff.StatsResetBetween(last.Context, c); reason != "" {
 			c.DeltaSuppressedReason = reason
 		} else {
+			// Prefer a baseline ≥15min old for deltas (avoids same-minute noise);
+			// fall back to the last run so two back-to-back inspects still diff.
+			baseline := last
+			if aged, _ := st.Previous(c.Fingerprint, now, 15*time.Minute); aged != nil {
+				baseline = aged
+			}
 			var yday *diff.Baseline
 			if y, err := st.SameHourYesterday(c.Fingerprint, now); err == nil && y != nil {
 				yday = &diff.Baseline{CollectedAt: y.CollectedAt, Context: y.Context}
 			}
-			c.Deltas = diff.Compute(c, &diff.Baseline{CollectedAt: prev.CollectedAt, Context: prev.Context}, yday)
+			c.Deltas = diff.Compute(c, &diff.Baseline{CollectedAt: baseline.CollectedAt, Context: baseline.Context}, yday)
 		}
 	}
 
-	if _, err := st.Save(c); err != nil {
+	id, err := st.Save(c)
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "pgbot: could not write baseline: "+err.Error())
+	} else {
+		if err := st.SaveSchema(c.Fingerprint, id, c.Schema); err != nil {
+			fmt.Fprintln(os.Stderr, "pgbot: could not store schema fingerprint: "+err.Error())
+		}
+		if err := st.AppendEvents(c.Fingerprint, now, c.Events); err != nil {
+			fmt.Fprintln(os.Stderr, "pgbot: could not store events: "+err.Error())
+		}
 	}
 
 	trends := map[string][]float64{}
@@ -173,6 +187,14 @@ func withStore(path string, c *model.Context) (map[string][]float64, string) {
 		}
 	}
 	return trends, st.Path()
+}
+
+// settingsOf safely extracts the config-override map from a stored Context.
+func settingsOf(c *model.Context) map[string]string {
+	if c == nil || c.Settings == nil {
+		return nil
+	}
+	return c.Settings.Overrides
 }
 
 // exitCode maps the worst finding severity to the CI contract.
