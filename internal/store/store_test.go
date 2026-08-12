@@ -100,3 +100,52 @@ func TestListPruneExport(t *testing.T) {
 		t.Errorf("store should be empty after prune, got %+v", items)
 	}
 }
+
+func TestSaveWaitProfile_accumulateAndFold(t *testing.T) {
+	st := tempStore(t)
+	fp := "waitfp"
+	prof := func(lock, cpu int) *model.WaitProfile {
+		return &model.WaitProfile{Available: true, Samples: lock + cpu, Buckets: []model.WaitBucket{
+			{Type: "Lock", Count: lock, Events: []model.WaitEvent{{Event: "transactionid", Count: lock}}},
+			{Type: "CPU", Count: cpu},
+		}}
+	}
+	// Two profiles in the SAME minute accumulate into one minute bucket.
+	base := time.Date(2026, 8, 12, 10, 30, 20, 0, time.UTC)
+	if err := st.SaveWaitProfile(fp, base, prof(30, 10)); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveWaitProfile(fp, base.Add(15*time.Second), prof(10, 5)); err != nil {
+		t.Fatal(err)
+	}
+	var lockSamples int
+	err := st.db.QueryRow(`SELECT samples FROM wait_rollups
+		WHERE target_id=? AND granularity='minute' AND wait_type='Lock' AND wait_event='transactionid'`, fp).Scan(&lockSamples)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lockSamples != 40 {
+		t.Errorf("same-minute Lock samples should accumulate to 40, got %d", lockSamples)
+	}
+
+	// A profile far in the past should end up folded into an hourly bucket by a
+	// later run's prune (minute rows past the 7d horizon are folded).
+	old := base.Add(-10 * 24 * time.Hour)
+	if err := st.SaveWaitProfile(fp, old, prof(5, 5)); err != nil {
+		t.Fatal(err)
+	}
+	// Trigger prune again with a current-time save so the old minute rows fold.
+	if err := st.SaveWaitProfile(fp, base.Add(2*time.Minute), prof(1, 1)); err != nil {
+		t.Fatal(err)
+	}
+	var oldMinute, oldHour int
+	st.db.QueryRow(`SELECT count(*) FROM wait_rollups WHERE target_id=? AND granularity='minute' AND bucket_ts < ?`,
+		fp, base.Add(-7*24*time.Hour).Unix()).Scan(&oldMinute)
+	st.db.QueryRow(`SELECT count(*) FROM wait_rollups WHERE target_id=? AND granularity='hour'`, fp).Scan(&oldHour)
+	if oldMinute != 0 {
+		t.Errorf("aged minute rows should be folded away, %d remain", oldMinute)
+	}
+	if oldHour == 0 {
+		t.Error("aged minute rows should have been folded into hourly buckets")
+	}
+}

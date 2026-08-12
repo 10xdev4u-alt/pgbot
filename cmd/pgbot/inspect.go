@@ -33,6 +33,8 @@ type inspectFlags struct {
 	storePath    string
 	rawQueries   bool
 	strictPooler bool
+	ashHz        int
+	window       time.Duration
 }
 
 func newInspectCmd() *cobra.Command {
@@ -57,6 +59,8 @@ func newInspectCmd() *cobra.Command {
 	fl.StringVar(&f.storePath, "store", "", "baseline DB path (default: XDG state dir)")
 	fl.BoolVar(&f.rawQueries, "raw-query-text", false, "keep raw pg_stat_activity query text (never sent anywhere; PII risk)")
 	fl.BoolVar(&f.strictPooler, "strict-pooler", false, "refuse (exit 3) if connected through a transaction pooler; default proceeds since rates stay correct")
+	fl.IntVar(&f.ashHz, "ash-hz", 10, "active-session sampling rate in Hz (0 disables the wait-event profile)")
+	fl.DurationVar(&f.window, "window", 5*time.Second, "active-session sampling window (how long to profile where time goes)")
 	return cmd
 }
 
@@ -94,7 +98,9 @@ func runInspect(cmd *cobra.Command, args []string, f inspectFlags) error {
 	if f.rawQueries {
 		fmt.Fprintln(os.Stderr, "pgbot: --raw-query-text is set — blocking-chain query text is NOT scrubbed and may contain literal values (PII).")
 	}
-	c, err := collect.Run(ctx, target, collect.Options{Interval: f.interval, RawQueryText: f.rawQueries})
+	c, err := collect.Run(ctx, target, collect.Options{
+		Interval: f.interval, RawQueryText: f.rawQueries, ASHHz: f.ashHz, ASHWindow: f.window,
+	})
 	if err != nil {
 		return fmt.Errorf("collect: %s", conn.RedactConnString(err.Error()))
 	}
@@ -177,6 +183,9 @@ func withStore(path string, c *model.Context) (map[string][]float64, string) {
 		}
 		if err := st.AppendEvents(c.Fingerprint, now, c.Events); err != nil {
 			fmt.Fprintln(os.Stderr, "pgbot: could not store events: "+err.Error())
+		}
+		if err := st.SaveWaitProfile(c.Fingerprint, now, c.WaitProfile); err != nil {
+			fmt.Fprintln(os.Stderr, "pgbot: could not store wait profile: "+err.Error())
 		}
 	}
 

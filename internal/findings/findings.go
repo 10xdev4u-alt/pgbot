@@ -22,6 +22,13 @@ const (
 	rollbackRatioWarn     = 0.10  // >10% of transactions rolling back
 	staleStatsWarnDays    = 30    // rates computed over a very old window are near-meaningless
 	seqScanTableMinRows   = 50000 // only flag seq-scan-heavy on tables big enough to matter
+
+	// Wait-profile (ASH) thresholds. All gated on model.WaitMinSamples — below
+	// that the shares are noise and no wait finding fires.
+	waitLockContentionShare = 0.30 // a query with >30% of ITS samples on Lock:*
+	waitLockQueryMinSamples = 5    // ignore a query seen in only a sample or two
+	waitIOBoundShare        = 0.50 // >50% of the whole window on IO:*
+	waitLWLockShare         = 0.30 // a single LWLock:* event dominating the window
 )
 
 // Compute returns findings sorted most-severe first. Order among equal
@@ -38,6 +45,7 @@ func Compute(c *model.Context) []model.Finding {
 	lowCacheHit(c, add)
 	idleInTransaction(c, add)
 	longRunningXact(c, add)
+	waitFindings(c, add)
 	highRollbacks(c, add)
 	missingPgss(c, add)
 	staleStatsWindow(c, add)
@@ -234,6 +242,65 @@ func longRunningXact(c *model.Context, add func(model.Finding)) {
 	})
 }
 
+// waitFindings reads the ASH profile (T8). It attributes TIME, not events, and
+// works even when the cumulative counters reset minutes ago. Everything here is
+// gated on a minimum sample count: a thin profile is noise, so nothing fires.
+func waitFindings(c *model.Context, add func(model.Finding)) {
+	w := c.WaitProfile
+	if w == nil || !w.Available || w.Thin() {
+		return
+	}
+	share := func(typ string) float64 {
+		for _, b := range w.Buckets {
+			if b.Type == typ {
+				return b.Share
+			}
+		}
+		return 0
+	}
+
+	// Per-query lock contention: a query spending most of its time waiting on
+	// row/transaction locks. Names the query_id so it's actionable.
+	for _, q := range w.ByQuery {
+		if q.Count >= waitLockQueryMinSamples && q.LockShare > waitLockContentionShare {
+			title := fmt.Sprintf("Query %s spends %.0f%% of its time waiting on locks", queryTag(q.QueryID), q.LockShare*100)
+			ev := []string{fmt.Sprintf("query_id %d · %d samples · top wait %s", q.QueryID, q.Count, orNone(q.TopEvent))}
+			if q.SampleText != "" {
+				ev = append(ev, truncate(q.SampleText, 80))
+			}
+			add(model.Finding{
+				ID: "wait_lock_contention", Severity: model.SeverityWarn,
+				Title:    title,
+				Detail:   "This query is mostly blocked on locks held by other sessions, not doing work. Look for a conflicting long transaction, hot-row updates, or a coarse lock.",
+				Evidence: ev, Impact: "Its latency is dominated by lock waits; reducing contention frees it directly.",
+			})
+		}
+	}
+
+	// IO-bound: the whole window dominated by storage reads/writes.
+	if io := share("IO"); io > waitIOBoundShare {
+		add(model.Finding{
+			ID: "wait_io_bound", Severity: model.SeverityWarn,
+			Title:    fmt.Sprintf("%.0f%% of active time was spent waiting on IO", io*100),
+			Detail:   "Most active samples were waiting on the storage layer, not on CPU or locks. The working set may not fit in cache, or a few queries are scanning far more than they return.",
+			Evidence: []string{ioEvidence(w)},
+			Impact:   "Throughput is capped by disk latency; more RAM/shared_buffers or better indexes usually helps.",
+		})
+	}
+
+	// LWLock pressure: a single lightweight-lock event concentrating the window
+	// (e.g. BufferMapping, WALWrite) — an internal-contention smell.
+	if typ, ev, sh := dominantLWLock(w); sh > waitLWLockShare {
+		add(model.Finding{
+			ID: "wait_lwlock_pressure", Severity: model.SeverityWarn,
+			Title:    fmt.Sprintf("%.0f%% of active time on a single lightweight lock (%s)", sh*100, ev),
+			Detail:   "Concentration on one LWLock points at internal contention (buffer mapping, WAL, lock manager) rather than user locks. Often a sign of an undersized buffer cache or very high write concurrency.",
+			Evidence: []string{fmt.Sprintf("%s:%s · %.0f%% of the window", typ, ev, sh*100)},
+			Impact:   "Backends serialize on shared-memory structures; the fix depends on which lock.",
+		})
+	}
+}
+
 func highRollbacks(c *model.Context, add func(model.Finding)) {
 	if c.Health == nil || c.Health.RollbackRatio == nil || *c.Health.RollbackRatio < rollbackRatioWarn {
 		return
@@ -315,4 +382,48 @@ func humanBytes(b int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+// queryTag is a short stable handle for a query_id (pg_stat_statements prints
+// the full 64-bit id, which is unreadable). We show the low 4 hex digits.
+func queryTag(id int64) string { return fmt.Sprintf("%04x", uint64(id)&0xffff) }
+
+func orNone(s string) string {
+	if s == "" {
+		return "(unknown)"
+	}
+	return s
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n-1] + "…"
+}
+
+// ioEvidence names the top specific IO wait event for the finding's evidence.
+func ioEvidence(w *model.WaitProfile) string {
+	for _, b := range w.Buckets {
+		if b.Type == "IO" && len(b.Events) > 0 {
+			return fmt.Sprintf("top IO wait: %s (%.0f%% of the window)", b.Events[0].Event, b.Events[0].Share*100)
+		}
+	}
+	return "IO waits dominate the window"
+}
+
+// dominantLWLock returns the single largest LWLock:event and its share of the
+// whole window, or ("","",0) if there are no LWLock samples.
+func dominantLWLock(w *model.WaitProfile) (typ, event string, share float64) {
+	for _, b := range w.Buckets {
+		if b.Type != "LWLock" {
+			continue
+		}
+		if len(b.Events) > 0 {
+			return "LWLock", b.Events[0].Event, b.Events[0].Share
+		}
+		// No specific event names (rare) — fall back to the bucket share.
+		return "LWLock", "LWLock", b.Share
+	}
+	return "", "", 0
 }

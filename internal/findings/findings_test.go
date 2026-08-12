@@ -114,3 +114,60 @@ func TestUnusedIndexes_belowThresholdIgnored(t *testing.T) {
 		t.Error("a sub-threshold unused index must not be flagged")
 	}
 }
+
+// --- T8: wait-profile findings ---
+
+func waitProfile(samples int, buckets []model.WaitBucket, byQuery []model.QueryWaits) *model.WaitProfile {
+	return &model.WaitProfile{Available: true, Samples: samples, WindowSeconds: 5, Buckets: buckets, ByQuery: byQuery}
+}
+
+func TestWaitFindings_thinProfileFiresNothing(t *testing.T) {
+	// 10 samples (< WaitMinSamples) all on locks: must NOT fire — it's noise.
+	c := &model.Context{WaitProfile: waitProfile(10,
+		[]model.WaitBucket{{Type: "Lock", Count: 10, Share: 1.0, Events: []model.WaitEvent{{Event: "transactionid", Count: 10, Share: 1.0}}}},
+		[]model.QueryWaits{{QueryID: 5, Count: 10, Share: 1.0, LockShare: 1.0}},
+	)}
+	fs := Compute(c)
+	if has(fs, "wait_lock_contention") != nil {
+		t.Error("thin profile (<20 samples) must not fire wait findings")
+	}
+}
+
+func TestWaitFindings_lockContention(t *testing.T) {
+	c := &model.Context{WaitProfile: waitProfile(50,
+		[]model.WaitBucket{
+			{Type: "Lock", Count: 30, Share: 0.6, Events: []model.WaitEvent{{Event: "transactionid", Count: 30, Share: 0.6}}},
+			{Type: "CPU", Count: 20, Share: 0.4},
+		},
+		[]model.QueryWaits{{QueryID: 4242, SampleText: "UPDATE orders SET ...", Count: 30, Share: 0.6, LockShare: 1.0, TopType: "Lock", TopEvent: "Lock:transactionid"}},
+	)}
+	f := has(Compute(c), "wait_lock_contention")
+	if f == nil {
+		t.Fatal("a query >30% on locks (with enough samples) should fire wait_lock_contention")
+	}
+	if f.Severity != model.SeverityWarn {
+		t.Errorf("want warn, got %s", f.Severity)
+	}
+}
+
+func TestWaitFindings_ioBound(t *testing.T) {
+	c := &model.Context{WaitProfile: waitProfile(40,
+		[]model.WaitBucket{
+			{Type: "IO", Count: 24, Share: 0.6, Events: []model.WaitEvent{{Event: "DataFileRead", Count: 24, Share: 0.6}}},
+			{Type: "CPU", Count: 16, Share: 0.4},
+		}, nil,
+	)}
+	if has(Compute(c), "wait_io_bound") == nil {
+		t.Error(">50% IO should fire wait_io_bound")
+	}
+}
+
+func TestWaitFindings_idleDatabaseSilent(t *testing.T) {
+	// 0 samples: an idle database. No wait findings.
+	c := &model.Context{WaitProfile: waitProfile(0, nil, nil)}
+	for _, id := range []string{"wait_lock_contention", "wait_io_bound", "wait_lwlock_pressure"} {
+		if has(Compute(c), id) != nil {
+			t.Errorf("idle database must not fire %s", id)
+		}
+	}
+}

@@ -49,9 +49,10 @@ type Context struct {
 	Deltas        *Deltas      `json:"deltas,omitempty"` // vs baseline; nil on first run
 	// Set (with Deltas nil) when a stats reset / restart between runs makes any
 	// comparison fiction — e.g. serverless scale-to-zero. See T2.
-	DeltaSuppressedReason string    `json:"delta_suppressed_reason,omitempty"`
-	Events                []Event   `json:"events,omitempty"` // what changed since the last run (T7)
-	Findings              []Finding `json:"findings"`
+	DeltaSuppressedReason string       `json:"delta_suppressed_reason,omitempty"`
+	Events                []Event      `json:"events,omitempty"`       // what changed since the last run (T7)
+	WaitProfile           *WaitProfile `json:"wait_profile,omitempty"` // where time went, from ASH sampling (T8)
+	Findings              []Finding    `json:"findings"`
 
 	// Schema is the current schema fingerprint — used to derive events and stored
 	// separately; it is NOT part of the JSON contract (too large, and it can echo
@@ -71,6 +72,54 @@ type Event struct {
 	OccurredAfter  *time.Time `json:"occurred_after,omitempty"`
 	OccurredBefore *time.Time `json:"occurred_before,omitempty"`
 	Confidence     float64    `json:"confidence"` // 1.0 for real timestamps (reset/restart), lower for inferred ranges
+}
+
+// WaitProfile is the result of sampling pg_stat_activity many times over a short
+// window (active-session history): where the database spent its time. It is the
+// only signal that attributes TIME rather than counting events, and the only one
+// that still works when the cumulative counters reset minutes ago (serverless).
+// A profile is a distribution over a sample of moments — never a precise
+// measurement — so it always carries its sample count, and a thin sample (<20)
+// is flagged as noise rather than dressed up as percentages.
+type WaitProfile struct {
+	Available     bool         `json:"available"`
+	Reason        string       `json:"reason,omitempty"`   // why unavailable (sampler disabled/failed)
+	Samples       int          `json:"samples"`            // total active-session samples captured
+	WindowSeconds float64      `json:"window_seconds"`     // wall-clock span the samples cover
+	Buckets       []WaitBucket `json:"buckets,omitempty"`  // by wait_event_type, share-descending (CPU is synthetic)
+	ByQuery       []QueryWaits `json:"by_query,omitempty"` // per query_id attribution (PG14+)
+}
+
+// Thin marks a profile too sparse to read as a percentage breakdown.
+func (w *WaitProfile) Thin() bool { return w != nil && w.Samples < WaitMinSamples }
+
+// WaitMinSamples is the floor below which shares are noise: findings do not fire
+// and the render says so rather than printing a confident-looking breakdown.
+const WaitMinSamples = 20
+
+type WaitBucket struct {
+	Type   string      `json:"type"`  // Lock, LWLock, IO, Client, BufferPin, Timeout, Extension, CPU
+	Count  int         `json:"count"` // samples in this bucket
+	Share  float64     `json:"share"` // Count / total, 0..1
+	Events []WaitEvent `json:"events,omitempty"`
+}
+
+type WaitEvent struct {
+	Event string  `json:"event"` // specific wait_event, e.g. transactionid, DataFileRead
+	Count int     `json:"count"`
+	Share float64 `json:"share"` // Count / total, 0..1
+}
+
+// QueryWaits attributes a share of the window's time to one normalized query.
+type QueryWaits struct {
+	QueryID    int64   `json:"query_id"`
+	SampleText string  `json:"sample_text,omitempty"` // scrubbed prefix, best-effort from the queries collector
+	Count      int     `json:"count"`
+	Share      float64 `json:"share"`      // Count / total window samples, 0..1
+	LockShare  float64 `json:"lock_share"` // fraction of THIS query's samples on Lock:*
+	IOShare    float64 `json:"io_share"`   // fraction on IO:*
+	TopType    string  `json:"top_type,omitempty"`
+	TopEvent   string  `json:"top_event,omitempty"`
 }
 
 // SchemaFingerprint is the set of schema objects at one moment, hashed for

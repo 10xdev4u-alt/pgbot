@@ -87,6 +87,7 @@ func Terminal(w io.Writer, c *model.Context, opts Options) error {
 	renderFindings(&b, st, c.Findings, width)
 	renderHealth(&b, st, c, opts)
 	renderActivity(&b, st, c)
+	renderWaits(&b, st, c)
 	renderLocks(&b, st, c)
 	renderQueries(&b, st, c)
 	renderTables(&b, st, c)
@@ -202,6 +203,91 @@ func renderActivity(b *strings.Builder, st styler, c *model.Context) {
 		fmt.Fprintf(b, "  longest transaction %.0fs · longest active query %.0fs\n", a.LongestXactSec, a.LongestActiveSec)
 	}
 	fmt.Fprintln(b)
+}
+
+// renderWaits shows the ASH profile: where active time went over the sampling
+// window. It is honest about its sample size — a thin profile is labelled as
+// indicative, never dressed up as a confident percentage breakdown.
+func renderWaits(b *strings.Builder, st styler, c *model.Context) {
+	w := c.WaitProfile
+	if w == nil || !w.Available {
+		return // disabled (--ash-hz 0) or sampler failed: say nothing here
+	}
+	if w.Samples == 0 {
+		fmt.Fprintf(b, "%s  %s\n\n", st.head("WHERE TIME WENT"),
+			st.dim(fmt.Sprintf("no active sessions in %ss of sampling — the database was idle", trimZero(w.WindowSeconds))))
+		return
+	}
+
+	header := fmt.Sprintf("%d samples over %ss", w.Samples, trimZero(w.WindowSeconds))
+	fmt.Fprintf(b, "%s  %s\n", st.head("WHERE TIME WENT"), st.dim(header))
+	if w.Thin() {
+		fmt.Fprintf(b, "  %s\n", st.warn(fmt.Sprintf("only %d samples — treat the shares below as indicative, not precise", w.Samples)))
+	}
+
+	// Flatten buckets to "Type:Event share%" lines (CPU has no event), share-desc.
+	type line struct {
+		label string
+		share float64
+		typ   string
+	}
+	var lines []line
+	for _, bk := range w.Buckets {
+		if bk.Type == "CPU" || len(bk.Events) == 0 {
+			lines = append(lines, line{label: bk.Type, share: bk.Share, typ: bk.Type})
+			continue
+		}
+		for _, ev := range bk.Events {
+			lines = append(lines, line{label: bk.Type + ":" + ev.Event, share: ev.Share, typ: bk.Type})
+		}
+	}
+	sort.Slice(lines, func(i, j int) bool { return lines[i].share > lines[j].share })
+	if len(lines) > 6 {
+		lines = lines[:6]
+	}
+
+	lockTop := topLockQuery(w)
+	for _, ln := range lines {
+		attr := ""
+		if ln.typ == "Lock" && lockTop != nil {
+			attr = st.dim(fmt.Sprintf("  query %s%s", queryTag(lockTop.QueryID), sampleParen(lockTop.SampleText)))
+		}
+		fmt.Fprintf(b, "  %-26s %3.0f%%%s\n", ln.label, ln.share*100, attr)
+	}
+	fmt.Fprintln(b)
+}
+
+// topLockQuery returns the query with the most Lock-wait samples, if any.
+func topLockQuery(w *model.WaitProfile) *model.QueryWaits {
+	var best *model.QueryWaits
+	var bestN float64
+	for i := range w.ByQuery {
+		q := &w.ByQuery[i]
+		n := q.LockShare * float64(q.Count)
+		if n > bestN {
+			best, bestN = q, n
+		}
+	}
+	return best
+}
+
+func sampleParen(text string) string {
+	if text == "" {
+		return ""
+	}
+	return " (" + truncate(text, 32) + ")"
+}
+
+// queryTag mirrors findings.queryTag: the low 4 hex digits of a query_id.
+func queryTag(id int64) string { return fmt.Sprintf("%04x", uint64(id)&0xffff) }
+
+// trimZero formats a seconds value without a trailing ".0".
+func trimZero(v float64) string {
+	s := fmt.Sprintf("%.1f", v)
+	if strings.HasSuffix(s, ".0") {
+		return s[:len(s)-2]
+	}
+	return s
 }
 
 func renderLocks(b *strings.Builder, st styler, c *model.Context) {

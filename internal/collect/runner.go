@@ -2,6 +2,7 @@ package collect
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -16,6 +17,14 @@ import (
 // rather than failing the run.
 func Run(ctx context.Context, t *conn.Target, opts Options) (*model.Context, error) {
 	iv := opts.interval()
+	// The active-session sampler (T8) defines the window: it runs concurrently
+	// with the whole two-phase counter collection, polling pg_stat_activity at
+	// ashHz for ashWindow. Stretch the counter interval to cover its window so
+	// both signals describe the same slice of wall-clock time.
+	ashOn := opts.ashHz() > 0
+	if ashOn && opts.ashWindow() > iv {
+		iv = opts.ashWindow()
+	}
 	deadline := opts.Deadline
 	if deadline <= 0 {
 		deadline = 5*time.Second + iv
@@ -26,6 +35,20 @@ func Run(ctx context.Context, t *conn.Target, opts Options) (*model.Context, err
 	caps := t.Caps
 	var mu sync.Mutex
 	results := make(map[string]*sampled, len(registry))
+
+	// The sampler never fails the run — a dead sampler just yields an unavailable
+	// profile. Launch it before phase 1 so its window brackets the counters.
+	var (
+		ash     ashResult
+		ashDone chan struct{}
+	)
+	if ashOn {
+		ashDone = make(chan struct{})
+		go func() {
+			defer close(ashDone)
+			ash = sampleWaits(ctx, t, caps, opts.ashHz(), opts.ashWindow())
+		}()
+	}
 
 	// Phase 1: sample A for every available collector (counters and gauges),
 	// concurrently and bounded to the pool.
@@ -92,5 +115,36 @@ func Run(ctx context.Context, t *conn.Target, opts Options) (*model.Context, err
 		}
 		c.Assemble(out, caps, *s, dt, opts)
 	}
+
+	// Fold in the active-session profile once the sampler has finished its window
+	// (it started before phase 1, so this rarely blocks). Query text for per-query
+	// attribution comes from the queries collector's already-scrubbed normals.
+	if ashOn {
+		<-ashDone
+		// Every poll errored (permissions, statement timeout, connection loss): the
+		// sampler is broken, not the database idle. Mark it unavailable so the
+		// render/findings never mistake a failure for a quiet server.
+		if ash.attempts > 0 && ash.failures == ash.attempts {
+			out.WaitProfile = &model.WaitProfile{Available: false,
+				Reason: fmt.Sprintf("wait sampler failed: all %d polls errored", ash.attempts)}
+		} else {
+			out.WaitProfile = buildWaitProfile(ash.samples, ash.span, queryTexts(out))
+		}
+	} else {
+		out.WaitProfile = &model.WaitProfile{Available: false, Reason: "sampler disabled (--ash-hz 0)"}
+	}
 	return out, nil
+}
+
+// queryTexts maps query_id → scrubbed normalized text from the queries
+// collector, for best-effort per-query attribution in the wait profile.
+func queryTexts(c *model.Context) map[int64]string {
+	if c.Queries == nil {
+		return nil
+	}
+	m := make(map[int64]string, len(c.Queries.Top))
+	for _, q := range c.Queries.Top {
+		m[q.QueryID] = q.Query
+	}
+	return m
 }

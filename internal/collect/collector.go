@@ -26,6 +26,8 @@ type Options struct {
 	Interval     time.Duration // gap between the two counter samples (default 1s, min 500ms)
 	Deadline     time.Duration // hard cap on total wall time (default 5s + interval)
 	RawQueryText bool          // keep raw pg_stat_activity query text (default: scrub — PII)
+	ASHHz        int           // wait-event poll rate in Hz (default 10; 0 disables the sampler)
+	ASHWindow    time.Duration // active-session sampling window (default 5s)
 }
 
 func (o Options) interval() time.Duration {
@@ -33,6 +35,20 @@ func (o Options) interval() time.Duration {
 		return time.Second
 	}
 	return o.Interval
+}
+
+func (o Options) ashHz() int {
+	if o.ASHHz < 0 {
+		return 0
+	}
+	return o.ASHHz
+}
+
+func (o Options) ashWindow() time.Duration {
+	if o.ASHWindow <= 0 {
+		return 5 * time.Second
+	}
+	return o.ASHWindow
 }
 
 // sampled holds what one collector produced: A (and B for counters), or an error.
