@@ -52,12 +52,14 @@ type Context struct {
 
 // ServerInfo is what we learned at connect time.
 type ServerInfo struct {
-	VersionNum   int      `json:"version_num"`
-	VersionText  string   `json:"version_text"`
-	Database     string   `json:"database"`
-	Extensions   []string `json:"extensions"`
-	Capabilities []string `json:"capabilities"` // human-readable flags that were satisfied
-	HasPgMonitor bool     `json:"has_pg_monitor"`
+	VersionNum    int        `json:"version_num"`
+	VersionText   string     `json:"version_text"`
+	Database      string     `json:"database"`
+	StartedAt     *time.Time `json:"started_at,omitempty"` // pg_postmaster_start_time()
+	UptimeSeconds int64      `json:"uptime_seconds"`
+	Extensions    []string   `json:"extensions"`
+	Capabilities  []string   `json:"capabilities"` // human-readable flags that were satisfied
+	HasPgMonitor  bool       `json:"has_pg_monitor"`
 }
 
 // Window describes the sampling interval and how old the underlying stats are.

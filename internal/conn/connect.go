@@ -97,11 +97,12 @@ func probe(ctx context.Context, cc *pgx.ConnConfig) (Capabilities, error) {
 		SELECT current_setting('server_version_num')::int,
 		       version(),
 		       current_database(),
+		       pg_postmaster_start_time(),
 		       (SELECT count(*) FROM pg_extension WHERE extname = 'pg_stat_statements') > 0,
 		       (SELECT count(*) FROM pg_extension WHERE extname = 'hypopg') > 0,
 		       pg_has_role(current_user, 'pg_monitor', 'MEMBER')`
 	err = c.QueryRow(ctx, q).Scan(&caps.VersionNum, &caps.VersionText, &caps.Database,
-		&caps.HasStatStatements, &caps.HasHypopg, &caps.HasPgMonitor)
+		&caps.StartedAt, &caps.HasStatStatements, &caps.HasHypopg, &caps.HasPgMonitor)
 	if err != nil {
 		return Capabilities{}, fmt.Errorf("probe capabilities: %w", err)
 	}

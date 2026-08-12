@@ -1,5 +1,7 @@
 package conn
 
+import "time"
+
 // Capabilities is built once at connect from server_version_num + a probe of
 // installed extensions and the current role. Collectors declare what they need
 // and are SKIPPED (not failed) when a capability is missing — a section is
@@ -8,7 +10,8 @@ type Capabilities struct {
 	VersionNum        int
 	VersionText       string
 	Database          string
-	SystemIdentifier  string // pg_control_system(); "" if not readable
+	StartedAt         time.Time // pg_postmaster_start_time(); zero if not readable
+	SystemIdentifier  string    // pg_control_system(); "" if not readable
 	HasStatStatements bool
 	HasHypopg         bool
 	HasPgMonitor      bool
