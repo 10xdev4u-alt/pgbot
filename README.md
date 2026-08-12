@@ -125,6 +125,16 @@ Collectors degrade rather than fail when a capability is absent:
 
 Tested against PostgreSQL 13–18.
 
+### Managed providers
+
+pgbot detects the platform (RDS, Aurora, Cloud SQL, Azure Flexible Server,
+Supabase, Neon) and prints the provider-specific steps to enable
+`pg_stat_statements` when it's missing. Supabase (`:6543`) and Neon (`-pooler`)
+default to a pooled endpoint, which pgbot notes without degrading its rates;
+Neon's scale-to-zero discards stats, which pgbot handles as a cold window. Full
+per-provider notes and the live-verification checklist are in
+[`docs/providers.md`](docs/providers.md).
+
 ## Serverless Postgres (Neon, scale-to-zero)
 
 Scale-to-zero databases (Neon, Databricks Lakebase, and similar) **discard
