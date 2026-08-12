@@ -1,0 +1,125 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: vet + unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+      - run: go vet ./...
+      - run: go test ./... # DB-dependent tests self-skip without PGBOT_TEST_DSN
+
+  static-check:
+    name: no EXPLAIN ANALYZE
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # pgbot must never execute a query it inspects. EXPLAIN ANALYZE runs the
+      # statement — it must not appear anywhere in the tree.
+      - name: forbid EXPLAIN ANALYZE
+        run: |
+          if grep -rniE 'explain[[:space:]]*(\(|[[:space:]])[^)]*analyze' \
+             --include='*.go' --include='*.sql' . ; then
+            echo "::error::EXPLAIN ANALYZE found — pgbot must never execute inspected queries"
+            exit 1
+          fi
+          echo "clean: no EXPLAIN ANALYZE"
+
+  build:
+    name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, darwin]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+      # CGO must stay off so the binary is static (catches a cgo regression from
+      # a new dependency).
+      - run: CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build ./cmd/pgbot
+
+  integration:
+    name: integration PG${{ matrix.pg }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pg: [13, 14, 15, 16, 17, 18]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+      - name: start PostgreSQL ${{ matrix.pg }} (with pg_stat_statements)
+        run: |
+          docker run -d --name pg -p 5432:5432 -e POSTGRES_PASSWORD=pw \
+            postgres:${{ matrix.pg }} -c shared_preload_libraries=pg_stat_statements
+          for i in $(seq 1 30); do docker exec pg pg_isready -U postgres && break; sleep 1; done
+          docker exec pg psql -U postgres -q \
+            -c "CREATE EXTENSION pg_stat_statements;" \
+            -c "CREATE TABLE people(id serial primary key, email text);" \
+            -c "INSERT INTO people(email) SELECT 'user'||g||'@example.com' FROM generate_series(1,2000) g;" \
+            -c "CREATE ROLE pgbot_ro LOGIN PASSWORD 'ro'; GRANT pg_monitor TO pgbot_ro; GRANT CONNECT ON DATABASE postgres TO pgbot_ro;"
+      - name: run integration suite (full pipeline + PII + rates under load)
+        env:
+          PGBOT_TEST_DSN: postgres://pgbot_ro:ro@127.0.0.1:5432/postgres
+          PGBOT_TEST_LOAD: "1"
+        run: |
+          # concurrent write load so the stats-caching / rate guards are meaningful
+          docker exec pg psql -U postgres -q -c \
+            "DO \$\$ BEGIN FOR i IN 1..200000 LOOP INSERT INTO people(email) VALUES('l@example.com'); IF i%50=0 THEN COMMIT; END IF; END LOOP; END \$\$;" &
+          go test ./internal/collect/ -run Integration -v
+      - name: degrade cleanly without pg_stat_statements
+        run: |
+          docker rm -f pg
+          docker run -d --name pg2 -p 5433:5432 -e POSTGRES_PASSWORD=pw postgres:${{ matrix.pg }}
+          for i in $(seq 1 30); do docker exec pg2 pg_isready -U postgres && break; sleep 1; done
+          docker exec pg2 psql -U postgres -q -c "CREATE TABLE t(id serial primary key);"
+          CGO_ENABLED=0 go build -o pgbot ./cmd/pgbot
+          # a no-pgss run must exit on findings (not error) and mark Queries unavailable
+          ./pgbot inspect "postgres://postgres:pw@127.0.0.1:5433/postgres" --no-store --json \
+            | grep -q '"exactness": "unavailable"' \
+            && echo "queries correctly unavailable" || (echo "::error::no-pgss path broken"; exit 1)
+
+  pooler:
+    name: transaction pooler (rates stay correct)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+      - name: PgBouncer transaction mode in front of Postgres
+        run: |
+          docker network create n
+          docker run -d --name pg --network n -e POSTGRES_PASSWORD=pw \
+            postgres:17 -c shared_preload_libraries=pg_stat_statements
+          for i in $(seq 1 30); do docker exec pg pg_isready -U postgres && break; sleep 1; done
+          docker exec pg psql -U postgres -q -c "CREATE TABLE t(id serial primary key, note text);"
+          # publish on 6543 so the known-endpoint detection also fires
+          docker run -d --name pgb --network n -p 6543:5432 \
+            -e DB_HOST=pg -e DB_USER=postgres -e DB_PASSWORD=pw -e DB_NAME=postgres \
+            -e POOL_MODE=transaction -e AUTH_TYPE=scram-sha-256 edoburu/pgbouncer
+          sleep 5
+      - name: assert rates stay correct behind the pooler
+        env:
+          PGBOT_POOLER_DSN: postgres://postgres:pw@127.0.0.1:6543/postgres
+          PGBOT_TEST_LOAD: "1"
+        run: |
+          docker exec pg psql -U postgres -q -c \
+            "DO \$\$ BEGIN FOR i IN 1..200000 LOOP INSERT INTO t(note) VALUES('x'); IF i%50=0 THEN COMMIT; END IF; END LOOP; END \$\$;" &
+          go test ./internal/collect/ -run Integration_poolerRatesStayCorrect -v
