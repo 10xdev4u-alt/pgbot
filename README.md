@@ -11,22 +11,28 @@ pgbot inspect "postgres://pgbot_ro@host:5432/db"
 ```
 
 ```
-pgbot · app · PostgreSQL 17.10 · 2026-08-12 10:00 UTC
+db.example.com/app · PG 17.10 · window 4h12m
 
-2 finding(s) · 1 warning
+2 thing(s) need attention
+
   ⚠ 3 unused index(es) · 4.2 GiB
-     These indexes have zero scans since stats began...
-     → Reclaims 4.2 GiB. 1 is on a write-heavy table, where it also taxes every INSERT/UPDATE.
-  · pg_stat_statements not enabled
+    ≈4.2 GiB reclaimable · 3 zero-scan index(es), size×write-rate weighted
+    ⚠ but replication is active — these scan counts are from THIS node only
 
-HEALTH  sampled
-  TPS 1.2k   cache hit 99.4%   connections 24   rollbacks 0.2%
-  ▁▂▃▅▇  tps, recent runs
+  ⚠ orders UPDATE spending 44% of its time waiting on locks
+    44% of query 4f2a on locks · ASH: 22/50 samples on Lock:*
 
-CHANGES since 09:14
-  · queryid 4471  2.1 → 8.4  (+300%)  mean execution time per call
-  · public.orders  1.3k → 5.0k  (+284%)  sequential scans surged
+✓ invalid indexes · table bloat · sequential scans · cache hit · WAL
+  · checkpoints · connections · replication · settings
+
+Details: pgbot inspect --full   Machine-readable: --json
 ```
+
+The default report leads with **sentences, not charts** — what needs attention,
+each with its impact and the caveats that matter, then the checks that came back
+clean (a tool that names what it verified reads like a colleague who looked, not
+an alarm). `--full` adds the section tables; `--json` is the complete, versioned
+contract for agents and scripts.
 
 Why it's not just another stats reader: **pgbot remembers.** Every run writes a
 local baseline, so from the third run on it can tell you *what changed and why

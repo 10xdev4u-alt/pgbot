@@ -19,7 +19,9 @@ type Options struct {
 	Color        bool
 	Trends       map[string][]float64
 	BaselinePath string
-	Width        int // terminal width; clamped to a minimum of 80
+	Width        int    // terminal width; clamped to a minimum of 80
+	Full         bool   // --full: the section tables; default is the sentences-first summary
+	Host         string // target host, for the header (optional)
 }
 
 // styler applies lipgloss styles, or no-ops when color is disabled (NO_COLOR,
@@ -44,7 +46,9 @@ func (s styler) warn(text string) string { return s.c("208", true, text) }
 func (s styler) info(text string) string { return s.c("245", false, text) }
 func (s styler) good(text string) string { return s.c("42", false, text) }
 
-// Terminal writes the human report: findings first (sentences), then sections.
+// Terminal writes the human report. The default is sentences-first (T11): what
+// needs attention, then the named checks that passed. --full adds the section
+// tables. Nobody reads charts — the summary is the product.
 func Terminal(w io.Writer, c *model.Context, opts Options) error {
 	st := styler{on: opts.Color}
 	width := opts.Width
@@ -53,12 +57,13 @@ func Terminal(w io.Writer, c *model.Context, opts Options) error {
 	}
 	var b strings.Builder
 
-	// Header line.
-	fmt.Fprintf(&b, "%s · %s · %s · %s\n\n",
-		st.head("pgbot"),
-		c.Server.Database,
-		pgVersion(c.Server.VersionNum),
-		c.CollectedAt.Format("2006-01-02 15:04 MST"))
+	// Header: <host>/<db> · PG <ver> · window <age>.
+	target := c.Server.Database
+	if opts.Host != "" {
+		target = opts.Host + "/" + c.Server.Database
+	}
+	fmt.Fprintf(&b, "%s · %s · window %s\n\n",
+		st.head(target), pgShort(c.Server.VersionNum), windowLabel(c))
 
 	if !c.Server.HasPgMonitor {
 		fmt.Fprintln(&b, st.warn("! role lacks pg_monitor — some stats are partial. Fix: GRANT pg_monitor TO <role>;"))
@@ -84,22 +89,28 @@ func Terminal(w io.Writer, c *model.Context, opts Options) error {
 		fmt.Fprintln(&b)
 	}
 
-	renderFindings(&b, st, c.Findings, width)
-	renderHealth(&b, st, c, opts)
-	renderActivity(&b, st, c)
-	renderWaits(&b, st, c)
-	renderLocks(&b, st, c)
-	renderQueries(&b, st, c)
-	renderTables(&b, st, c)
-	renderIndexes(&b, st, c)
-	renderInfra(&b, st, c)
-	renderEvents(&b, st, c)
-	renderChanges(&b, st, c)
-
-	// Footer.
-	fmt.Fprintln(&b)
-	if opts.BaselinePath != "" {
-		fmt.Fprintln(&b, st.dim("baseline: "+opts.BaselinePath))
+	if opts.Full {
+		// The detailed findings (with evidence + remediation) then every section.
+		renderFindings(&b, st, c.Findings, width)
+		renderHealth(&b, st, c, opts)
+		renderActivity(&b, st, c)
+		renderWaits(&b, st, c)
+		renderLocks(&b, st, c)
+		renderQueries(&b, st, c)
+		renderTables(&b, st, c)
+		renderIndexes(&b, st, c)
+		renderInfra(&b, st, c)
+		renderEvents(&b, st, c)
+		renderChanges(&b, st, c)
+		fmt.Fprintln(&b)
+		if opts.BaselinePath != "" {
+			fmt.Fprintln(&b, st.dim("baseline: "+opts.BaselinePath))
+		}
+	} else {
+		// Sentences-first summary: what needs attention, then what passed.
+		renderSummary(&b, st, c, width)
+		fmt.Fprintln(&b)
+		fmt.Fprintln(&b, st.dim("Details: pgbot inspect --full   Machine-readable: --json"))
 	}
 
 	_, err := io.WriteString(w, b.String())
@@ -173,6 +184,162 @@ func renderFindings(b *strings.Builder, st styler, fs []model.Finding, width int
 		}
 	}
 	fmt.Fprintln(b)
+}
+
+// renderSummary is the default view: the findings that need attention as short
+// sentences, informational notes, then the named checks that passed. It never
+// prints a section table — that's --full.
+func renderSummary(b *strings.Builder, st styler, c *model.Context, width int) {
+	var attention, notes []model.Finding
+	for _, f := range c.Findings {
+		switch f.Severity {
+		case model.SeverityCritical, model.SeverityWarn:
+			attention = append(attention, f)
+		default:
+			notes = append(notes, f)
+		}
+	}
+
+	if len(attention) == 0 {
+		fmt.Fprintln(b, st.good("✓ nothing needs attention"))
+	} else {
+		fmt.Fprintln(b, st.head(fmt.Sprintf("%d thing(s) need attention", len(attention))))
+	}
+	fmt.Fprintln(b)
+
+	for _, f := range attention {
+		icon, color := "⚠", st.warn
+		if f.Severity == model.SeverityCritical {
+			icon, color = "⛔", st.crit
+		}
+		title := f.Title
+		if f.Confidence > 0 && f.Confidence < 0.5 {
+			title += st.dim(" (possible)")
+		}
+		fmt.Fprintf(b, "  %s %s\n", color(icon), color(title))
+		if sub := impactLine(f); sub != "" {
+			fmt.Fprintf(b, "    %s\n", st.dim(sub))
+		}
+		// Caveats stay inline (never a footnote) even in the summary — they are the
+		// clauses that stop a confident recommendation from causing an outage.
+		for _, cav := range f.Caveats {
+			for i, line := range wrapText(cav, width-9) {
+				prefix := "⚠ but "
+				if i > 0 {
+					prefix = "      "
+				}
+				fmt.Fprintf(b, "    %s\n", st.warn(prefix)+st.dim(line))
+			}
+		}
+		fmt.Fprintln(b)
+	}
+
+	if len(notes) > 0 {
+		var titles []string
+		for _, n := range notes {
+			titles = append(titles, n.Title)
+		}
+		for i, line := range wrapText("Notes: "+strings.Join(titles, " · "), width-2) {
+			indent := ""
+			if i > 0 {
+				indent = "  "
+			}
+			fmt.Fprintf(b, "%s%s\n", indent, st.dim(line))
+		}
+		fmt.Fprintln(b)
+	}
+
+	// The ✓ line: name what pgbot checked and found healthy. A tool that only ever
+	// reports problems reads like an alarm; one that names the checks that passed
+	// reads like a colleague who looked.
+	if passed := passedChecks(c); len(passed) > 0 {
+		lines := wrapText(strings.Join(passed, " · "), width-4)
+		for i, line := range lines {
+			prefix := st.good("✓ ")
+			if i > 0 {
+				prefix = "  "
+			}
+			fmt.Fprintf(b, "%s%s\n", prefix, st.good(line))
+		}
+	}
+}
+
+// impactLine is the one-line context under an attention finding: the magnitude
+// and how it was derived, kept compact.
+func impactLine(f model.Finding) string {
+	parts := []string{}
+	if f.Impact.Estimate != "" {
+		parts = append(parts, f.Impact.Estimate)
+	}
+	if f.Impact.Basis != "" {
+		parts = append(parts, f.Impact.Basis)
+	}
+	return strings.Join(parts, " · ")
+}
+
+// check names one thing pgbot examines, its finding id (empty for scrape-only
+// domains that have no failure finding), and whether it was applicable this run.
+type check struct {
+	label      string
+	id         string
+	applicable bool
+}
+
+// passedChecks returns the labels of checks that were evaluated and came back
+// clean — the finding did not fire (or, for scrape-only domains, the section was
+// present). Only names things actually checked, so the ✓ line is never a lie.
+func passedChecks(c *model.Context) []string {
+	fired := map[string]bool{}
+	for _, f := range c.Findings {
+		fired[f.ID] = true
+	}
+	waitUsable := c.WaitProfile != nil && c.WaitProfile.Available && !c.WaitProfile.Thin()
+	checks := []check{
+		{"locks", "blocking_chains", c.Locks != nil},
+		{"invalid indexes", "index_invalid", c.Schema != nil},
+		{"unused indexes", "unused_indexes", c.Indexes != nil && !c.Window.ColdWindow()},
+		{"table bloat", "table_bloat", c.Tables != nil},
+		{"sequential scans", "seq_scan_heavy", c.Tables != nil && !c.Window.ColdWindow()},
+		{"cache hit", "low_cache_hit", c.Health != nil && c.Health.CacheHitRatio != nil && !c.Window.ColdWindow()},
+		{"idle transactions", "idle_in_transaction", c.Activity != nil},
+		{"long transactions", "long_running_transaction", c.Activity != nil},
+		{"rollbacks", "high_rollback_ratio", c.Health != nil && c.Health.RollbackRatio != nil},
+		{"lock waits", "wait_lock_contention", waitUsable},
+		{"IO load", "wait_io_bound", waitUsable},
+		{"query stats", "pg_stat_statements_missing", c.Queries != nil},
+		{"stats freshness", "stale_stats_window", c.Window.StatsWindowDays != nil},
+		// Scrape-only domains: no failure finding, so present ⇒ examined-and-clean.
+		{"replication", "", c.Replication != nil},
+		{"WAL", "", c.WAL != nil},
+		{"checkpoints", "", c.IO != nil},
+		{"connections", "", c.Health != nil},
+		{"settings", "", c.Settings != nil},
+	}
+	var out []string
+	for _, ck := range checks {
+		if ck.applicable && !fired[ck.id] {
+			out = append(out, ck.label)
+		}
+	}
+	return out
+}
+
+// windowLabel renders the stats-window age like "4h12m" / "3d4h" / "45m".
+func windowLabel(c *model.Context) string {
+	if c.Window.WindowAgeSeconds == nil {
+		return "—"
+	}
+	s := *c.Window.WindowAgeSeconds
+	switch {
+	case s >= 86400:
+		return fmt.Sprintf("%dd%dh", s/86400, (s%86400)/3600)
+	case s >= 3600:
+		return fmt.Sprintf("%dh%dm", s/3600, (s%3600)/60)
+	case s >= 60:
+		return fmt.Sprintf("%dm", s/60)
+	default:
+		return fmt.Sprintf("%ds", s)
+	}
 }
 
 func section(b *strings.Builder, st styler, name string, sec model.Section) bool {
@@ -504,6 +671,14 @@ func pgVersion(num int) string {
 	major := num / 10000
 	minor := num % 100
 	return fmt.Sprintf("PostgreSQL %d.%d", major, minor)
+}
+
+// pgShort is the compact header form, e.g. "PG 17.10".
+func pgShort(num int) string {
+	if num == 0 {
+		return "PG"
+	}
+	return fmt.Sprintf("PG %d.%d", num/10000, num%100)
 }
 
 var _ = time.Now // keep time imported for future use

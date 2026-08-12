@@ -35,6 +35,7 @@ type inspectFlags struct {
 	strictPooler bool
 	ashHz        int
 	window       time.Duration
+	full         bool
 }
 
 func newInspectCmd() *cobra.Command {
@@ -61,6 +62,7 @@ func newInspectCmd() *cobra.Command {
 	fl.BoolVar(&f.strictPooler, "strict-pooler", false, "refuse (exit 3) if connected through a transaction pooler; default proceeds since rates stay correct")
 	fl.IntVar(&f.ashHz, "ash-hz", 10, "active-session sampling rate in Hz (0 disables the wait-event profile)")
 	fl.DurationVar(&f.window, "window", 5*time.Second, "active-session sampling window (how long to profile where time goes)")
+	fl.BoolVar(&f.full, "full", false, "print the full section tables; default is the sentences-first summary")
 	return cmd
 }
 
@@ -126,7 +128,8 @@ func runInspect(cmd *cobra.Command, args []string, f inspectFlags) error {
 			return err
 		}
 	} else {
-		opts := render.Options{Color: useColor(f.noColor), Trends: trends, BaselinePath: baselinePath, Width: terminalWidth()}
+		host, _ := hostPort(target)
+		opts := render.Options{Color: useColor(f.noColor), Trends: trends, BaselinePath: baselinePath, Width: terminalWidth(), Full: f.full, Host: host}
 		if err := render.Terminal(os.Stdout, c, opts); err != nil {
 			return err
 		}

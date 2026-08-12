@@ -3,4 +3,8 @@ package model
 // SchemaVersion is the semver of the Context JSON contract. Agents and scripts
 // pin against it, so bump the MAJOR on any breaking field change (removed or
 // renamed field, changed type or units), the MINOR on additive fields.
-const SchemaVersion = "1.0.0"
+//
+// 1.1.0 (Phase 1): additive only — Events, WaitProfile, the T2 window/suppression
+// fields, and Finding.Impact/Confidence/Caveats. No v1.0.0 field changed type or
+// meaning, so a 1.0.0 consumer still parses 1.1.0 output (it ignores the new keys).
+const SchemaVersion = "1.1.0"

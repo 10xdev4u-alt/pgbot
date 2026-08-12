@@ -38,6 +38,12 @@ func terminalWidth() int {
 	if w, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && w > 0 {
 		return w
 	}
+	// Not a TTY (piped/redirected): honor COLUMNS if the caller set it, else 100.
+	if c := os.Getenv("COLUMNS"); c != "" {
+		if w, err := strconv.Atoi(c); err == nil && w > 0 {
+			return w
+		}
+	}
 	return 100
 }
 
