@@ -24,6 +24,12 @@ func firstNonEmpty(vals ...string) string {
 	return ""
 }
 
+// isInteractive reports whether stdin is a terminal — used to decide whether to
+// prompt for confirmation (skip the prompt when piped/scripted).
+func isInteractive() bool {
+	return term.IsTerminal(int(os.Stdin.Fd()))
+}
+
 // useColor honors --no-color, the NO_COLOR convention, and a non-TTY stdout.
 func useColor(noColorFlag bool) bool {
 	if noColorFlag || os.Getenv("NO_COLOR") != "" {

@@ -39,6 +39,15 @@ func (s styler) c(code string, bold bool, text string) string {
 	return st.Render(text)
 }
 
+// Styler exposes the render palette to sibling packages (e.g. the AI section in
+// `pgbot explain`) so they match the rest of the report.
+type Styler struct{ s styler }
+
+// NewStyler returns a palette; color is off when false (NO_COLOR / non-TTY).
+func NewStyler(color bool) Styler    { return Styler{styler{on: color}} }
+func (x Styler) Dim(t string) string { return x.s.dim(t) }
+func (x Styler) AI(t string) string  { return x.s.c("212", true, t) } // magenta — distinctly "not the deterministic report"
+
 func (s styler) dim(text string) string  { return s.c("240", false, text) }
 func (s styler) head(text string) string { return s.c("39", true, text) }
 func (s styler) crit(text string) string { return s.c("196", true, text) }
