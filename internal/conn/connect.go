@@ -106,6 +106,7 @@ func probe(ctx context.Context, cc *pgx.ConnConfig) (Capabilities, PoolerInfo, e
 	}
 
 	var caps Capabilities
+	var mk providerMarkers
 	const q = `
 		SELECT current_setting('server_version_num')::int,
 		       version(),
@@ -113,12 +114,21 @@ func probe(ctx context.Context, cc *pgx.ConnConfig) (Capabilities, PoolerInfo, e
 		       pg_postmaster_start_time(),
 		       (SELECT count(*) FROM pg_extension WHERE extname = 'pg_stat_statements') > 0,
 		       (SELECT count(*) FROM pg_extension WHERE extname = 'hypopg') > 0,
-		       pg_has_role(current_user, 'pg_monitor', 'MEMBER')`
+		       pg_has_role(current_user, 'pg_monitor', 'MEMBER'),
+		       (SELECT count(*) FROM pg_settings WHERE name LIKE 'rds.%') > 0,
+		       (SELECT count(*) FROM pg_settings WHERE name LIKE 'cloudsql.%') > 0,
+		       (SELECT count(*) FROM pg_settings WHERE name LIKE 'azure.%') > 0`
 	err = c.QueryRow(ctx, q, mode...).Scan(&caps.VersionNum, &caps.VersionText, &caps.Database,
-		&caps.StartedAt, &caps.HasStatStatements, &caps.HasHypopg, &caps.HasPgMonitor)
+		&caps.StartedAt, &caps.HasStatStatements, &caps.HasHypopg, &caps.HasPgMonitor,
+		&mk.HasRDS, &mk.HasCloudSQL, &mk.HasAzure)
 	if err != nil {
 		return Capabilities{}, pooler, fmt.Errorf("probe capabilities: %w", err)
 	}
+	// Aurora exposes aurora_version(); a failure just means "not Aurora".
+	var av string
+	mk.IsAurora = c.QueryRow(ctx, `SELECT aurora_version()`, mode...).Scan(&av) == nil
+	mk.Host, mk.VersionText = cc.Host, caps.VersionText
+	caps.Provider = detectProvider(mk)
 
 	// system_identifier makes the baseline fingerprint survive a restore/rename;
 	// it needs pg_monitor/superuser on some providers, so it's best-effort.

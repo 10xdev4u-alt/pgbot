@@ -46,9 +46,11 @@ func (queriesCollector) Sample(ctx context.Context, t *conn.Target, caps conn.Ca
 
 func (queriesCollector) Assemble(c *model.Context, caps conn.Capabilities, s sampled, _ time.Duration, _ Options) {
 	if !caps.HasStatStatements {
+		// A large fraction of first runs (especially RDS/Aurora) land here, so make
+		// it a first-class, provider-specific instruction rather than a dead end.
 		c.Queries = &model.Queries{Enabled: false, Section: model.Section{
 			Exactness: model.ExactnessUnavailable,
-			Reason:    "pg_stat_statements not installed — run CREATE EXTENSION pg_stat_statements;",
+			Reason:    "pg_stat_statements not enabled — " + caps.Provider.PgssInstructions(),
 		}}
 		return
 	}

@@ -10,6 +10,7 @@ type Capabilities struct {
 	VersionNum        int
 	VersionText       string
 	Database          string
+	Provider          Provider  // detected managed platform, for provider-specific fixes
 	StartedAt         time.Time // pg_postmaster_start_time(); zero if not readable
 	SystemIdentifier  string    // pg_control_system(); "" if not readable
 	HasStatStatements bool
