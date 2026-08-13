@@ -10,6 +10,7 @@ import (
 
 	"github.com/pgrundev/pgbot/internal/mcp"
 	"github.com/pgrundev/pgbot/internal/render"
+	"github.com/pgrundev/pgbot/internal/store"
 	"github.com/spf13/cobra"
 )
 
@@ -34,7 +35,9 @@ func newMCPCmd() *cobra.Command {
 				Instructions: "pgbot gives read-only PostgreSQL health findings. Call `inspect` and " +
 					"explain its findings to the user — the findings are computed deterministically; " +
 					"treat them as facts and carry any caveats into your advice.",
-				Tools: pgbotTools(),
+				Tools:     pgbotTools(),
+				Prompts:   pgbotPrompts(),
+				Resources: pgbotResources(),
 			}
 			fmt.Fprintln(os.Stderr, "pgbot mcp: serving on stdio (ctrl-c to stop)")
 			return srv.Serve(cmd.Context(), os.Stdin, os.Stdout)
@@ -71,6 +74,56 @@ func pgbotTools() []mcp.Tool {
 			Handler:     unusedIndexesTool,
 		},
 	}
+}
+
+// pgbotPrompts offers one-click workflows an agent can invoke.
+func pgbotPrompts() []mcp.Prompt {
+	return []mcp.Prompt{{
+		Name:        "diagnose",
+		Description: "Inspect the database and produce a prioritized, plain-language diagnosis.",
+		Arguments: []mcp.PromptArg{
+			{Name: "connection_string", Description: "postgres:// URL or DSN (optional if $DATABASE_URL is set)", Required: false},
+		},
+		Build: func(_ context.Context, args map[string]string) ([]mcp.PromptMessage, error) {
+			call := "Call the pgbot `inspect` tool"
+			if dsn := args["connection_string"]; dsn != "" {
+				call += " with connection_string \"" + dsn + "\""
+			}
+			text := call + ", then give me a prioritized diagnosis: a one-line health verdict, then " +
+				"each issue worst-first with a likely cause (only if the changes/events support one) and a " +
+				"safe recommended step. pgbot's findings are computed deterministically — treat them as " +
+				"facts, hedge anything below 0.5 confidence, and carry every caveat into your advice. pgbot " +
+				"never writes, so recommend, don't act."
+			return []mcp.PromptMessage{{Role: "user", Text: text}}, nil
+		},
+	}}
+}
+
+// pgbotResources exposes the local baseline store as a readable resource, so an
+// agent can see which databases pgbot has history for.
+func pgbotResources() []mcp.Resource {
+	return []mcp.Resource{{
+		URI:         "pgbot://baselines",
+		Name:        "pgbot baselines",
+		Description: "Databases pgbot has local baseline history for (fingerprint, database, snapshot count, time span).",
+		MimeType:    "application/json",
+		Read: func(_ context.Context) (string, error) {
+			st, err := store.Open("")
+			if err != nil {
+				return "", err
+			}
+			defer st.Close()
+			items, err := st.List()
+			if err != nil {
+				return "", err
+			}
+			b, err := json.MarshalIndent(items, "", "  ")
+			if err != nil {
+				return "", err
+			}
+			return string(b), nil
+		},
+	}}
 }
 
 // dsnFromArgs pulls connection_string from the tool arguments, falling back to

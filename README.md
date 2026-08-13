@@ -139,6 +139,11 @@ With `DATABASE_URL` set, the agent calls `inspect` with no arguments; or it can
 pass `connection_string` per call to reach several databases. pgbot never writes,
 so there's nothing an agent can break through it.
 
+It also exposes a **`diagnose` prompt** (a one-click "inspect and give me a
+prioritized diagnosis" workflow) and a **`pgbot://baselines` resource** (the
+databases pgbot has local history for) — so tools, prompts, and resources are all
+available to the agent.
+
 ### `explain` — optional AI layer
 
 `pgbot explain` runs the exact same read-only inspection, prints the

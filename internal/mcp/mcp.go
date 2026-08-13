@@ -23,12 +23,45 @@ type Tool struct {
 	Handler     func(ctx context.Context, args json.RawMessage) (string, error)
 }
 
-// Server serves a fixed set of tools.
+// Prompt is a reusable message template an agent can invoke (a one-click
+// workflow). Build renders it with the caller's arguments.
+type Prompt struct {
+	Name        string
+	Description string
+	Arguments   []PromptArg
+	Build       func(ctx context.Context, args map[string]string) ([]PromptMessage, error)
+}
+
+type PromptArg struct {
+	Name        string
+	Description string
+	Required    bool
+}
+
+// PromptMessage is one turn of a rendered prompt (role "user" or "assistant").
+type PromptMessage struct {
+	Role string
+	Text string
+}
+
+// Resource is a readable blob addressed by URI. Read computes its content on
+// demand, so the URI can be stable while the data (e.g. baselines) changes.
+type Resource struct {
+	URI         string
+	Name        string
+	Description string
+	MimeType    string
+	Read        func(ctx context.Context) (string, error)
+}
+
+// Server serves a fixed set of tools, prompts, and resources.
 type Server struct {
 	Name         string
 	Version      string
 	Instructions string
 	Tools        []Tool
+	Prompts      []Prompt
+	Resources    []Resource
 }
 
 type rpcRequest struct {
@@ -92,9 +125,16 @@ func (s *Server) dispatch(ctx context.Context, raw []byte, w io.Writer, proto *s
 		if p.ProtocolVersion != "" {
 			*proto = p.ProtocolVersion // echo the client's revision for compatibility
 		}
+		caps := map[string]any{"tools": map[string]any{}}
+		if len(s.Prompts) > 0 {
+			caps["prompts"] = map[string]any{}
+		}
+		if len(s.Resources) > 0 {
+			caps["resources"] = map[string]any{}
+		}
 		writeResult(w, req.ID, map[string]any{
 			"protocolVersion": *proto,
-			"capabilities":    map[string]any{"tools": map[string]any{}},
+			"capabilities":    caps,
 			"serverInfo":      map[string]any{"name": s.Name, "version": s.Version},
 			"instructions":    s.Instructions,
 		})
@@ -110,6 +150,18 @@ func (s *Server) dispatch(ctx context.Context, raw []byte, w io.Writer, proto *s
 
 	case "tools/call":
 		s.callTool(ctx, req, w)
+
+	case "prompts/list":
+		writeResult(w, req.ID, map[string]any{"prompts": s.promptDescriptors()})
+
+	case "prompts/get":
+		s.getPrompt(ctx, req, w)
+
+	case "resources/list":
+		writeResult(w, req.ID, map[string]any{"resources": s.resourceDescriptors()})
+
+	case "resources/read":
+		s.readResource(ctx, req, w)
 
 	default:
 		if !isNotification {
@@ -162,6 +214,98 @@ func (s *Server) callTool(ctx context.Context, req rpcRequest, w io.Writer) {
 		return
 	}
 	writeResult(w, req.ID, toolResult(text, false))
+}
+
+func (s *Server) promptDescriptors() []map[string]any {
+	out := make([]map[string]any, 0, len(s.Prompts))
+	for _, p := range s.Prompts {
+		args := make([]map[string]any, 0, len(p.Arguments))
+		for _, a := range p.Arguments {
+			args = append(args, map[string]any{"name": a.Name, "description": a.Description, "required": a.Required})
+		}
+		out = append(out, map[string]any{"name": p.Name, "description": p.Description, "arguments": args})
+	}
+	return out
+}
+
+func (s *Server) getPrompt(ctx context.Context, req rpcRequest, w io.Writer) {
+	var p struct {
+		Name      string            `json:"name"`
+		Arguments map[string]string `json:"arguments"`
+	}
+	if err := json.Unmarshal(req.Params, &p); err != nil {
+		writeErr(w, req.ID, -32602, "invalid params")
+		return
+	}
+	var prompt *Prompt
+	for i := range s.Prompts {
+		if s.Prompts[i].Name == p.Name {
+			prompt = &s.Prompts[i]
+			break
+		}
+	}
+	if prompt == nil {
+		writeErr(w, req.ID, -32602, "unknown prompt: "+p.Name)
+		return
+	}
+	msgs, err := prompt.Build(ctx, p.Arguments)
+	if err != nil {
+		writeErr(w, req.ID, -32603, err.Error())
+		return
+	}
+	rendered := make([]map[string]any, 0, len(msgs))
+	for _, m := range msgs {
+		role := m.Role
+		if role == "" {
+			role = "user"
+		}
+		rendered = append(rendered, map[string]any{
+			"role":    role,
+			"content": map[string]any{"type": "text", "text": m.Text},
+		})
+	}
+	writeResult(w, req.ID, map[string]any{"description": prompt.Description, "messages": rendered})
+}
+
+func (s *Server) resourceDescriptors() []map[string]any {
+	out := make([]map[string]any, 0, len(s.Resources))
+	for _, r := range s.Resources {
+		out = append(out, map[string]any{"uri": r.URI, "name": r.Name, "description": r.Description, "mimeType": r.MimeType})
+	}
+	return out
+}
+
+func (s *Server) readResource(ctx context.Context, req rpcRequest, w io.Writer) {
+	var p struct {
+		URI string `json:"uri"`
+	}
+	if err := json.Unmarshal(req.Params, &p); err != nil {
+		writeErr(w, req.ID, -32602, "invalid params")
+		return
+	}
+	var res *Resource
+	for i := range s.Resources {
+		if s.Resources[i].URI == p.URI {
+			res = &s.Resources[i]
+			break
+		}
+	}
+	if res == nil {
+		writeErr(w, req.ID, -32602, "unknown resource: "+p.URI)
+		return
+	}
+	text, err := res.Read(ctx)
+	if err != nil {
+		writeErr(w, req.ID, -32603, err.Error())
+		return
+	}
+	mime := res.MimeType
+	if mime == "" {
+		mime = "text/plain"
+	}
+	writeResult(w, req.ID, map[string]any{
+		"contents": []map[string]any{{"uri": res.URI, "mimeType": mime, "text": text}},
+	})
 }
 
 func toolResult(text string, isErr bool) map[string]any {

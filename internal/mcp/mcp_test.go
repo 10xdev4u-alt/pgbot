@@ -89,6 +89,55 @@ func TestServe_handshakeListAndCall(t *testing.T) {
 	}
 }
 
+func TestServe_promptsAndResources(t *testing.T) {
+	srv := &Server{
+		Name: "pgbot", Version: "test",
+		Prompts: []Prompt{{
+			Name: "diagnose", Description: "diagnose it",
+			Arguments: []PromptArg{{Name: "connection_string"}},
+			Build: func(_ context.Context, args map[string]string) ([]PromptMessage, error) {
+				return []PromptMessage{{Role: "user", Text: "inspect " + args["connection_string"]}}, nil
+			},
+		}},
+		Resources: []Resource{{
+			URI: "pgbot://baselines", Name: "baselines", MimeType: "application/json",
+			Read: func(context.Context) (string, error) { return `[{"database":"app"}]`, nil },
+		}},
+	}
+	in := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"prompts/list"}`,
+		`{"jsonrpc":"2.0","id":3,"method":"prompts/get","params":{"name":"diagnose","arguments":{"connection_string":"pg://x"}}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"resources/list"}`,
+		`{"jsonrpc":"2.0","id":5,"method":"resources/read","params":{"uri":"pgbot://baselines"}}`,
+	}, "\n") + "\n"
+	var out bytes.Buffer
+	if err := srv.Serve(context.Background(), strings.NewReader(in), &out); err != nil {
+		t.Fatal(err)
+	}
+	m := decode(t, out.String())
+
+	// initialize advertises prompts + resources capabilities.
+	caps := m[0]["result"].(map[string]any)["capabilities"].(map[string]any)
+	if _, ok := caps["prompts"]; !ok {
+		t.Error("initialize should advertise the prompts capability")
+	}
+	if _, ok := caps["resources"]; !ok {
+		t.Error("initialize should advertise the resources capability")
+	}
+	// prompts/get renders with the argument.
+	msgs := m[2]["result"].(map[string]any)["messages"].([]any)
+	txt := msgs[0].(map[string]any)["content"].(map[string]any)["text"].(string)
+	if !strings.Contains(txt, "pg://x") {
+		t.Errorf("prompt should interpolate the argument, got %q", txt)
+	}
+	// resources/read returns the content for the URI.
+	contents := m[4]["result"].(map[string]any)["contents"].([]any)
+	if got := contents[0].(map[string]any)["text"].(string); !strings.Contains(got, "app") {
+		t.Errorf("resource read wrong: %q", got)
+	}
+}
+
 func TestServe_toolErrorIsResultNotTransportError(t *testing.T) {
 	srv := &Server{Name: "pgbot", Version: "test", Tools: []Tool{{
 		Name: "boom", Handler: func(context.Context, json.RawMessage) (string, error) {
