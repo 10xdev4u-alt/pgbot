@@ -490,7 +490,7 @@ func highRollbacks(c *model.Context, add func(model.Finding)) {
 		return
 	}
 	add(model.Finding{
-		ID: "high_rollback_ratio", Severity: model.SeverityInfo,
+		ID: "high_rollback_ratio", Severity: model.SeverityWarn,
 		Title:  fmt.Sprintf("Rollback ratio %.1f%% over the sample window", *c.Health.RollbackRatio*100),
 		Detail: "A high share of transactions are rolling back. Often application error handling or failed constraint checks; worth confirming it's intended.",
 		Impact: impact(model.DimThroughput, math.Min(35, *c.Health.RollbackRatio*100),

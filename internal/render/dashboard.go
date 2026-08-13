@@ -104,6 +104,38 @@ func renderDashboard(b *strings.Builder, st styler, c *model.Context, width int)
 	fmt.Fprintln(b, st.dim(`Ask it: pgbot ask "why is it slow?"`))
 }
 
+// findingStatus reports the disposition a governing finding implies for a row,
+// so meters and the --full board read the same source of truth.
+func findingStatus(c *model.Context, id string) (statusKind, bool) {
+	for _, f := range c.Findings {
+		if f.ID != id {
+			continue
+		}
+		switch f.Severity {
+		case model.SeverityCritical:
+			return kBad, true
+		case model.SeverityWarn:
+			return kWatch, true
+		default:
+			return kInfo, true
+		}
+	}
+	return kOK, false
+}
+
+func dispositionWord(k statusKind) string {
+	switch k {
+	case kBad:
+		return "fail"
+	case kWatch:
+		return "watch"
+	case kInfo:
+		return "note"
+	default:
+		return "ok"
+	}
+}
+
 // severityRank orders statuses worst-first: fail > warn > info > ok.
 func severityRank(k statusKind) int {
 	switch k {
@@ -155,12 +187,13 @@ func buildMeters(c *model.Context) []meter {
 	}
 
 	if c.Health != nil && c.Health.CacheHitRatio != nil {
-		r := *c.Health.CacheHitRatio
+		// Status keys off the finding, not a local threshold, so the dashboard and
+		// the --full board can never disagree on the same row.
 		k, s := kOK, "ok"
-		if r < 0.90 {
-			k, s = kWatch, "low"
+		if fk, fired := findingStatus(c, "low_cache_hit"); fired {
+			k, s = fk, dispositionWord(fk)
 		}
-		ms = append(ms, meter{"cache hit", r, pct(r), s, k})
+		ms = append(ms, meter{"cache hit", *c.Health.CacheHitRatio, pct(*c.Health.CacheHitRatio), s, k})
 	}
 
 	if w := c.WaitProfile; w != nil && w.Available && !w.Thin() {
@@ -174,12 +207,11 @@ func buildMeters(c *model.Context) []meter {
 	}
 
 	if c.Health != nil && c.Health.RollbackRatio != nil {
-		r := *c.Health.RollbackRatio
 		k, s := kOK, "ok"
-		if r >= 0.10 {
-			k, s = kWatch, "watch"
+		if fk, fired := findingStatus(c, "high_rollback_ratio"); fired {
+			k, s = fk, dispositionWord(fk)
 		}
-		ms = append(ms, meter{"rollbacks", r, pct(r), s, k})
+		ms = append(ms, meter{"rollbacks", *c.Health.RollbackRatio, pct(*c.Health.RollbackRatio), s, k})
 	}
 
 	for _, f := range c.Findings {
