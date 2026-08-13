@@ -36,6 +36,7 @@ type inspectFlags struct {
 	ashHz        int
 	window       time.Duration
 	full         bool
+	timeout      time.Duration
 }
 
 func newInspectCmd() *cobra.Command {
@@ -63,6 +64,7 @@ func newInspectCmd() *cobra.Command {
 	fl.IntVar(&f.ashHz, "ash-hz", 10, "active-session sampling rate in Hz (0 disables the wait-event profile)")
 	fl.DurationVar(&f.window, "window", 5*time.Second, "active-session sampling window (how long to profile where time goes)")
 	fl.BoolVar(&f.full, "full", false, "print the full section tables; default is the sentences-first summary")
+	fl.DurationVar(&f.timeout, "timeout", 30*time.Second, "total wall-clock budget for the whole run (raise it for slow or remote databases)")
 	return cmd
 }
 
@@ -72,7 +74,7 @@ func runInspect(cmd *cobra.Command, args []string, f inspectFlags) error {
 		return fmt.Errorf("no connection string (pass one or set $DATABASE_URL)")
 	}
 
-	ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(cmd.Context(), f.timeout)
 	defer cancel()
 
 	target, err := conn.Connect(ctx, connString)
@@ -101,7 +103,7 @@ func runInspect(cmd *cobra.Command, args []string, f inspectFlags) error {
 		fmt.Fprintln(os.Stderr, "pgbot: --raw-query-text is set — blocking-chain query text is NOT scrubbed and may contain literal values (PII).")
 	}
 	c, err := collect.Run(ctx, target, collect.Options{
-		Interval: f.interval, RawQueryText: f.rawQueries, ASHHz: f.ashHz, ASHWindow: f.window,
+		Interval: f.interval, RawQueryText: f.rawQueries, ASHHz: f.ashHz, ASHWindow: f.window, Deadline: f.timeout,
 	})
 	if err != nil {
 		return fmt.Errorf("collect: %s", conn.RedactConnString(err.Error()))

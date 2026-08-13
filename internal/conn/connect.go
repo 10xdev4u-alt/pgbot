@@ -3,11 +3,20 @@ package conn
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// clientOnlyParams are libpq connection parameters that pgx/pgconn does NOT
+// recognize and so forwards to the server as startup GUCs — where the server
+// rejects them ("unrecognized configuration parameter"). Managed providers
+// (pgrun, Neon) ship channel_binding in their default connection strings. pgx
+// can't implement SCRAM channel binding anyway, so we drop it; TLS from sslmode
+// still applies — channel binding was hardening on top of that.
+var clientOnlyParams = []string{"channel_binding"}
 
 // Target is a configured, capability-probed connection to one database. The
 // pool is small (max 4) so a burst of concurrent collectors can't itself become
@@ -32,6 +41,15 @@ func Connect(ctx context.Context, connString string) (*Target, error) {
 	cfg.MinConns = 0
 	cfg.MaxConnLifetime = 5 * time.Minute
 	cfg.ConnConfig.RuntimeParams["application_name"] = "pgbot"
+
+	// Drop client-only params pgx forwarded into RuntimeParams (it would send them
+	// as server GUCs, which the server rejects). See clientOnlyParams.
+	for _, p := range clientOnlyParams {
+		if _, ok := cfg.ConnConfig.RuntimeParams[p]; ok {
+			delete(cfg.ConnConfig.RuntimeParams, p)
+			fmt.Fprintf(os.Stderr, "pgbot: ignoring connection param %q — the driver can't honor it; TLS from sslmode still applies\n", p)
+		}
+	}
 
 	// Probe capabilities + pooler on a throwaway connection first, so AfterConnect
 	// applies only the GUCs this server understands and the pool uses the right

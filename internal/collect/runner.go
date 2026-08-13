@@ -24,9 +24,13 @@ func Run(ctx context.Context, t *conn.Target, opts Options) (*model.Context, err
 	if ashOn && opts.ashWindow() > iv {
 		iv = opts.ashWindow()
 	}
+	// Total wall-clock cap. The old 5s+iv was fine for a local database but too
+	// tight for a remote/large one over the internet (many round trips × latency),
+	// and there was no way to extend it. Default generous; callers can override
+	// via Options.Deadline (the --timeout flag).
 	deadline := opts.Deadline
 	if deadline <= 0 {
-		deadline = 5*time.Second + iv
+		deadline = 20*time.Second + iv
 	}
 	ctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
