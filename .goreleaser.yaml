@@ -68,6 +68,27 @@ dockers:
       - "--platform=linux/amd64"
     goarch: amd64
 
+# Homebrew formula, pushed to the pgrundev/homebrew-tap repo so
+# `brew install pgrundev/tap/pgbot` works. skip_upload is templated on the token:
+# until $HOMEBREW_TAP_TOKEN is set (and the tap repo exists) the formula is still
+# generated but NOT pushed, so a release never fails for a missing tap.
+brews:
+  - name: pgbot
+    repository:
+      owner: pgrundev
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    skip_upload: '{{ if .Env.HOMEBREW_TAP_TOKEN }}false{{ else }}true{{ end }}'
+    directory: Formula
+    homepage: "https://pgbot.dev"
+    description: "In-database observability for PostgreSQL."
+    license: "Apache-2.0"
+    install: |
+      bin.install "pgbot"
+    test: |
+      system "#{bin}/pgbot", "--version"
+
 release:
   github:
     owner: pgrundev

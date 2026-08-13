@@ -34,3 +34,7 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Push access to the separate pgrundev/homebrew-tap repo. Empty until the
+          # secret is added — the brews block skips the push in that case, so the
+          # release still succeeds. Set it to publish the Homebrew formula.
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
