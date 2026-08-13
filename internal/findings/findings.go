@@ -21,6 +21,7 @@ const (
 	longXactWarnSec       = 300  // a transaction open > 5 min
 	idleInTxnWarnSec      = 60
 	rollbackRatioWarn     = 0.10  // >10% of transactions rolling back
+	rollbackMinTxns       = 20    // below this many transactions in the window the ratio is noise
 	staleStatsWarnDays    = 30    // rates computed over a very old window are near-meaningless
 	seqScanTableMinRows   = 50000 // only flag seq-scan-heavy on tables big enough to matter
 
@@ -487,6 +488,12 @@ func waitFindings(c *model.Context, add func(model.Finding)) {
 
 func highRollbacks(c *model.Context, add func(model.Finding)) {
 	if c.Health == nil || c.Health.RollbackRatio == nil || *c.Health.RollbackRatio < rollbackRatioWarn {
+		return
+	}
+	// A ratio computed over a handful of transactions is noise (2 rollbacks out of
+	// 4 reads as 50%). Require enough volume in the window to trust it — TPS × the
+	// sample seconds ≈ the transactions actually observed.
+	if c.Health.TPS == nil || *c.Health.TPS*c.Window.SampleSeconds < rollbackMinTxns {
 		return
 	}
 	add(model.Finding{

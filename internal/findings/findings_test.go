@@ -19,8 +19,8 @@ func has(fs []model.Finding, id string) *model.Finding {
 
 func TestCompute_flagsRealIssues(t *testing.T) {
 	c := &model.Context{
-		Window:   model.Window{StatsWindowDays: ptr(120)},
-		Health:   &model.Health{CacheHitRatio: ptr(0.80), RollbackRatio: ptr(0.15)},
+		Window:   model.Window{StatsWindowDays: ptr(120), SampleSeconds: 1},
+		Health:   &model.Health{CacheHitRatio: ptr(0.80), RollbackRatio: ptr(0.15), TPS: ptr(200)}, // enough volume to trust the ratio
 		Activity: &model.Activity{IdleInTransaction: 2, LongestXactSec: 400},
 		Locks:    &model.Locks{BlockedCount: 1, Chains: []model.BlockingRow{{BlockedPID: 42, WaitSeconds: 30}}},
 		Indexes: &model.Indexes{Unused: []model.IndexStat{
@@ -314,4 +314,19 @@ func indexOf(s, sub string) int {
 		}
 	}
 	return -1
+}
+
+func TestHighRollbacks_gatedOnVolume(t *testing.T) {
+	// 50% rollback ratio but only ~3 transactions in the window → noise, no finding.
+	noisy := &model.Context{Window: model.Window{SampleSeconds: 1},
+		Health: &model.Health{RollbackRatio: ptr(0.50), TPS: ptr(3)}}
+	if has(Compute(noisy), "high_rollback_ratio") != nil {
+		t.Error("a ratio over a handful of transactions must not fire (noise)")
+	}
+	// Same ratio with real volume → fires.
+	busy := &model.Context{Window: model.Window{SampleSeconds: 1},
+		Health: &model.Health{RollbackRatio: ptr(0.50), TPS: ptr(200)}}
+	if has(Compute(busy), "high_rollback_ratio") == nil {
+		t.Error("a high ratio over real volume should fire")
+	}
 }

@@ -153,6 +153,13 @@ func (t *Target) ReadOnlyTx(ctx context.Context, fn func(pgx.Tx) error) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(context.Background()) //nolint:errcheck // read-only, nothing to lose
-	return fn(tx)
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback(context.Background())
+		return err
+	}
+	// COMMIT the read-only probe rather than rolling it back. A read-only txn
+	// writes nothing either way, but rolling back would increment the very
+	// xact_rollback counter pgbot reports — on a quiet database, pgbot observing
+	// itself would manufacture a "high rollback ratio" finding.
+	return tx.Commit(ctx)
 }
