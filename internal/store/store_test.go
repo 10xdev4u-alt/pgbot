@@ -149,3 +149,79 @@ func TestSaveWaitProfile_accumulateAndFold(t *testing.T) {
 		t.Error("aged minute rows should have been folded into hourly buckets")
 	}
 }
+
+func TestPrune_thinsAgedToHourlyAndDropsAncient(t *testing.T) {
+	st := tempStore(t)
+	fp := "ret"
+	now := time.Now().UTC()
+	save := func(at time.Time) {
+		if _, err := st.Save(ctxAt(fp, at, 1)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Past the 90-day horizon → dropped (even on its own Save's prune).
+	save(now.Add(-100 * 24 * time.Hour))
+	// Three in the SAME hour ~8 days ago (older than the 7-day full-resolution
+	// window) → thinned to one per hour bucket.
+	oldHour := now.Add(-8 * 24 * time.Hour).Truncate(time.Hour).Add(30 * time.Minute)
+	save(oldHour)
+	save(oldHour.Add(1 * time.Minute))
+	save(oldHour.Add(2 * time.Minute))
+	// Recent → kept at full resolution.
+	save(now.Add(-1 * time.Hour))
+
+	count := func(where string, args ...any) int {
+		var n int
+		if err := st.db.QueryRow("SELECT count(*) FROM snapshots WHERE fingerprint=? AND "+where, append([]any{fp}, args...)...).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if n := count("collected_at < ?", now.Add(-90*24*time.Hour).Unix()); n != 0 {
+		t.Errorf("snapshots past the 90-day horizon should be dropped, %d remain", n)
+	}
+	if n := count("collected_at BETWEEN ? AND ?", oldHour.Add(-time.Hour).Unix(), oldHour.Add(time.Hour).Unix()); n != 1 {
+		t.Errorf("three same-hour aged snapshots should thin to 1, got %d", n)
+	}
+	if n := count("collected_at > ?", now.Add(-2*time.Hour).Unix()); n != 1 {
+		t.Errorf("the recent snapshot should be kept, got %d", n)
+	}
+}
+
+func TestTrendAndSameHourYesterday(t *testing.T) {
+	st := tempStore(t)
+	fp := "trend"
+	now := time.Now().UTC()
+
+	// A yesterday-same-hour snapshot for the diff baseline.
+	yday := now.Add(-24 * time.Hour)
+	if _, err := st.Save(ctxAt(fp, yday, 500)); err != nil {
+		t.Fatal(err)
+	}
+	// A short recent series for the sparkline trend.
+	for i, tps := range []float64{100, 200, 300} {
+		if _, err := st.Save(ctxAt(fp, now.Add(time.Duration(-2+i)*time.Minute), tps)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	series, err := st.Trend(fp, "tps", 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(series) < 3 {
+		t.Errorf("Trend should return the recent tps series, got %v", series)
+	}
+
+	snap, err := st.SameHourYesterday(fp, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap == nil {
+		t.Fatal("SameHourYesterday should find the ~24h-old snapshot")
+	}
+	if snap.Context.Health == nil || snap.Context.Health.TPS == nil || *snap.Context.Health.TPS != 500 {
+		t.Errorf("wrong yesterday snapshot: %+v", snap.Context.Health)
+	}
+}

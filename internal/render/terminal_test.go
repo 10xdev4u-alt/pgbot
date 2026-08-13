@@ -122,3 +122,38 @@ func TestSparkline(t *testing.T) {
 		t.Errorf("expected 5 spark runes, got %q", s)
 	}
 }
+
+func TestFull_rendersDetailSections(t *testing.T) {
+	c := sampleContext()
+	c.Findings = nil
+	c.Queries = &model.Queries{
+		Section: model.Section{Exactness: model.ExactnessCumulative}, Enabled: true,
+		Top: []model.QueryStat{{QueryID: 42, Query: "SELECT pg_database_size(current_database())", Calls: 12, TotalMS: 221.7, MeanMS: 18.48}},
+	}
+	c.Tables = &model.Tables{
+		Section: model.Section{Exactness: model.ExactnessScraped}, DBSizeBytes: 8 << 30,
+		Top: []model.TableStat{{Schema: "public", Name: "orders", TotalBytes: 1 << 30, LiveTuples: 1_000_000, SeqScans: 10, IndexScans: 900}},
+	}
+	wal, bw := 1024.0, 5.0
+	c.WAL = &model.WAL{Section: model.Section{Exactness: model.ExactnessSampled}, BytesPerSec: &wal}
+	c.IO = &model.IO{Section: model.Section{Exactness: model.ExactnessSampled}, CheckpointsTimed: 8, CheckpointsReq: 1, BuffersWrittenPerS: &bw}
+	c.Replication = &model.Replication{Section: model.Section{Exactness: model.ExactnessScraped}, Replicas: []model.ReplicaRow{{ClientAddr: "10.0.0.2", State: "streaming"}}}
+	c.Settings = &model.Settings{Section: model.Section{Exactness: model.ExactnessScraped}, Overrides: map[string]string{"work_mem": "64MB", "shared_buffers": "8GB"}}
+
+	var buf bytes.Buffer
+	if err := Terminal(&buf, c, Options{Color: false, Full: true}); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	// Each detail section must render its header and at least one real value.
+	for _, want := range []string{
+		"QUERIES", "pg_database_size", "18.48 ms",
+		"TABLES", "database size", "public.orders",
+		"WAL", "IO", "checkpoints 8 timed / 1 req",
+		"REPLICATION", "standby", "SETTINGS", "2 non-default",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("--full detail sections missing %q", want)
+		}
+	}
+}
