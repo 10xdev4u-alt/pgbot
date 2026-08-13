@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.23"
+          go-version: "1.25"
       - run: go vet ./...
       - run: go test ./... # DB-dependent tests self-skip without PGBOT_TEST_DSN
 
@@ -47,7 +47,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.23"
+          go-version: "1.25"
       # CGO must stay off so the binary is static (catches a cgo regression from
       # a new dependency).
       - run: CGO_ENABLED=0 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build ./cmd/pgbot
@@ -63,7 +63,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.23"
+          go-version: "1.25"
       - name: start PostgreSQL ${{ matrix.pg }} (with pg_stat_statements)
         run: |
           docker run -d --name pg -p 5432:5432 -e POSTGRES_PASSWORD=pw \
@@ -102,7 +102,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.23"
+          go-version: "1.25"
       - name: PgBouncer transaction mode in front of Postgres
         run: |
           docker network create n
