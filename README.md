@@ -5,6 +5,8 @@ read-only, reads Postgres's own statistics views, and prints a findings-first
 health report — plus what changed since last time. No agent, no external
 service, no write privilege anywhere in the path.
 
+![pgbot inspect — a read-only vital-signs read: headline gauges with a status, then the checks that came back clean](docs/img/dashboard.png)
+
 ```
 curl -fsSL https://pgbot.dev/install | sh
 pgbot inspect "postgres://pgbot_ro@host:5432/db"
@@ -59,6 +61,26 @@ Why it's not just another stats reader: **pgbot remembers.** Every run writes a
 local baseline, so from the third run on it can tell you *what changed and why
 it matters* — a query that got slower, a table that started sequential-scanning,
 an index that stopped being used.
+
+## See it
+
+**`pgbot inspect --full`** — a subsystem status board (one row per subsystem,
+colored ok / warn / fail), followed by the detailed section tables.
+
+![pgbot inspect --full — a box-drawing subsystem status board](docs/img/full.png)
+
+**`pgbot indexes`** — zero-scan indexes with sizes, and the caveat that matters:
+on a primary those scan counts are per-node, so a replica may still be using an
+index that looks unused here. It tells you what *not* to drop.
+
+![pgbot indexes — zero-scan indexes and what not to drop](docs/img/indexes.png)
+
+**`pgbot ask "why is it slow?"`** — a plain-language reading of the *same*
+deterministic findings. It leads with the lock contention and refuses to
+recommend dropping the indexes because replication is active — the caveat is
+carried into the advice, not lost.
+
+![pgbot ask — an AI reading of pgbot's findings, with caveats carried](docs/img/ask.png)
 
 ## Install
 
