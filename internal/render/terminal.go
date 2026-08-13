@@ -105,7 +105,9 @@ func Terminal(w io.Writer, c *model.Context, opts Options) error {
 	}
 
 	if opts.Full {
-		// The detailed findings (with evidence + remediation) then every section.
+		// Lead with the subsystem status board, then the detailed findings and
+		// every section.
+		renderBoard(&b, st, buildBoard(c))
 		renderFindings(&b, st, c.Findings, width)
 		renderHealth(&b, st, c, opts)
 		renderActivity(&b, st, c)

@@ -69,6 +69,30 @@ func TestTerminal_fullShowsSectionsAndCaveats(t *testing.T) {
 	}
 }
 
+func TestFull_leadsWithStatusBoard(t *testing.T) {
+	c := sampleContext()
+	c.Locks = &model.Locks{BlockedCount: 2, Chains: []model.BlockingRow{{BlockedPID: 91}}}
+	c.Findings = append(c.Findings, model.Finding{
+		ID: "blocking_chains", Severity: model.SeverityCritical, Title: "2 blocked",
+		Impact: model.Impact{Dimension: model.DimRisk, Score: 90},
+	})
+	var buf bytes.Buffer
+	if err := Terminal(&buf, c, Options{Color: false, Full: true}); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	// Box-drawn header + subsystem rows; locks reads "fail" (its finding is critical).
+	for _, want := range []string{"┌", "┼", "subsystem", "status", "connections", "cache", "locks", "2 blocked", "fail"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status board missing %q", want)
+		}
+	}
+	// The board is the LEAD of --full: it must appear before the section tables.
+	if bi, hi := strings.Index(out, "subsystem"), strings.Index(out, "HEALTH"); bi < 0 || (hi >= 0 && bi > hi) {
+		t.Error("status board should lead --full, before the section tables")
+	}
+}
+
 func TestTerminal_cleanDashboardNamesPassedChecks(t *testing.T) {
 	c := sampleContext()
 	c.Findings = nil
