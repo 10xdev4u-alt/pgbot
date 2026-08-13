@@ -27,7 +27,7 @@ func sampleContext() *model.Context {
 	}
 }
 
-func TestTerminal_dashboardIsDefault(t *testing.T) {
+func TestTerminal_groupedIsDefault(t *testing.T) {
 	var buf bytes.Buffer
 	if err := Terminal(&buf, sampleContext(), Options{Color: false}); err != nil {
 		t.Fatal(err)
@@ -36,15 +36,15 @@ func TestTerminal_dashboardIsDefault(t *testing.T) {
 		t.Error("no-color output must contain no ANSI escapes")
 	}
 	out := buf.String()
-	// Dashboard header + a vital meter (cache hit) + the finding meter (idle idx)
-	// + its bar + the "checked" line + the --full pointer. No section tables.
-	for _, want := range []string{"connected", "postgres 17", "cache hit", "[", "idle idx", "review", "checked", "--full"} {
+	// Grouped view: header, a health score, the warning group with the finding
+	// title bulleted, a GOOD list, and the --full pointer. No section tables.
+	for _, want := range []string{"connected", "postgres 17", "Database health:", "/100", "WARNING", "● 1 unused index", "GOOD", "--full"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("dashboard output missing %q", want)
+			t.Errorf("grouped output missing %q", want)
 		}
 	}
-	if strings.Contains(out, "HEALTH") || strings.Contains(out, "ACTIVITY") {
-		t.Error("default dashboard must not print section tables")
+	if strings.Contains(out, "HEALTH  ") || strings.Contains(out, "ACTIVITY  ") {
+		t.Error("default grouped view must not print section tables")
 	}
 }
 
@@ -93,7 +93,7 @@ func TestFull_leadsWithStatusBoard(t *testing.T) {
 	}
 }
 
-func TestTerminal_cleanDashboardNamesPassedChecks(t *testing.T) {
+func TestTerminal_cleanGroupedScoresHighAndListsGood(t *testing.T) {
 	c := sampleContext()
 	c.Findings = nil
 	var buf bytes.Buffer
@@ -101,12 +101,15 @@ func TestTerminal_cleanDashboardNamesPassedChecks(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := buf.String()
-	// Healthy: the cache-hit vital reads "ok", and the checked line names what
-	// was examined and passed.
-	for _, want := range []string{"cache hit", "ok", "checked", "connections"} {
+	// No findings → perfect score, no CRITICAL/WARNING groups, a GOOD list that
+	// names the healthy cache hit with its value.
+	for _, want := range []string{"100/100", "GOOD", "cache hit ratio 99.4%"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("clean dashboard missing %q", want)
+			t.Errorf("clean grouped view missing %q", want)
 		}
+	}
+	if strings.Contains(out, "CRITICAL") || strings.Contains(out, "WARNING") {
+		t.Error("a clean database must show no CRITICAL/WARNING groups")
 	}
 }
 

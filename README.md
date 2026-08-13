@@ -13,26 +13,47 @@ pgbot inspect "postgres://pgbot_ro@host:5432/db"
 ```
 connected · db.example.com · postgres 17.4 · read-only · 6h20m window
 
-✗ 3 need attention · 1 critical
+Database health: 82/100
 
-  locks      [███████████████████░]  1 blocked  fail
-  lock wait  [████████████████░░░░]  61.0%      query 4f2a
-  idle idx   [███████░░░░░░░░░░░░░]  43 GiB     review
-  cache hit  [████████████████████]  99.2%      ok
+CRITICAL
+● orders queries 3.2× slower — sequential scans up 340%
 
-checked · invalid indexes · table bloat · sequential scans · vacuum
-          · replication · WAL · checkpoints · connections · settings
+WARNING
+● 3 unused indexes consume 18 GB
+● connection usage reached 87%
 
-Details: pgbot inspect --full   Machine-readable: --json
-Ask it: pgbot ask "why is it slow?"
+GOOD
+● cache hit ratio 99.4%
+● replication healthy
+● no deadlocks
+
+Details: pgbot inspect --full   ·   Machine-readable: --json
+Ask it: pgbot ask "what's wrong?"
 ```
 
-The default report is a **vital-signs dashboard** — a few headline gauges as bar
-meters, then the checks that came back clean (a tool that names what it verified
-reads like a colleague who looked, not an alarm). `pgbot inspect --full` adds the
-section tables and per-finding caveats; `pgbot indexes` drills into zero-scan
-indexes; `pgbot ask "…"` and `pgbot explain` put an AI explanation on top of the
-same findings. `--json` is the complete, versioned contract for agents and scripts.
+The default report is a **graded read**: a health score, findings bucketed
+CRITICAL / WARNING / NOTE, then a GOOD list naming the healthy subsystems with
+their values (a tool that names what it verified reads like a colleague who
+looked, not an alarm). `pgbot inspect --full` adds a subsystem status board plus
+the section tables and per-finding caveats; `pgbot indexes` drills into zero-scan
+indexes; `pgbot ask "…"` and `pgbot explain` put a plain-language AI reading on
+top of the same findings. `--json` is the complete, versioned contract for agents
+and scripts.
+
+```
+$ pgbot ask "what's wrong?"
+
+Your database is mostly healthy.
+
+1 critical issue:
+orders queries became 3.2× slower in the last 6 hours.
+
+Likely cause:
+sequential scans increased after the orders table grew 18%.
+
+Recommended:
+review an index on customer_id + created_at.
+```
 
 Why it's not just another stats reader: **pgbot remembers.** Every run writes a
 local baseline, so from the third run on it can tell you *what changed and why

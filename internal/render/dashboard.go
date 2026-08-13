@@ -8,9 +8,9 @@ import (
 	"github.com/pgrundev/pgbot/internal/model"
 )
 
-// The default view is a vital-signs dashboard: a few headline gauges as bar
-// meters, then the named checks that passed. It's still findings-first — the
-// meters ARE the findings, visualized — just quicker to scan than sentences.
+// The default view is a graded, grouped read: a 0–100 health score, then the
+// findings bucketed CRITICAL / WARNING / NOTE, then a GOOD list of the healthy
+// subsystems named with their values. Fast to read top-to-bottom.
 
 type statusKind int
 
@@ -20,148 +20,6 @@ const (
 	kBad
 	kInfo
 )
-
-type meter struct {
-	label  string
-	fill   float64 // 0..1 bar fill
-	value  string  // right-hand magnitude, e.g. "99.2%" or "43 GiB"
-	status string  // disposition word, e.g. "ok" / "watch" / "query 4f2a"
-	kind   statusKind
-}
-
-func renderDashboard(b *strings.Builder, st styler, c *model.Context, width int) {
-	meters := buildMeters(c)
-
-	// Worst-first so a developer's eye lands on the problem, not the vitals.
-	sort.SliceStable(meters, func(i, j int) bool { return severityRank(meters[i].kind) > severityRank(meters[j].kind) })
-
-	// One-line verdict up top: the instant "is anything wrong".
-	fails, warns := 0, 0
-	for _, m := range meters {
-		switch m.kind {
-		case kBad:
-			fails++
-		case kWatch:
-			warns++
-		}
-	}
-	switch {
-	case fails > 0:
-		msg := fmt.Sprintf("✗ %d need attention · %d critical", fails+warns, fails)
-		fmt.Fprintln(b, st.crit(msg))
-	case warns > 0:
-		fmt.Fprintln(b, st.warn(fmt.Sprintf("⚠ %d need attention", warns)))
-	default:
-		fmt.Fprintln(b, st.good("✓ all healthy"))
-	}
-	fmt.Fprintln(b)
-
-	// Align the label and value columns so the bars and values line up cleanly.
-	lw, vw := 0, 0
-	for _, m := range meters {
-		lw = maxi(lw, runeLen(m.label))
-		vw = maxi(vw, runeLen(m.value))
-	}
-	for _, m := range meters {
-		paint := statusColor(st, m.kind)
-		fmt.Fprintf(b, "  %s  %s  %s  %s\n",
-			padL(m.label, lw), paint(bar20(m.fill)), padL(m.value, vw), paint(m.status))
-	}
-	fmt.Fprintln(b)
-
-	// The "checked ·" line: name what pgbot examined and found clean — minus the
-	// vitals we already showed as meters, to avoid saying the same thing twice.
-	shownAsMeter := map[string]bool{}
-	for _, m := range meters {
-		switch m.label {
-		case "cache hit":
-			shownAsMeter["cache hit"] = true
-		case "rollbacks":
-			shownAsMeter["rollbacks"] = true
-		case "lock wait":
-			shownAsMeter["lock waits"] = true
-		}
-	}
-	var passed []string
-	for _, p := range passedChecks(c) {
-		if !shownAsMeter[p] {
-			passed = append(passed, p)
-		}
-	}
-	if len(passed) > 0 {
-		lines := wrapText(strings.Join(passed, " · "), width-12)
-		for i, line := range lines {
-			prefix := st.good("checked · ")
-			if i > 0 {
-				prefix = "          " // align under the names
-			}
-			fmt.Fprintf(b, "%s%s\n", prefix, st.dim(line))
-		}
-		fmt.Fprintln(b)
-	}
-
-	fmt.Fprintln(b, st.dim("Details: pgbot inspect --full   Machine-readable: --json"))
-	fmt.Fprintln(b, st.dim(`Ask it: pgbot ask "why is it slow?"`))
-}
-
-// findingStatus reports the disposition a governing finding implies for a row,
-// so meters and the --full board read the same source of truth.
-func findingStatus(c *model.Context, id string) (statusKind, bool) {
-	for _, f := range c.Findings {
-		if f.ID != id {
-			continue
-		}
-		switch f.Severity {
-		case model.SeverityCritical:
-			return kBad, true
-		case model.SeverityWarn:
-			return kWatch, true
-		default:
-			return kInfo, true
-		}
-	}
-	return kOK, false
-}
-
-func dispositionWord(k statusKind) string {
-	switch k {
-	case kBad:
-		return "fail"
-	case kWatch:
-		return "watch"
-	case kInfo:
-		return "note"
-	default:
-		return "ok"
-	}
-}
-
-// severityRank orders statuses worst-first: fail > warn > info > ok.
-func severityRank(k statusKind) int {
-	switch k {
-	case kBad:
-		return 3
-	case kWatch:
-		return 2
-	case kInfo:
-		return 1
-	default:
-		return 0
-	}
-}
-
-// bar20 draws a 20-cell filled/empty meter in brackets.
-func bar20(fill float64) string {
-	const n = 20
-	if fill < 0 {
-		fill = 0
-	}
-	if fill > 1 {
-		fill = 1
-	}
-	filled := int(fill*float64(n) + 0.5)
-	return "[" + strings.Repeat("█", filled) + strings.Repeat("░", n-filled) + "]"
-}
 
 func statusColor(st styler, k statusKind) func(string) string {
 	switch k {
@@ -176,107 +34,127 @@ func statusColor(st styler, k statusKind) func(string) string {
 	}
 }
 
-// buildMeters selects the headline gauges: the vital ratios (cache hit, lock
-// wait, rollbacks) shown always when their data is present, then one row per
-// warn/critical finding not already covered by a vital.
-func buildMeters(c *model.Context) []meter {
-	var ms []meter
-	covered := map[string]bool{
-		"low_cache_hit": true, "wait_lock_contention": true, "wait_io_bound": true,
-		"wait_lwlock_pressure": true, "high_rollback_ratio": true,
+func renderGrouped(b *strings.Builder, st styler, c *model.Context, width int) {
+	score := computeHealthScore(c)
+	paintScore := st.good
+	switch {
+	case score < 70:
+		paintScore = st.crit
+	case score < 90:
+		paintScore = st.warn
 	}
+	fmt.Fprintf(b, "%s %s\n\n", st.dim("Database health:"), paintScore(fmt.Sprintf("%d/100", score)))
 
-	if c.Health != nil && c.Health.CacheHitRatio != nil {
-		// Status keys off the finding, not a local threshold, so the dashboard and
-		// the --full board can never disagree on the same row.
-		k, s := kOK, "ok"
-		if fk, fired := findingStatus(c, "low_cache_hit"); fired {
-			k, s = fk, dispositionWord(fk)
-		}
-		ms = append(ms, meter{"cache hit", *c.Health.CacheHitRatio, pct(*c.Health.CacheHitRatio), s, k})
-	}
-
-	if w := c.WaitProfile; w != nil && w.Available && !w.Thin() {
-		if lock := bucketShare(w, "Lock"); lock > 0 {
-			k, s := kOK, "ok"
-			if q := topLockQuery(w); q != nil && q.LockShare > 0.30 {
-				k, s = kBad, "query "+queryTag(q.QueryID)
-			}
-			ms = append(ms, meter{"lock wait", lock, pct(lock), s, k})
-		}
-	}
-
-	if c.Health != nil && c.Health.RollbackRatio != nil {
-		k, s := kOK, "ok"
-		if fk, fired := findingStatus(c, "high_rollback_ratio"); fired {
-			k, s = fk, dispositionWord(fk)
-		}
-		ms = append(ms, meter{"rollbacks", *c.Health.RollbackRatio, pct(*c.Health.RollbackRatio), s, k})
-	}
-
+	var crit, warn, note []model.Finding
 	for _, f := range c.Findings {
-		if covered[f.ID] || (f.Severity != model.SeverityWarn && f.Severity != model.SeverityCritical) {
-			continue
-		}
-		k, s := kWatch, "review"
-		if f.Severity == model.SeverityCritical {
-			k, s = kBad, "fail"
-		}
-		ms = append(ms, meter{shortLabel(f.ID), f.Impact.Score / 100, leadingMagnitude(f.Impact.Estimate), s, k})
-		if len(ms) >= 7 {
-			break
+		switch f.Severity {
+		case model.SeverityCritical:
+			crit = append(crit, f)
+		case model.SeverityWarn:
+			warn = append(warn, f)
+		default:
+			note = append(note, f)
 		}
 	}
-	return ms
+	byImpact := func(fs []model.Finding) {
+		sort.SliceStable(fs, func(i, j int) bool { return fs[i].Impact.Score > fs[j].Impact.Score })
+	}
+	byImpact(crit)
+	byImpact(warn)
+
+	// emit one severity group: a colored header, then a bullet per finding title.
+	emit := func(header string, paint func(string) string, fs []model.Finding) {
+		if len(fs) == 0 {
+			return
+		}
+		fmt.Fprintln(b, paint(header))
+		for _, f := range fs {
+			lines := wrapText(f.Title, width-4)
+			fmt.Fprintf(b, "%s %s\n", paint("●"), lines[0])
+			for _, l := range lines[1:] {
+				fmt.Fprintf(b, "  %s\n", l)
+			}
+		}
+		fmt.Fprintln(b)
+	}
+	emit("CRITICAL", st.crit, crit)
+	emit("WARNING", st.warn, warn)
+	emit("NOTE", st.info, note)
+
+	if good := buildGood(c); len(good) > 0 {
+		fmt.Fprintln(b, st.good("GOOD"))
+		for _, g := range good {
+			fmt.Fprintf(b, "%s %s\n", st.good("●"), st.dim(g))
+		}
+		fmt.Fprintln(b)
+	}
+
+	fmt.Fprintln(b, st.dim("Details: pgbot inspect --full   ·   Machine-readable: --json"))
+	fmt.Fprintln(b, st.dim(`Ask it: pgbot ask "what's wrong?"`))
 }
 
-func bucketShare(w *model.WaitProfile, typ string) float64 {
-	for _, b := range w.Buckets {
-		if b.Type == typ {
-			return b.Share
+// computeHealthScore is a coarse 0–100 grade: full marks minus a penalty per
+// finding by severity. It's an at-a-glance indicator, not a precise metric.
+func computeHealthScore(c *model.Context) int {
+	penalty := 0
+	for _, f := range c.Findings {
+		switch f.Severity {
+		case model.SeverityCritical:
+			penalty += 10
+		case model.SeverityWarn:
+			penalty += 3
+		default:
+			penalty += 1
 		}
 	}
-	return 0
+	s := 100 - penalty
+	if s < 0 {
+		s = 0
+	}
+	return s
 }
 
-// shortLabel maps a finding id to a compact meter label.
-func shortLabel(id string) string {
-	switch id {
-	case "unused_indexes":
-		return "idle idx"
-	case "table_bloat":
-		return "bloat"
-	case "seq_scan_heavy":
-		return "seq scan"
-	case "index_invalid":
-		return "bad idx"
-	case "blocking_chains":
-		return "locks"
-	case "idle_in_transaction":
-		return "idle txn"
-	case "long_running_transaction":
-		return "long txn"
-	default:
-		if i := strings.IndexByte(id, '_'); i > 0 {
-			return id[:i]
+// buildGood names the subsystems pgbot checked and found healthy, with their
+// values — the "a colleague who looked" signal. Only names things actually
+// examined and clean, capped so the list stays scannable.
+func buildGood(c *model.Context) []string {
+	fired := map[string]bool{}
+	for _, f := range c.Findings {
+		fired[f.ID] = true
+	}
+	var g []string
+	if h := c.Health; h != nil {
+		if h.CacheHitRatio != nil && !fired["low_cache_hit"] {
+			g = append(g, fmt.Sprintf("cache hit ratio %.1f%%", *h.CacheHitRatio*100))
 		}
-		return id
+		if h.DeadlocksPerMin != nil && *h.DeadlocksPerMin == 0 {
+			g = append(g, "no deadlocks")
+		}
 	}
-}
-
-// leadingMagnitude pulls the compact magnitude out of an Impact.Estimate, e.g.
-// "≈43.0 GiB reclaimable" → "43.0 GiB", "1 session(s), longest 0s" → "1 session".
-func leadingMagnitude(estimate string) string {
-	s := strings.TrimPrefix(strings.TrimSpace(estimate), "≈")
-	fields := strings.Fields(s)
-	if len(fields) == 0 {
-		return ""
+	if c.Locks != nil && c.Locks.BlockedCount == 0 {
+		g = append(g, "no blocking locks")
 	}
-	out := strings.TrimRight(fields[0], ",")
-	if len(fields) > 1 {
-		out += " " + strings.TrimRight(fields[1], ",")
+	if r := c.Replication; r != nil {
+		switch {
+		case r.IsReplica:
+			g = append(g, "replication healthy (replica)")
+		case len(r.Replicas) > 0:
+			g = append(g, fmt.Sprintf("replication healthy (%d streaming)", len(r.Replicas)))
+		}
 	}
-	return out
+	if c.Schema != nil && !fired["index_invalid"] {
+		g = append(g, "no invalid indexes")
+	}
+	if c.Tables != nil && !fired["table_bloat"] {
+		g = append(g, "no significant table bloat")
+	}
+	if c.Queries != nil && c.Queries.Enabled && !fired["pg_stat_statements_missing"] {
+		g = append(g, "query stats available")
+	}
+	if len(g) > 6 {
+		g = g[:6]
+	}
+	return g
 }
 
 // pgLower renders "postgres 16.3" for the header.

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/pgrundev/pgbot/internal/ai"
+	"github.com/pgrundev/pgbot/internal/render"
 	"github.com/spf13/cobra"
 )
 
@@ -65,8 +66,24 @@ func runAsk(cmd *cobra.Command, question, url string, f inspectFlags, yes bool) 
 	}
 
 	answer, aiErr := ai.Ask(ctx, client, c, question)
-	printAISection(useColor(false), client.Model, answer, aiErr)
+	printAnswer(useColor(false), client.Model, answer, aiErr)
 	return nil
+}
+
+// printAnswer renders `ask` cleanly: the answer itself, then one dim line making
+// clear it's a model's reading of pgbot's deterministic findings. No heavy banner
+// — for `ask` the whole command IS the AI, so a full separator would be noise.
+func printAnswer(color bool, modelName, text string, aiErr error) {
+	st := render.NewStyler(color)
+	fmt.Println()
+	if aiErr != nil {
+		fmt.Println(st.Dim("(no AI answer: " + aiErr.Error() + ")"))
+		fmt.Println(st.Dim("Run `pgbot inspect` for the deterministic findings — they need no model."))
+		return
+	}
+	fmt.Println(text)
+	fmt.Println()
+	fmt.Println(st.Dim("— " + modelName + " · a reading of pgbot's findings; verify before acting"))
 }
 
 // confirm reads a y/N from stdin.

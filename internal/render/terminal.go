@@ -124,8 +124,8 @@ func Terminal(w io.Writer, c *model.Context, opts Options) error {
 			fmt.Fprintln(&b, st.dim("baseline: "+opts.BaselinePath))
 		}
 	} else {
-		// Vital-signs dashboard: headline gauges as bar meters, then what passed.
-		renderDashboard(&b, st, c, width)
+		// Graded, grouped summary: health score, CRITICAL/WARNING/NOTE, then GOOD.
+		renderGrouped(&b, st, c, width)
 	}
 
 	_, err := io.WriteString(w, b.String())

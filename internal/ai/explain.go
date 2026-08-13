@@ -9,24 +9,39 @@ import (
 )
 
 // systemPrompt hard-constrains the model to the one job it's allowed: explaining
-// facts pgbot already computed. The findings are ground truth; the model may not
-// add to them, and it MUST carry every caveat into any recommendation.
-const systemPrompt = `You are a PostgreSQL performance expert. A tool called pgbot has already
-analyzed a database and computed the findings below DETERMINISTICALLY — they are facts, not guesses.
+// facts pgbot already computed, in a terse spoken-style shape. The findings are
+// ground truth; the model may not add to them, and it MUST carry every caveat.
+const systemPrompt = `You are a senior PostgreSQL expert giving a terse, spoken-style diagnosis to a
+developer who is not a DBA. A tool called pgbot has already analyzed the database and computed the
+findings below DETERMINISTICALLY — they are facts, not guesses. Explain them; never add new ones.
 
-Your only job is to explain what these findings mean together and what to address first, in plain
-language, for an engineer who is not a Postgres expert.
+Write PLAIN TEXT in this exact shape — NO markdown (no #, no *, no bullet characters, no bold, no
+tables, no code fences):
+
+  <one sentence on overall health, e.g. "Your database is mostly healthy.">
+
+  <then the findings that matter, worst first, at most three, each as a short block:>
+
+  1 critical issue:          (the count and tier of this block — or "2 warnings:", etc.)
+  <one line naming the problem, with the concrete number from the data>
+
+  Likely cause:
+  <one line — ONLY when the deltas or events actually support a cause; otherwise OMIT this
+   "Likely cause:" block entirely. Never speculate a cause that the data does not show.>
+
+  Recommended:
+  <one line: a concrete, safe next step>
 
 Rules you must follow:
-- Do NOT invent findings, numbers, table names, or problems. Discuss ONLY what is provided.
-- Every finding may carry "caveats". If you mention a finding's fix, you MUST repeat its caveats.
-  Never recommend a destructive action (dropping an index, etc.) without its caveats — a caveat
-  like "replication makes these per-node counts unreliable" is load-bearing.
-- A finding's "confidence" below 0.5 is a possibility, not a fact — hedge accordingly.
-- Prioritize: risk first, then by impact score. Be concise — a short prioritized narrative.
-- If nothing needs attention, say the database looks healthy and stop.
-- Never recommend anything that EXECUTES a user's query to diagnose it (e.g. running it
-  under timing); suggest only safe, non-executing steps.`
+- Every number comes from the data. Do NOT invent a multiplier, percentage, table, or query id.
+- Each finding may carry "caveats". Carry them into the Recommended line — a caveat like
+  "replication makes these per-node counts unreliable" means "verify on the replicas first" and
+  is load-bearing. Never recommend a destructive action (dropping an index) without its caveat.
+- A finding with confidence below 0.5 is a possibility — say "possibly" or "may", not a fact.
+- Never recommend anything that EXECUTES a user's query to diagnose it (e.g. running it under
+  timing); suggest only safe, non-executing steps.
+- Be brief: short lines, a blank line between blocks. If the database is healthy, say so in one
+  line and stop.`
 
 // explainPayload is the PII-free subset of the Context we send. The full Context
 // is already PII-free by construction (normalized query text, no literal values),
@@ -41,6 +56,7 @@ type explainPayload struct {
 	Findings     []model.Finding `json:"findings"`
 	Waits        *waitSummary    `json:"wait_profile,omitempty"`
 	Events       []eventSummary  `json:"recent_events,omitempty"`
+	Deltas       *model.Deltas   `json:"changes_since_baseline,omitempty"` // temporal deltas — grounds causal claims
 }
 
 type waitSummary struct {
@@ -78,6 +94,7 @@ func payloadJSON(c *model.Context) string {
 	for _, e := range c.Events {
 		p.Events = append(p.Events, eventSummary{Kind: e.Kind, Object: e.Object, Confidence: e.Confidence})
 	}
+	p.Deltas = c.Deltas // what changed vs the baseline — lets the model ground "3.2× slower"
 	blob, _ := json.MarshalIndent(p, "", "  ")
 	return string(blob)
 }
