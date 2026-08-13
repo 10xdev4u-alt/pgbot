@@ -13,10 +13,12 @@ pgbot inspect "postgres://pgbot_ro@host:5432/db"
 ```
 connected · db.example.com · postgres 17.4 · read-only · 6h20m window
 
-  cache hit  [████████████████████]  99.2%   ok
-  lock wait  [████████████████░░░░]  61.0%   query 4f2a
-  rollbacks  [███░░░░░░░░░░░░░░░░░]  12.0%   watch
-  idle idx   [███████░░░░░░░░░░░░░]  43 GiB  review
+✗ 3 need attention · 1 critical
+
+  locks      [███████████████████░]  1 blocked  fail
+  lock wait  [████████████████░░░░]  61.0%      query 4f2a
+  idle idx   [███████░░░░░░░░░░░░░]  43 GiB     review
+  cache hit  [████████████████████]  99.2%      ok
 
 checked · invalid indexes · table bloat · sequential scans · vacuum
           · replication · WAL · checkpoints · connections · settings

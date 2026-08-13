@@ -2,6 +2,7 @@ package render
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/pgrundev/pgbot/internal/model"
@@ -30,12 +31,41 @@ type meter struct {
 
 func renderDashboard(b *strings.Builder, st styler, c *model.Context, width int) {
 	meters := buildMeters(c)
-	if len(meters) == 0 {
-		fmt.Fprintln(b, st.good("✓ all clear — nothing needs attention"))
-	} else {
-		for _, m := range meters {
-			renderMeter(b, st, m)
+
+	// Worst-first so a developer's eye lands on the problem, not the vitals.
+	sort.SliceStable(meters, func(i, j int) bool { return severityRank(meters[i].kind) > severityRank(meters[j].kind) })
+
+	// One-line verdict up top: the instant "is anything wrong".
+	fails, warns := 0, 0
+	for _, m := range meters {
+		switch m.kind {
+		case kBad:
+			fails++
+		case kWatch:
+			warns++
 		}
+	}
+	switch {
+	case fails > 0:
+		msg := fmt.Sprintf("✗ %d need attention · %d critical", fails+warns, fails)
+		fmt.Fprintln(b, st.crit(msg))
+	case warns > 0:
+		fmt.Fprintln(b, st.warn(fmt.Sprintf("⚠ %d need attention", warns)))
+	default:
+		fmt.Fprintln(b, st.good("✓ all healthy"))
+	}
+	fmt.Fprintln(b)
+
+	// Align the label and value columns so the bars and values line up cleanly.
+	lw, vw := 0, 0
+	for _, m := range meters {
+		lw = maxi(lw, runeLen(m.label))
+		vw = maxi(vw, runeLen(m.value))
+	}
+	for _, m := range meters {
+		paint := statusColor(st, m.kind)
+		fmt.Fprintf(b, "  %s  %s  %s  %s\n",
+			padL(m.label, lw), paint(bar20(m.fill)), padL(m.value, vw), paint(m.status))
 	}
 	fmt.Fprintln(b)
 
@@ -74,10 +104,18 @@ func renderDashboard(b *strings.Builder, st styler, c *model.Context, width int)
 	fmt.Fprintln(b, st.dim(`Ask it: pgbot ask "why is it slow?"`))
 }
 
-func renderMeter(b *strings.Builder, st styler, m meter) {
-	bar := bar20(m.fill)
-	paint := statusColor(st, m.kind)
-	fmt.Fprintf(b, "  %-10s %s  %-7s  %s\n", m.label, paint(bar), m.value, paint(m.status))
+// severityRank orders statuses worst-first: fail > warn > info > ok.
+func severityRank(k statusKind) int {
+	switch k {
+	case kBad:
+		return 3
+	case kWatch:
+		return 2
+	case kInfo:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // bar20 draws a 20-cell filled/empty meter in brackets.
