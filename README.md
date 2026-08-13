@@ -110,7 +110,34 @@ pgbot indexes <connection-string>   # zero-scan indexes + what NOT to drop
 pgbot explain <connection-string>   # inspect, then have an AI explain the findings
 pgbot ask "why is it slow?"         # AI answer grounded on the findings ($DATABASE_URL)
   --yes                  skip the "this sends data to Google" confirmation
+pgbot mcp                           # run as an MCP server over stdio (for AI agents)
 ```
+
+### MCP — use pgbot as an agent tool
+
+`pgbot mcp` speaks the [Model Context Protocol](https://modelcontextprotocol.io)
+on stdio, so an AI agent can call pgbot as a read-only tool. It exposes
+**deterministic** tools only — `inspect` (full findings as JSON) and
+`unused_indexes` — and lets the *connected model* do the explaining. No Gemini
+key involved: the agent reasons over the same findings the CLI computes.
+
+Add it to any MCP client (Claude Desktop/Code, Cursor, …):
+
+```json
+{
+  "mcpServers": {
+    "pgbot": {
+      "command": "pgbot",
+      "args": ["mcp"],
+      "env": { "DATABASE_URL": "postgres://pgbot_ro@host:5432/db" }
+    }
+  }
+}
+```
+
+With `DATABASE_URL` set, the agent calls `inspect` with no arguments; or it can
+pass `connection_string` per call to reach several databases. pgbot never writes,
+so there's nothing an agent can break through it.
 
 ### `explain` — optional AI layer
 

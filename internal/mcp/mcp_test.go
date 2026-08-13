@@ -1,0 +1,111 @@
+package mcp
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+func testServer() *Server {
+	return &Server{
+		Name: "pgbot", Version: "test",
+		Tools: []Tool{{
+			Name: "echo", Description: "echoes back", InputSchema: map[string]any{"type": "object"},
+			Handler: func(_ context.Context, args json.RawMessage) (string, error) {
+				return "got " + string(args), nil
+			},
+		}},
+	}
+}
+
+// decode splits the NDJSON transcript into parsed JSON-RPC responses.
+func decode(t *testing.T, out string) []map[string]any {
+	t.Helper()
+	var msgs []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Fatalf("bad response line %q: %v", line, err)
+		}
+		msgs = append(msgs, m)
+	}
+	return msgs
+}
+
+func TestServe_handshakeListAndCall(t *testing.T) {
+	in := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`,
+		`{"jsonrpc":"2.0","method":"notifications/initialized"}`, // notification — no reply
+		`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"echo","arguments":{"x":1}}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"nope"}}`,
+	}, "\n") + "\n"
+
+	var out bytes.Buffer
+	if err := testServer().Serve(context.Background(), strings.NewReader(in), &out); err != nil {
+		t.Fatal(err)
+	}
+	msgs := decode(t, out.String())
+
+	// 4 requests carry ids; the notification gets no reply → exactly 4 responses.
+	if len(msgs) != 4 {
+		t.Fatalf("want 4 responses (notification is silent), got %d:\n%s", len(msgs), out.String())
+	}
+
+	// initialize: echoes the client's protocol revision and names the server.
+	init := msgs[0]
+	res := init["result"].(map[string]any)
+	if res["protocolVersion"] != "2025-06-18" {
+		t.Errorf("initialize should echo client protocol, got %v", res["protocolVersion"])
+	}
+	if res["serverInfo"].(map[string]any)["name"] != "pgbot" {
+		t.Error("serverInfo.name should be pgbot")
+	}
+
+	// tools/list: the echo tool with its schema.
+	tools := msgs[1]["result"].(map[string]any)["tools"].([]any)
+	if len(tools) != 1 || tools[0].(map[string]any)["name"] != "echo" {
+		t.Errorf("tools/list wrong: %v", tools)
+	}
+
+	// tools/call echo: text content, not an error.
+	call := msgs[2]["result"].(map[string]any)
+	if call["isError"] == true {
+		t.Error("echo call should not be an error")
+	}
+	text := call["content"].([]any)[0].(map[string]any)["text"].(string)
+	if !strings.Contains(text, "got ") {
+		t.Errorf("unexpected tool text: %q", text)
+	}
+
+	// unknown tool: a JSON-RPC error.
+	if _, ok := msgs[3]["error"]; !ok {
+		t.Errorf("unknown tool should return a JSON-RPC error, got %v", msgs[3])
+	}
+}
+
+func TestServe_toolErrorIsResultNotTransportError(t *testing.T) {
+	srv := &Server{Name: "pgbot", Version: "test", Tools: []Tool{{
+		Name: "boom", Handler: func(context.Context, json.RawMessage) (string, error) {
+			return "", context.DeadlineExceeded
+		},
+	}}}
+	in := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"boom"}}` + "\n"
+	var out bytes.Buffer
+	if err := srv.Serve(context.Background(), strings.NewReader(in), &out); err != nil {
+		t.Fatal(err)
+	}
+	m := decode(t, out.String())[0]
+	// A tool failure is a result with isError=true, so the session keeps going.
+	if _, isRPCErr := m["error"]; isRPCErr {
+		t.Error("a tool failure must be a tool result, not a JSON-RPC transport error")
+	}
+	if m["result"].(map[string]any)["isError"] != true {
+		t.Error("tool failure result should have isError=true")
+	}
+}
