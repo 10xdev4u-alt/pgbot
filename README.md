@@ -90,8 +90,11 @@ connect time and tells you exactly which GRANT to run rather than silently
 reporting partial data.
 
 pgbot additionally pins every session read-only (`default_transaction_read_only`,
-`statement_timeout=15s`, `lock_timeout=2s`) and wraps each query in a
-`BEGIN READ ONLY … ROLLBACK`. Those are defence in depth; the role is the boundary.
+`statement_timeout=15s`, `lock_timeout=2s`) and wraps each query in its own
+`BEGIN READ ONLY … COMMIT`. It **commits** those read-only probes rather than
+rolling them back — a read-only transaction writes nothing either way, but a
+rollback would inflate the `xact_rollback` counter pgbot itself reports. Those
+are defence in depth; the role is the boundary.
 
 ## Usage
 
