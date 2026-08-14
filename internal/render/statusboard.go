@@ -98,7 +98,12 @@ func buildBoard(c *model.Context) []boardRow {
 		if c.Activity != nil && c.Activity.IdleInTransaction > 0 {
 			note = fmt.Sprintf("%d idle in txn", c.Activity.IdleInTransaction)
 		}
-		rows = append(rows, boardRow{"connections", "ok", kOK, fmt.Sprintf("%d", h.Connections), note})
+		connVal := fmt.Sprintf("%d", h.Connections)
+		connStatus, connKind := statusFor("connection_saturation")
+		if c.Limits != nil && c.Limits.ConnectionsMax > 0 {
+			connVal = fmt.Sprintf("%d/%d", c.Limits.ConnectionsUsed, c.Limits.ConnectionsMax)
+		}
+		rows = append(rows, boardRow{"connections", connStatus, connKind, connVal, note})
 		if h.CacheHitRatio != nil {
 			s, k := statusFor("low_cache_hit")
 			rows = append(rows, boardRow{"cache", s, k, pct(*h.CacheHitRatio), ""})
@@ -142,6 +147,14 @@ func buildBoard(c *model.Context) []boardRow {
 	if c.Tables != nil {
 		s, k := statusFor("table_bloat", "seq_scan_heavy")
 		rows = append(rows, boardRow{"tables", s, k, HumanBytes(c.Tables.DBSizeBytes), fmt.Sprintf("%d tracked", len(c.Tables.Top))})
+	}
+	if c.Limits != nil && c.Limits.Exactness != model.ExactnessUnavailable {
+		s, k := statusFor("txid_wraparound")
+		note := "of 2.1B max"
+		if k == kOK {
+			note = "no wraparound risk"
+		}
+		rows = append(rows, boardRow{"wraparound", s, k, humanNum(float64(c.Limits.MaxXIDAge)), note})
 	}
 	if w := c.WAL; w != nil && w.BytesPerSec != nil {
 		rows = append(rows, boardRow{"WAL", "ok", kOK, HumanBytes(int64(*w.BytesPerSec)) + "/s", ""})

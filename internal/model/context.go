@@ -46,6 +46,7 @@ type Context struct {
 	IO            *IO          `json:"io,omitempty"`
 	Replication   *Replication `json:"replication,omitempty"`
 	Settings      *Settings    `json:"settings,omitempty"`
+	Limits        *Limits      `json:"limits,omitempty"`
 	Deltas        *Deltas      `json:"deltas,omitempty"` // vs baseline; nil on first run
 	// Set (with Deltas nil) when a stats reset / restart between runs makes any
 	// comparison fiction — e.g. serverless scale-to-zero. See T2.
@@ -137,6 +138,15 @@ type SchemaObject struct {
 	Definition     string
 	DefinitionHash string
 	Invalid        bool // indexes only: indisvalid = false (a failed CREATE INDEX CONCURRENTLY)
+}
+
+// Limits holds cluster-wide saturation gauges: connection slots and the oldest
+// transaction-id age (wraparound risk).
+type Limits struct {
+	Section
+	ConnectionsUsed int   `json:"connections_used"`
+	ConnectionsMax  int   `json:"connections_max"`
+	MaxXIDAge       int64 `json:"max_xid_age"` // max age(datfrozenxid) across databases; ~2.1e9 is the wraparound wall
 }
 
 // ServerInfo is what we learned at connect time.

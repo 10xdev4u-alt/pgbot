@@ -148,6 +148,14 @@ func buildGood(c *model.Context) []string {
 	if c.Tables != nil && !fired["table_bloat"] {
 		g = append(g, "no significant table bloat")
 	}
+	if c.Limits != nil {
+		if !fired["txid_wraparound"] && c.Limits.MaxXIDAge > 0 {
+			g = append(g, "no wraparound risk")
+		}
+		if !fired["connection_saturation"] && c.Limits.ConnectionsMax > 0 {
+			g = append(g, fmt.Sprintf("connections %d/%d", c.Limits.ConnectionsUsed, c.Limits.ConnectionsMax))
+		}
+	}
 	if c.Queries != nil && c.Queries.Enabled && !fired["pg_stat_statements_missing"] {
 		g = append(g, "query stats available")
 	}

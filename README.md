@@ -18,9 +18,10 @@ connected · db.example.com · postgres 17.4 · read-only · 6h20m window
 Database health: 82/100
 
 CRITICAL
-● orders queries 3.2× slower — sequential scans up 340%
+● transaction-id age 1.8B — 84% toward wraparound
 
 WARNING
+● orders queries 3.2× slower (8 → 26 ms mean)
 ● 3 unused indexes consume 18 GB
 ● connection usage reached 87%
 

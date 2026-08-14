@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 
 	"github.com/pgrundev/pgbot/internal/model"
 )
@@ -34,6 +35,21 @@ const (
 
 	// Impact/confidence horizons (T9).
 	shortStatsWindowSec = 7 * 24 * 3600 // < 7 days of stats: unused-index confidence capped low
+
+	// Connection saturation (used / max_connections).
+	connSaturationWarn = 0.85
+	connSaturationCrit = 0.95
+
+	// Transaction-ID wraparound: age(datfrozenxid) climbing toward the ~2.1B wall
+	// past which Postgres refuses writes. Healthy clusters stay under autovacuum's
+	// 200M freeze trigger, so these thresholds only fire when vacuum is failing.
+	xidWraparoundWarn = 1_000_000_000
+	xidWraparoundCrit = 1_800_000_000
+	xidWraparoundWall = 2_147_483_647
+
+	// Query slowdown vs the baseline (the "what changed" finding).
+	querySlowdownFactor = 2.0  // at least 2× slower
+	querySlowdownMinMs  = 10.0 // and the new mean ≥ 10ms, so micro-queries aren't noise
 )
 
 // Compute returns findings sorted most-severe first. Order among equal
@@ -50,6 +66,9 @@ func Compute(c *model.Context) []model.Finding {
 	lowCacheHit(c, add)
 	idleInTransaction(c, add)
 	longRunningXact(c, add)
+	connectionSaturation(c, add)
+	txidWraparound(c, add)
+	querySlowdown(c, add)
 	waitFindings(c, add)
 	highRollbacks(c, add)
 	missingPgss(c, add)
@@ -484,6 +503,101 @@ func waitFindings(c *model.Context, add func(model.Finding)) {
 			Confidence: conf,
 		})
 	}
+}
+
+// connectionSaturation warns as open connections approach max_connections —
+// past which new sessions are refused and the app locks out. A risk, not a
+// gradual degradation.
+func connectionSaturation(c *model.Context, add func(model.Finding)) {
+	if c.Limits == nil || c.Limits.ConnectionsMax <= 0 {
+		return
+	}
+	used, max := c.Limits.ConnectionsUsed, c.Limits.ConnectionsMax
+	frac := float64(used) / float64(max)
+	if frac < connSaturationWarn {
+		return
+	}
+	sev := model.SeverityWarn
+	if frac >= connSaturationCrit {
+		sev = model.SeverityCritical
+	}
+	add(model.Finding{
+		ID: "connection_saturation", Severity: sev,
+		Title:       fmt.Sprintf("Connection usage at %.0f%% (%d/%d)", frac*100, used, max),
+		Detail:      "New connections are refused once max_connections is reached. A pool leak or a traffic burst can exhaust the slots and lock the application out.",
+		Remediation: "Put a pooler (PgBouncer) in front, lower per-service pool sizes, or raise max_connections.",
+		Impact: impact(model.DimRisk, frac*100,
+			fmt.Sprintf("%d of %d slots", used, max),
+			"count(pg_stat_activity) / max_connections"),
+		Confidence: 1.0,
+	})
+}
+
+// txidWraparound flags the oldest transaction-id age climbing toward the ~2.1B
+// wall past which Postgres stops accepting writes — i.e. autovacuum isn't
+// freezing fast enough. One of the few genuine "database goes down" risks.
+func txidWraparound(c *model.Context, add func(model.Finding)) {
+	if c.Limits == nil || c.Limits.MaxXIDAge < xidWraparoundWarn {
+		return
+	}
+	age := c.Limits.MaxXIDAge
+	sev := model.SeverityWarn
+	if age >= xidWraparoundCrit {
+		sev = model.SeverityCritical
+	}
+	pct := float64(age) / float64(xidWraparoundWall) * 100
+	add(model.Finding{
+		ID: "txid_wraparound", Severity: sev,
+		Title:       fmt.Sprintf("Transaction-ID age %s — %.0f%% toward wraparound", human(age), pct),
+		Detail:      "The oldest unfrozen transaction id is approaching the 2.1-billion wraparound limit, past which Postgres refuses writes. It means vacuum isn't freezing fast enough — a long-running transaction, disabled autovacuum, or a stuck worker.",
+		Remediation: "Clear what blocks vacuum (long transactions, replication slots, disabled autovacuum), then VACUUM (FREEZE) the oldest tables.",
+		Impact: impact(model.DimRisk, pct,
+			fmt.Sprintf("age %s / 2.1B", human(age)),
+			"max(age(datfrozenxid)) across databases"),
+		Confidence: 1.0,
+	})
+}
+
+// querySlowdown surfaces the flagship "what changed": a query whose mean time
+// regressed sharply versus the baseline. Temporal — needs a prior run, which is
+// exactly what a stats reader can't do.
+func querySlowdown(c *model.Context, add func(model.Finding)) {
+	if c.Deltas == nil {
+		return
+	}
+	var worst *model.Delta
+	var worstFactor float64
+	for i := range c.Deltas.Changes {
+		d := &c.Deltas.Changes[i]
+		if d.ID != "query.mean_ms" || d.Before <= 0 || d.After < querySlowdownMinMs {
+			continue
+		}
+		if factor := d.After / d.Before; factor >= querySlowdownFactor && factor > worstFactor {
+			worst, worstFactor = d, factor
+		}
+	}
+	if worst == nil {
+		return
+	}
+	add(model.Finding{
+		ID: "query_slowdown", Severity: model.SeverityWarn,
+		Title:       fmt.Sprintf("Query %s is %.1f× slower (%.0f → %.0f ms mean)", queryTagStr(worst.Subject), worstFactor, worst.Before, worst.After),
+		Detail:      "A query's mean execution time regressed sharply versus pgbot's baseline. Often a plan flip after the table grew, a dropped or invalidated index, or stale statistics.",
+		Remediation: "Check for a missing/invalid index and run ANALYZE on the table; compare the current plan against before.",
+		Impact: impact(model.DimLatency, math.Min(90, 30+worstFactor*10),
+			fmt.Sprintf("%.1f× slower", worstFactor),
+			"pg_stat_statements mean time vs the baseline"),
+		Confidence: 0.8,
+	})
+}
+
+// queryTagStr renders a query_id string as the short low-4-hex handle, or a
+// truncated fallback when it isn't numeric.
+func queryTagStr(s string) string {
+	if id, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return queryTag(id)
+	}
+	return truncate(s, 12)
 }
 
 func highRollbacks(c *model.Context, add func(model.Finding)) {

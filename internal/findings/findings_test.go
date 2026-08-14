@@ -330,3 +330,54 @@ func TestHighRollbacks_gatedOnVolume(t *testing.T) {
 		t.Error("a high ratio over real volume should fire")
 	}
 }
+
+func TestConnectionSaturation(t *testing.T) {
+	mk := func(used, max int) []model.Finding {
+		return Compute(&model.Context{Limits: &model.Limits{ConnectionsUsed: used, ConnectionsMax: max}})
+	}
+	if has(mk(80, 100), "connection_saturation") != nil {
+		t.Error("80% must not fire")
+	}
+	if f := has(mk(90, 100), "connection_saturation"); f == nil || f.Severity != model.SeverityWarn {
+		t.Errorf("90%% should warn, got %+v", f)
+	}
+	if f := has(mk(97, 100), "connection_saturation"); f == nil || f.Severity != model.SeverityCritical {
+		t.Errorf("97%% should be critical, got %+v", f)
+	}
+}
+
+func TestTxidWraparound(t *testing.T) {
+	mk := func(age int64) []model.Finding {
+		return Compute(&model.Context{Limits: &model.Limits{MaxXIDAge: age}})
+	}
+	if has(mk(200_000_000), "txid_wraparound") != nil {
+		t.Error("200M (healthy, autovacuum territory) must not fire")
+	}
+	if f := has(mk(1_200_000_000), "txid_wraparound"); f == nil || f.Severity != model.SeverityWarn {
+		t.Errorf("1.2B should warn, got %+v", f)
+	}
+	if f := has(mk(1_900_000_000), "txid_wraparound"); f == nil || f.Severity != model.SeverityCritical {
+		t.Errorf("1.9B should be critical, got %+v", f)
+	}
+	// Both are risks → pinned to the top of the report.
+	if f := has(mk(1_900_000_000), "txid_wraparound"); f != nil && f.Impact.Dimension != model.DimRisk {
+		t.Errorf("wraparound should be a risk dimension, got %s", f.Impact.Dimension)
+	}
+}
+
+func TestQuerySlowdown(t *testing.T) {
+	pc := func(chg []model.Delta) *model.Context { return &model.Context{Deltas: &model.Deltas{Changes: chg}} }
+	// 8ms → 26ms = 3.25× slower on a meaningful query → fires.
+	f := has(Compute(pc([]model.Delta{{ID: "query.mean_ms", Subject: "4242", Before: 8, After: 26}})), "query_slowdown")
+	if f == nil || f.Severity != model.SeverityWarn || f.Impact.Dimension != model.DimLatency {
+		t.Fatalf("a 3.25x slowdown should fire a latency warning, got %+v", f)
+	}
+	// A micro-query (0.1ms → 0.4ms) is noise even at 4× → no finding.
+	if has(Compute(pc([]model.Delta{{ID: "query.mean_ms", Subject: "1", Before: 0.1, After: 0.4}})), "query_slowdown") != nil {
+		t.Error("a sub-10ms query must not fire regardless of factor")
+	}
+	// A small regression (12ms → 15ms = 1.25×) is under the 2× floor → no finding.
+	if has(Compute(pc([]model.Delta{{ID: "query.mean_ms", Subject: "2", Before: 12, After: 15}})), "query_slowdown") != nil {
+		t.Error("under 2x must not fire")
+	}
+}
