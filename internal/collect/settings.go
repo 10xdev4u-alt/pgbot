@@ -16,8 +16,9 @@ var sqlSettings string
 type settingsCollector struct{}
 
 type settingRow struct {
-	Name    string `db:"name"`
-	Setting string `db:"setting"`
+	Name  string `db:"name"`
+	Value string `db:"value"`
+	Kind  string `db:"kind"`
 }
 
 func (settingsCollector) Name() string                     { return "settings" }
@@ -34,9 +35,13 @@ func (settingsCollector) Assemble(c *model.Context, _ conn.Capabilities, s sampl
 		c.Settings = &model.Settings{Section: unavail(s.Err, "pg_settings unavailable")}
 		return
 	}
-	set := &model.Settings{Section: model.Section{Exactness: model.ExactnessScraped}, Overrides: map[string]string{}}
+	set := &model.Settings{Section: model.Section{Exactness: model.ExactnessScraped}, Overrides: map[string]string{}, Params: map[string]string{}}
 	for _, r := range rows {
-		set.Overrides[r.Name] = r.Setting
+		if r.Kind == "tuning" {
+			set.Params[r.Name] = r.Value
+		} else {
+			set.Overrides[r.Name] = r.Value
+		}
 	}
 	c.Settings = set
 }

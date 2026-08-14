@@ -381,3 +381,48 @@ func TestQuerySlowdown(t *testing.T) {
 		t.Error("under 2x must not fire")
 	}
 }
+
+func TestTuning_workMemLow(t *testing.T) {
+	spill := 4.0 * (1 << 20) // 4 MiB/s temp files
+	c := &model.Context{
+		Health:   &model.Health{TempBytesPerSec: &spill},
+		Settings: &model.Settings{Params: map[string]string{"work_mem": "4MB"}},
+	}
+	f := has(Compute(c), "work_mem_low")
+	if f == nil || f.Severity != model.SeverityWarn {
+		t.Fatalf("temp spilling should recommend raising work_mem, got %+v", f)
+	}
+	if !contains(f.Title, "4MB") {
+		t.Errorf("should name the current work_mem, got %q", f.Title)
+	}
+	// No spill → no finding.
+	none := 0.0
+	if has(Compute(&model.Context{Health: &model.Health{TempBytesPerSec: &none}}), "work_mem_low") != nil {
+		t.Error("no temp spill must not fire")
+	}
+}
+
+func TestTuning_checkpointsForced(t *testing.T) {
+	c := &model.Context{
+		IO:       &model.IO{CheckpointsReq: 40, CheckpointsTimed: 10}, // 80% forced
+		Settings: &model.Settings{Params: map[string]string{"max_wal_size": "1GB"}},
+	}
+	if f := has(Compute(c), "checkpoints_forced"); f == nil || !contains(f.Remediation, "1GB") {
+		t.Fatalf("mostly-forced checkpoints should recommend raising max_wal_size, got %+v", f)
+	}
+	// Too few checkpoints to judge → no finding.
+	if has(Compute(&model.Context{IO: &model.IO{CheckpointsReq: 3, CheckpointsTimed: 1}}), "checkpoints_forced") != nil {
+		t.Error("under the min-count must not fire")
+	}
+}
+
+func TestTuning_connectionsOverprovisioned(t *testing.T) {
+	c := &model.Context{Limits: &model.Limits{ConnectionsUsed: 20, ConnectionsMax: 500}}
+	if f := has(Compute(c), "connections_overprovisioned"); f == nil || f.Severity != model.SeverityInfo {
+		t.Fatalf("20/500 should flag over-provisioning as info, got %+v", f)
+	}
+	// Small max_connections → not flagged.
+	if has(Compute(&model.Context{Limits: &model.Limits{ConnectionsUsed: 5, ConnectionsMax: 100}}), "connections_overprovisioned") != nil {
+		t.Error("max_connections below the floor must not fire")
+	}
+}

@@ -50,7 +50,22 @@ const (
 	// Query slowdown vs the baseline (the "what changed" finding).
 	querySlowdownFactor = 2.0  // at least 2× slower
 	querySlowdownMinMs  = 10.0 // and the new mean ≥ 10ms, so micro-queries aren't noise
+
+	// Config-tuning thresholds (the `pgbot tune` findings).
+	tuneTempSpillBytesPerSec = 1 << 20 // 1 MiB/s of temp files → work_mem too small
+	tuneForcedCheckpointFrac = 0.30    // >30% of checkpoints forced by WAL → max_wal_size too small
+	tuneForcedCheckpointMin  = 10      // need enough checkpoints to judge the ratio
+	tuneConnOverprovMax      = 200     // only flag over-provisioning above this max_connections
+	tuneConnOverprovUseFrac  = 0.15    // used < 15% of max → over-provisioned
 )
+
+// TuningIDs identifies the config-recommendation findings, surfaced together by
+// `pgbot tune`.
+var TuningIDs = map[string]bool{
+	"work_mem_low":                true,
+	"checkpoints_forced":          true,
+	"connections_overprovisioned": true,
+}
 
 // Compute returns findings sorted most-severe first. Order among equal
 // severities is stable by ID for deterministic output.
@@ -69,6 +84,9 @@ func Compute(c *model.Context) []model.Finding {
 	connectionSaturation(c, add)
 	txidWraparound(c, add)
 	querySlowdown(c, add)
+	workMemLow(c, add)
+	checkpointsForced(c, add)
+	connectionsOverprovisioned(c, add)
 	waitFindings(c, add)
 	highRollbacks(c, add)
 	missingPgss(c, add)
@@ -598,6 +616,85 @@ func queryTagStr(s string) string {
 		return queryTag(id)
 	}
 	return truncate(s, 12)
+}
+
+// workMemLow — sorts/hashes are spilling to disk because they don't fit in
+// work_mem. A config-tuning recommendation, not a defect.
+func workMemLow(c *model.Context, add func(model.Finding)) {
+	if c.Health == nil || c.Health.TempBytesPerSec == nil || *c.Health.TempBytesPerSec < tuneTempSpillBytesPerSec {
+		return
+	}
+	rate := int64(*c.Health.TempBytesPerSec)
+	cur := settingParam(c, "work_mem")
+	add(model.Finding{
+		ID: "work_mem_low", Severity: model.SeverityWarn,
+		Title:       fmt.Sprintf("Queries spilling to disk — work_mem is %s", orUnknownSetting(cur)),
+		Detail:      fmt.Sprintf("Sorts and hashes are writing %s/s of temporary files because they don't fit in work_mem, forcing slower on-disk operations.", humanBytes(rate)),
+		Remediation: "Raise work_mem — but it's per-operation, so budget total ≈ work_mem × active connections; or add an index so the sort/hash is avoided.",
+		Impact: impact(model.DimThroughput, math.Min(80, math.Log10(float64(rate))*10),
+			humanBytes(rate)+"/s temp files", "pg_stat_database.temp_bytes rate"),
+		Confidence: 0.7,
+	})
+}
+
+// checkpointsForced — WAL is filling max_wal_size before the timed checkpoint
+// interval, so checkpoints fire on volume (IO spikes, more full-page writes).
+func checkpointsForced(c *model.Context, add func(model.Finding)) {
+	if c.IO == nil {
+		return
+	}
+	total := c.IO.CheckpointsReq + c.IO.CheckpointsTimed
+	if total < tuneForcedCheckpointMin {
+		return
+	}
+	frac := float64(c.IO.CheckpointsReq) / float64(total)
+	if frac < tuneForcedCheckpointFrac {
+		return
+	}
+	cur := settingParam(c, "max_wal_size")
+	add(model.Finding{
+		ID: "checkpoints_forced", Severity: model.SeverityWarn,
+		Title:       fmt.Sprintf("%.0f%% of checkpoints forced by WAL pressure (%d of %d)", frac*100, c.IO.CheckpointsReq, total),
+		Detail:      "Checkpoints are triggered by max_wal_size filling rather than the timed interval — WAL is written faster than the checkpoint spacing expects, causing IO spikes and extra full-page writes.",
+		Remediation: fmt.Sprintf("Raise max_wal_size (currently %s) so checkpoints are paced by time, not WAL volume.", orUnknownSetting(cur)),
+		Impact: impact(model.DimThroughput, math.Min(75, frac*100),
+			fmt.Sprintf("%d of %d forced", c.IO.CheckpointsReq, total), "pg_stat_checkpointer forced vs timed"),
+		Confidence: 0.7,
+	})
+}
+
+// connectionsOverprovisioned — max_connections far above real usage. Each slot
+// reserves backend memory whether used or not; better handled by a pooler.
+func connectionsOverprovisioned(c *model.Context, add func(model.Finding)) {
+	if c.Limits == nil || c.Limits.ConnectionsMax < tuneConnOverprovMax {
+		return
+	}
+	if float64(c.Limits.ConnectionsUsed) >= float64(c.Limits.ConnectionsMax)*tuneConnOverprovUseFrac {
+		return
+	}
+	add(model.Finding{
+		ID: "connections_overprovisioned", Severity: model.SeverityInfo,
+		Title:       fmt.Sprintf("max_connections is %d but only %d in use", c.Limits.ConnectionsMax, c.Limits.ConnectionsUsed),
+		Detail:      "Each connection slot reserves backend memory (roughly work_mem plus overhead) whether used or not. A high max_connections with low real usage wastes RAM and invites connection storms.",
+		Remediation: "Put a pooler (PgBouncer) in front and lower max_connections to match real concurrency.",
+		Impact: impact(model.DimCost, 20,
+			fmt.Sprintf("%d/%d slots used", c.Limits.ConnectionsUsed, c.Limits.ConnectionsMax), "max_connections vs observed usage"),
+		Confidence: 0.6,
+	})
+}
+
+func settingParam(c *model.Context, name string) string {
+	if c.Settings == nil || c.Settings.Params == nil {
+		return ""
+	}
+	return c.Settings.Params[name]
+}
+
+func orUnknownSetting(s string) string {
+	if s == "" {
+		return "(unknown)"
+	}
+	return s
 }
 
 func highRollbacks(c *model.Context, add func(model.Finding)) {

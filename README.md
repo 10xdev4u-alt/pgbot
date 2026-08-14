@@ -133,6 +133,7 @@ pgbot baselines prune <fingerprint> # delete a database's snapshots
 pgbot baselines export <fingerprint># dump stored snapshots as JSON
 
 pgbot indexes <connection-string>   # zero-scan indexes + what NOT to drop
+pgbot tune <connection-string>      # config-tuning recommendations from the workload
 pgbot explain <connection-string>   # inspect, then have an AI explain the findings
 pgbot ask "why is it slow?"         # AI answer grounded on the findings ($DATABASE_URL)
   --yes                  skip the "this sends data to Google" confirmation

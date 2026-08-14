@@ -324,7 +324,8 @@ type ReplicaRow struct {
 // Settings is non-default pg_settings plus sizes worth surfacing.
 type Settings struct {
 	Section
-	Overrides map[string]string `json:"overrides"` // name -> current value where != boot_val
+	Overrides map[string]string `json:"overrides"`        // name -> current value where != boot_val
+	Params    map[string]string `json:"params,omitempty"` // tuning-relevant params (display values), always present
 }
 
 // Finding is deterministic, rule-based analysis computed in Go — never by the

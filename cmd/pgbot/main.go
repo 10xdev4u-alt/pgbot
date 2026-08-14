@@ -28,6 +28,7 @@ func main() {
 	root.AddCommand(newExplainCmd())
 	root.AddCommand(newAskCmd())
 	root.AddCommand(newIndexesCmd())
+	root.AddCommand(newTuneCmd())
 	root.AddCommand(newMCPCmd())
 
 	if err := root.Execute(); err != nil {
