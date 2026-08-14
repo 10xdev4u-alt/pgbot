@@ -119,6 +119,65 @@ rolling them back — a read-only transaction writes nothing either way, but a
 rollback would inflate the `xact_rollback` counter pgbot itself reports. Those
 are defence in depth; the role is the boundary.
 
+## Connecting to managed providers
+
+pgbot is a **client** — it connects over the Postgres wire protocol like `psql`.
+You never install anything on the database; run pgbot from your laptop, a bastion,
+CI, or an instance in the same network. Grant `pg_monitor` to your role (above)
+and connect. Provider-specific notes:
+
+### AWS RDS / Aurora
+
+You can't install on the RDS/Aurora instance itself — it's managed, no OS access.
+Run pgbot from a **client that can reach it**:
+
+- **Private RDS (recommended for prod):** run pgbot from a small **EC2 in the same
+  VPC**. It reaches the private endpoint over AWS's internal network — no public
+  access, no SSH tunnel, no IP allow-listing. The only rule is the RDS security
+  group allowing `5432` from the EC2's security group.
+- **Publicly accessible RDS:** allow your IP in the RDS security group and connect
+  straight from your laptop.
+
+```bash
+# on the EC2 (or your laptop for a public instance):
+curl -fsSL https://pgbot.dev/install | sh
+pgbot inspect "postgres://pgbot_ro@mydb.abc123.us-east-1.rds.amazonaws.com:5432/appdb?sslmode=require"
+```
+Grant `pg_monitor` as the master (`rds_superuser`) role. **Caveat:** host metrics
+(CPU / memory / disk IOPS) live in CloudWatch, not Postgres, so they're out of
+reach over a connection string — everything else works.
+
+### Neon
+
+```bash
+pgbot inspect "postgres://user:pass@ep-xxx.region.aws.neon.tech/dbname?sslmode=require"
+```
+- The **pooled** endpoint has a `-pooler` host suffix (transaction mode). pgbot
+  detects it and proceeds — rates stay correct — or use the direct (non-pooler)
+  host for session-scoped certainty.
+- Neon's default string ships `channel_binding=require`; pgbot **ignores it
+  automatically** (the driver can't do channel binding; TLS from `sslmode` still
+  applies) instead of erroring.
+- `pg_stat_statements` is preloaded — just `CREATE EXTENSION pg_stat_statements;`.
+- **Scale-to-zero:** after idle, Neon suspends the compute and discards stats. The
+  first run after a wake is a *cold window* — pgbot suppresses counter-based
+  findings until the window is old enough, so a reset never reads as a −99% regression.
+
+### Supabase
+
+```bash
+# direct endpoint (session-scoped, best for pgbot):
+pgbot inspect "postgres://postgres:pass@db.<ref>.supabase.co:5432/postgres?sslmode=require"
+# or the pooled endpoint (:6543, transaction mode) — pgbot notes it and proceeds:
+pgbot inspect "postgres://postgres.<ref>:pass@aws-0-<region>.pooler.supabase.com:6543/postgres?sslmode=require"
+```
+- The default pooled connection string uses port **`:6543`** (Supavisor, transaction
+  mode). pgbot detects the pooler and proceeds with a note; prefer the direct
+  `:5432` endpoint when you can.
+- `pg_stat_statements` is preloaded — `CREATE EXTENSION pg_stat_statements;`.
+- Supabase doesn't hand out superuser; the built-in `postgres` role already has
+  broad read access, or grant `pg_monitor` to a dedicated role where allowed.
+
 ## Usage
 
 ```
