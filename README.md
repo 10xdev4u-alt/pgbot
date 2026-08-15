@@ -76,6 +76,20 @@ index that looks unused here. It tells you what *not* to drop.
 
 ![pgbot indexes — zero-scan indexes and what not to drop](docs/img/indexes.png)
 
+**`pgbot queries`** — the top statements from `pg_stat_statements`, ranked by
+total execution time (the query quietly eating your database) with a `share`
+column for each query's slice of total time. Add `--by-calls` to rank by call
+count instead — a cheap query run a million times can outweigh an expensive one
+run twice. Transaction-control and session-`SET` noise is filtered out.
+
+```
+$ pgbot queries "$DATABASE_URL"
+  total  share  calls  mean       query
+  4h11m  61.0%  812.4k 18.55 ms   SELECT * FROM orders WHERE user_id = $1 AND …
+  22m3s  17.8%  1.3k   1.02 s     SELECT count(*) FROM events WHERE created_at …
+  15m2s  12.0%  99.8k  9.04 ms    INSERT INTO audit_log (actor, action, …) VAL …
+```
+
 **`pgbot ask "why is it slow?"`** — a plain-language reading of the *same*
 deterministic findings. It leads with the lock contention and refuses to
 recommend dropping the indexes because replication is active — the caveat is
@@ -192,6 +206,7 @@ pgbot baselines prune <fingerprint> # delete a database's snapshots
 pgbot baselines export <fingerprint># dump stored snapshots as JSON
 
 pgbot indexes <connection-string>   # zero-scan indexes + what NOT to drop
+pgbot queries <connection-string>   # top pg_stat_statements by total time (--by-calls to re-rank)
 pgbot tune <connection-string>      # config-tuning recommendations from the workload
 pgbot explain <connection-string>   # inspect, then have an AI explain the findings
 pgbot ask "why is it slow?"         # AI answer grounded on the findings ($DATABASE_URL)

@@ -30,6 +30,7 @@ type queryRow struct {
 	SharedBlksHit  int64   `db:"shared_blks_hit"`
 	SharedBlksRead int64   `db:"shared_blks_read"`
 	WalBytes       int64   `db:"wal_bytes"`
+	TotalExecAll   float64 `db:"total_exec_all"`
 }
 
 func (queriesCollector) Name() string { return "queries" }
@@ -60,6 +61,9 @@ func (queriesCollector) Assemble(c *model.Context, caps conn.Capabilities, s sam
 		return
 	}
 	q := &model.Queries{Enabled: true, Section: model.Section{Exactness: model.ExactnessCumulative}}
+	if len(rows) > 0 {
+		q.TotalExecMS = round2(rows[0].TotalExecAll)
+	}
 	for _, r := range rows {
 		item := model.QueryStat{
 			QueryID: r.QueryID, Query: r.Query, Calls: r.Calls,

@@ -12,9 +12,17 @@ SELECT queryid,
        rows,
        shared_blks_hit,
        shared_blks_read,
-       wal_bytes
+       wal_bytes,
+       -- window sum runs before LIMIT, so this is total exec time across ALL
+       -- statements (not just the top 20) — the denominator for prop_exec_time.
+       sum(%[1]s) OVER ()  AS total_exec_all
 FROM pg_stat_statements
 WHERE queryid IS NOT NULL AND calls > 0
   AND query NOT ILIKE '%%pg_stat_statements%%'
+  -- Drop transaction-control and session GUC statements. They dominate a quiet
+  -- database's counters (SET/BEGIN/COMMIT run on every connection) but are never
+  -- "the query eating your database" — the question this view answers. \M is an
+  -- end-of-word boundary so SET matches but SELECT/SETseq-named tables do not.
+  AND query !~* '^\s*(set|show|reset|begin|commit|rollback|discard|deallocate|start)\M'
 ORDER BY %[1]s DESC
 LIMIT 20;

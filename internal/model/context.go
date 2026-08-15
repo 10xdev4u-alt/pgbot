@@ -231,8 +231,9 @@ type BlockingRow struct {
 // temporal view comes from Deltas, not from the short in-process sample.
 type Queries struct {
 	Section
-	Enabled bool        `json:"enabled"`
-	Top     []QueryStat `json:"top,omitempty"`
+	Enabled     bool        `json:"enabled"`
+	TotalExecMS float64     `json:"total_exec_ms,omitempty"` // cumulative exec time across ALL statements (prop_exec_time denominator)
+	Top         []QueryStat `json:"top,omitempty"`
 }
 
 type QueryStat struct {
