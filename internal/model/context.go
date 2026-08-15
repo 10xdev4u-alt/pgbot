@@ -308,9 +308,30 @@ type IO struct {
 // Replication is pg_stat_replication (primary) / pg_stat_wal_receiver (replica).
 type Replication struct {
 	Section
-	IsReplica      bool         `json:"is_replica"`
-	Replicas       []ReplicaRow `json:"replicas,omitempty"`
-	ReceiverLagSec *float64     `json:"receiver_lag_sec,omitempty"`
+	IsReplica      bool              `json:"is_replica"`
+	Replicas       []ReplicaRow      `json:"replicas,omitempty"`
+	ReceiverLagSec *float64          `json:"receiver_lag_sec,omitempty"`
+	Slots          []ReplicationSlot `json:"slots,omitempty"`
+	Subscriptions  []Subscription    `json:"subscriptions,omitempty"`
+}
+
+// ReplicationSlot is one row of pg_replication_slots. An inactive slot holds
+// back WAL removal from RetainedBytes' worth of log — the classic disk-fill.
+type ReplicationSlot struct {
+	Name          string `json:"name"`
+	Type          string `json:"type"` // physical | logical
+	Active        bool   `json:"active"`
+	Database      string `json:"database,omitempty"`
+	RetainedBytes int64  `json:"retained_bytes"`
+	WALStatus     string `json:"wal_status,omitempty"` // reserved|extended|unreserved|lost (PG13+)
+}
+
+// Subscription is subscriber-side logical-replication health from
+// pg_stat_subscription. WorkerRunning=false means changes aren't being applied.
+type Subscription struct {
+	Name          string  `json:"name"`
+	WorkerRunning bool    `json:"worker_running"`
+	LastMsgAgeSec float64 `json:"last_msg_age_sec,omitempty"`
 }
 
 type ReplicaRow struct {

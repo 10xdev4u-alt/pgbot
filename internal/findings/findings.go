@@ -51,6 +51,13 @@ const (
 	querySlowdownFactor = 2.0  // at least 2× slower
 	querySlowdownMinMs  = 10.0 // and the new mean ≥ 10ms, so micro-queries aren't noise
 
+	// Replication-slot WAL retention. An inactive slot pins WAL from its restart
+	// point; the retained log grows until the consumer reconnects or the slot is
+	// dropped — a classic way to fill the data disk. Small brief-reconnect gaps
+	// aren't worth flagging, so warn only once retention is material.
+	slotRetainWarnBytes int64 = 512 << 20 // 512 MiB retained by an inactive slot
+	slotRetainCritBytes int64 = 8 << 30   // 8 GiB → serious disk-fill risk
+
 	// Config-tuning thresholds (the `pgbot tune` findings).
 	tuneTempSpillBytesPerSec = 1 << 20 // 1 MiB/s of temp files → work_mem too small
 	tuneForcedCheckpointFrac = 0.30    // >30% of checkpoints forced by WAL → max_wal_size too small
@@ -83,6 +90,8 @@ func Compute(c *model.Context) []model.Finding {
 	longRunningXact(c, add)
 	connectionSaturation(c, add)
 	txidWraparound(c, add)
+	replicationSlotRisk(c, add)
+	subscriptionDown(c, add)
 	querySlowdown(c, add)
 	workMemLow(c, add)
 	checkpointsForced(c, add)
@@ -574,6 +583,86 @@ func txidWraparound(c *model.Context, add func(model.Finding)) {
 			"max(age(datfrozenxid)) across databases"),
 		Confidence: 1.0,
 	})
+}
+
+// replicationSlotRisk flags an inactive replication slot that is holding back WAL
+// removal — the retained log grows until the slot's consumer reconnects or the
+// slot is dropped, and unbounded growth fills the data disk and stops the primary.
+// wal_status='lost' means required WAL is already gone: the slot is broken.
+func replicationSlotRisk(c *model.Context, add func(model.Finding)) {
+	if c.Replication == nil {
+		return
+	}
+	for _, s := range c.Replication.Slots {
+		lost := s.WALStatus == "lost"
+		// An active, healthy slot is fine. Only inactive slots (or an already-lost
+		// one) are a risk, and an inactive slot below the floor is just a brief gap.
+		if s.Active && !lost {
+			continue
+		}
+		if !lost && s.RetainedBytes < slotRetainWarnBytes {
+			continue
+		}
+		sev := model.SeverityWarn
+		score := 55.0
+		note := "inactive — no consumer connected"
+		switch {
+		case lost:
+			sev = model.SeverityCritical
+			score = 92
+			note = "wal_status=lost — required WAL has already been removed"
+		case s.RetainedBytes >= slotRetainCritBytes:
+			sev = model.SeverityCritical
+			score = 85
+		}
+		ev := []string{
+			fmt.Sprintf("slot %q (%s) on %s", s.Name, orText(s.Type, "unknown"), orText(s.Database, "cluster")),
+			note,
+			fmt.Sprintf("WAL retained: %s", humanBytes(s.RetainedBytes)),
+		}
+		if s.WALStatus != "" && !lost {
+			ev = append(ev, "wal_status="+s.WALStatus)
+		}
+		add(model.Finding{
+			ID: "replication_slot_inactive", Severity: sev,
+			Title:       fmt.Sprintf("Inactive replication slot %q pinning %s of WAL", s.Name, humanBytes(s.RetainedBytes)),
+			Detail:      "An inactive replication slot holds back WAL removal from its restart point. The retained WAL grows until the slot's consumer reconnects or the slot is dropped — a classic way to fill the data disk and take the primary down.",
+			Evidence:    ev,
+			Remediation: fmt.Sprintf("If the standby/subscriber is gone for good, drop it: SELECT pg_drop_replication_slot('%s'). If it should be connected, restart its consumer. Set max_slot_wal_keep_size to cap the retention.", s.Name),
+			Impact:      impact(model.DimRisk, score, humanBytes(s.RetainedBytes)+" WAL retained", "pg_replication_slots"),
+			Confidence:  0.9,
+		})
+	}
+}
+
+// subscriptionDown flags a logical subscription whose apply worker isn't running:
+// changes from the publisher aren't being applied, so this subscriber is drifting.
+func subscriptionDown(c *model.Context, add func(model.Finding)) {
+	if c.Replication == nil {
+		return
+	}
+	for _, s := range c.Replication.Subscriptions {
+		if s.WorkerRunning {
+			continue
+		}
+		add(model.Finding{
+			ID: "subscription_worker_down", Severity: model.SeverityWarn,
+			Title:       fmt.Sprintf("Logical subscription %q has no running apply worker", s.Name),
+			Detail:      "The subscription exists but its apply worker isn't running, so changes from the publisher aren't being replicated. Data on this subscriber is drifting from the source.",
+			Evidence:    []string{fmt.Sprintf("subscription %q: apply worker not running", s.Name)},
+			Remediation: "Check the subscriber logs for apply errors, confirm the subscription is enabled (ALTER SUBSCRIPTION … ENABLE), and that the publisher's slot still exists.",
+			Impact:      impact(model.DimRisk, 60, "apply worker not running", "pg_stat_subscription"),
+			Confidence:  0.75,
+		})
+	}
+}
+
+// orText returns s, or fallback when s is empty.
+func orText(s, fallback string) string {
+	if s == "" {
+		return fallback
+	}
+	return s
 }
 
 // querySlowdown surfaces the flagship "what changed": a query whose mean time

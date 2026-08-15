@@ -298,7 +298,8 @@ delete it with `pgbot baselines`.
 ## What it collects
 
 All from SQL — connections, cache-hit ratio, TPS and rollback ratio, WAL and IO
-rates, checkpoints, locks and blocking chains, replication lag, top queries
+rates, checkpoints, locks and blocking chains, replication lag, replication-slot
+WAL retention and logical-subscription health, top queries
 (`pg_stat_statements`), table/index sizes, dead tuples and vacuum activity,
 unused and missing indexes, and non-default settings. Counters
 (`pg_stat_database`, `pg_stat_wal`, IO) are **double-sampled** to produce live
