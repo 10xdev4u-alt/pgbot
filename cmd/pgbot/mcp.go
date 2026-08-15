@@ -5,10 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
+	"sort"
 	"time"
 
 	"github.com/pgrundev/pgbot/internal/mcp"
+	"github.com/pgrundev/pgbot/internal/model"
 	"github.com/pgrundev/pgbot/internal/render"
 	"github.com/pgrundev/pgbot/internal/store"
 	"github.com/spf13/cobra"
@@ -72,6 +75,23 @@ func pgbotTools() []mcp.Tool {
 				"per-node and a replica may still use an index that looks unused here. Read-only.",
 			InputSchema: dsnSchema,
 			Handler:     unusedIndexesTool,
+		},
+		{
+			Name: "top_queries",
+			Description: "Top statements from pg_stat_statements ranked by cumulative total execution " +
+				"time, each with its share of total DB exec time (share_pct), call count, and mean ms. " +
+				"Answers 'which query is eating the database.' Query text is normalized ($1 placeholders) " +
+				"— no literals. Transaction-control/SET noise is filtered. Read-only.",
+			InputSchema: dsnSchema,
+			Handler:     topQueriesTool,
+		},
+		{
+			Name: "vacuum_health",
+			Description: "Autovacuum health per table, ranked by dead tuples: live/dead tuple counts, " +
+				"dead ratio, last autovacuum time, and a computed 'due' flag (dead tuples past Postgres' " +
+				"default autovacuum trigger of 50 + 20% of live rows). Read-only.",
+			InputSchema: dsnSchema,
+			Handler:     vacuumHealthTool,
 		},
 	}
 }
@@ -178,6 +198,92 @@ func unusedIndexesTool(ctx context.Context, args json.RawMessage) (string, error
 	if c.Indexes != nil {
 		out["unused"] = c.Indexes.Unused
 	}
+	b, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// topQueriesTool returns the pg_stat_statements top-N by total execution time,
+// each carrying its share of total DB exec time — the agent-facing counterpart
+// to the `pgbot queries` command.
+func topQueriesTool(ctx context.Context, args json.RawMessage) (string, error) {
+	dsn, err := dsnFromArgs(args)
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	c, _, err := gather(ctx, dsn, inspectFlags{interval: time.Second, ashHz: 0, noStore: true})
+	if err != nil {
+		return "", err
+	}
+	out := map[string]any{"enabled": false, "ranked_by": "total_exec_time", "queries": []any{}}
+	switch {
+	case c.Queries != nil && c.Queries.Enabled:
+		out["enabled"] = true
+		out["total_exec_ms"] = c.Queries.TotalExecMS
+		rows := make([]map[string]any, 0, len(c.Queries.Top))
+		for _, q := range c.Queries.Top {
+			share := 0.0
+			if c.Queries.TotalExecMS > 0 {
+				share = math.Round(q.TotalMS/c.Queries.TotalExecMS*1000) / 10
+			}
+			rows = append(rows, map[string]any{
+				"query": q.Query, "calls": q.Calls,
+				"total_ms": q.TotalMS, "mean_ms": q.MeanMS, "share_pct": share,
+			})
+		}
+		out["queries"] = rows
+	case c.Queries != nil && c.Queries.Reason != "":
+		out["reason"] = c.Queries.Reason
+	}
+	b, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// vacuumHealthTool returns per-table autovacuum health ranked by dead tuples,
+// with a computed "due" flag — the agent-facing counterpart to `pgbot vacuum`.
+func vacuumHealthTool(ctx context.Context, args json.RawMessage) (string, error) {
+	dsn, err := dsnFromArgs(args)
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	c, _, err := gather(ctx, dsn, inspectFlags{interval: time.Second, ashHz: 0, noStore: true})
+	if err != nil {
+		return "", err
+	}
+	out := map[string]any{"tables_past_threshold": 0, "tables": []any{}}
+	if c.Tables == nil {
+		b, _ := json.MarshalIndent(out, "", "  ")
+		return string(b), nil
+	}
+	tbls := append([]model.TableStat(nil), c.Tables.Top...)
+	sort.SliceStable(tbls, func(i, j int) bool { return tbls[i].DeadTuples > tbls[j].DeadTuples })
+	past := 0
+	rows := make([]map[string]any, 0, len(tbls))
+	for _, t := range tbls {
+		due := expectAutovacuum(t.LiveTuples, t.DeadTuples)
+		if due {
+			past++
+		}
+		row := map[string]any{
+			"table": t.Schema + "." + t.Name, "live_tuples": t.LiveTuples,
+			"dead_tuples": t.DeadTuples, "dead_ratio": t.DeadRatio, "due": due,
+		}
+		if t.LastAutovac != nil {
+			row["last_autovacuum"] = t.LastAutovac.UTC().Format(time.RFC3339)
+		}
+		rows = append(rows, row)
+	}
+	out["tables_past_threshold"] = past
+	out["tables"] = rows
 	b, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
 		return "", err

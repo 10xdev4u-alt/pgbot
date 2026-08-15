@@ -232,9 +232,13 @@ pgbot mcp                           # run as an MCP server over stdio (for AI ag
 
 `pgbot mcp` speaks the [Model Context Protocol](https://modelcontextprotocol.io)
 on stdio, so an AI agent can call pgbot as a read-only tool. It exposes
-**deterministic** tools only — `inspect` (full findings as JSON) and
-`unused_indexes` — and lets the *connected model* do the explaining. No Gemini
-key involved: the agent reasons over the same findings the CLI computes.
+**deterministic** tools only — `inspect` (full findings as JSON), `unused_indexes`,
+`top_queries` (pg_stat_statements ranked by total time, with each query's share),
+and `vacuum_health` (autovacuum health per table, with a computed "due" flag) —
+and lets the *connected model* do the explaining. Every tool is read-only,
+returns a stable JSON shape, and never exposes a raw connection string or query
+literals to the model. No Gemini key involved: the agent reasons over the same
+findings the CLI computes.
 
 Add it to any MCP client (Claude Desktop/Code, Cursor, …):
 
