@@ -29,6 +29,7 @@ func main() {
 	root.AddCommand(newAskCmd())
 	root.AddCommand(newIndexesCmd())
 	root.AddCommand(newQueriesCmd())
+	root.AddCommand(newVacuumCmd())
 	root.AddCommand(newTuneCmd())
 	root.AddCommand(newMCPCmd())
 

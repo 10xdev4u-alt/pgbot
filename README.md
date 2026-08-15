@@ -90,6 +90,19 @@ $ pgbot queries "$DATABASE_URL"
   15m2s  12.0%  99.8k  9.04 ms    INSERT INTO audit_log (actor, action, …) VAL …
 ```
 
+**`pgbot vacuum`** — autovacuum health per table: dead tuples, dead-tuple ratio,
+when autovacuum last ran, and a computed `due?` — whether the table's dead tuples
+have passed Postgres' default autovacuum trigger (`50 + 20%` of live rows). Rising
+dead tuples with `due? yes` and no recent run is autovacuum falling behind, the
+early signal for bloat and, eventually, wraparound risk.
+
+```
+$ pgbot vacuum "$DATABASE_URL"
+  table               live   dead   dead%  last autovacuum  due?
+  public.demo_events  42.9k  33.8k  44.1%  4m ago           yes
+  public.churny       5.0k   10.0k  66.7%  never            yes
+```
+
 **`pgbot ask "why is it slow?"`** — a plain-language reading of the *same*
 deterministic findings. It leads with the lock contention and refuses to
 recommend dropping the indexes because replication is active — the caveat is
@@ -207,6 +220,7 @@ pgbot baselines export <fingerprint># dump stored snapshots as JSON
 
 pgbot indexes <connection-string>   # zero-scan indexes + what NOT to drop
 pgbot queries <connection-string>   # top pg_stat_statements by total time (--by-calls to re-rank)
+pgbot vacuum <connection-string>    # autovacuum health per table — dead tuples + whether it's due
 pgbot tune <connection-string>      # config-tuning recommendations from the workload
 pgbot explain <connection-string>   # inspect, then have an AI explain the findings
 pgbot ask "why is it slow?"         # AI answer grounded on the findings ($DATABASE_URL)
