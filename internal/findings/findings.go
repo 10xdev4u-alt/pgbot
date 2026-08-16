@@ -91,6 +91,7 @@ func Compute(c *model.Context) []model.Finding {
 	invalidIndexes(c, add)
 	unusedIndexes(c, add)
 	redundantIndexes(c, add)
+	unindexedForeignKeys(c, add)
 	seqScanHeavy(c, add)
 	bloatedTables(c, add)
 	lowCacheHit(c, add)
@@ -407,6 +408,32 @@ func redundantIndexes(c *model.Context, add func(model.Finding)) {
 		Impact:      impact(model.DimStorage, sizeScore(total), "≈"+humanBytes(total)+" reclaimable", fmt.Sprintf("%d prefix-redundant indexes (indkey/indclass containment)", len(ev))),
 		Confidence:  0.75,
 		Caveats:     caveats,
+	})
+}
+
+// unindexedForeignKeys flags FK constraints with no supporting index on the
+// child. A parent DELETE/UPDATE then sequentially scans the whole child to check
+// references and holds locks longer — cheap to miss, expensive at scale.
+func unindexedForeignKeys(c *model.Context, add func(model.Finding)) {
+	if c.Indexes == nil || len(c.Indexes.UnindexedFKs) == 0 {
+		return
+	}
+	var ev []string
+	var worst int64
+	for _, fk := range c.Indexes.UnindexedFKs {
+		ev = append(ev, fmt.Sprintf("%s.%s (%s) on (%s)", fk.Schema, fk.Table, humanBytes(fk.ChildBytes), fk.Columns))
+		if fk.ChildBytes > worst {
+			worst = fk.ChildBytes
+		}
+	}
+	add(model.Finding{
+		ID: "fk_unindexed", Severity: model.SeverityWarn,
+		Title:       fmt.Sprintf("%d foreign key(s) without a supporting index", len(ev)),
+		Detail:      "A foreign key with no index on the child means every DELETE or UPDATE of a referenced parent row sequentially scans the whole child to check references, escalating lock duration. It stays invisible until the child grows.",
+		Evidence:    cap10(ev),
+		Remediation: "Add an index on the child's FK columns: CREATE INDEX CONCURRENTLY ON child (fk_columns).",
+		Impact:      impact(model.DimLatency, sizeScore(worst), "largest child "+humanBytes(worst), fmt.Sprintf("%d FKs with no leading-column index", len(ev))),
+		Confidence:  0.85,
 	})
 }
 

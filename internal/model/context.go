@@ -277,10 +277,21 @@ type TableStat struct {
 // Indexes is pg_stat_user_indexes.
 type Indexes struct {
 	Section
-	Total     int              `json:"total"`
-	Unused    []IndexStat      `json:"unused,omitempty"`
-	Largest   []IndexStat      `json:"largest,omitempty"`
-	Redundant []RedundantIndex `json:"redundant,omitempty"`
+	Total        int              `json:"total"`
+	Unused       []IndexStat      `json:"unused,omitempty"`
+	Largest      []IndexStat      `json:"largest,omitempty"`
+	Redundant    []RedundantIndex `json:"redundant,omitempty"`
+	UnindexedFKs []UnindexedFK    `json:"unindexed_fks,omitempty"`
+}
+
+// UnindexedFK is a foreign key with no supporting index on the child table —
+// every parent DELETE/UPDATE seq-scans the child to check references.
+type UnindexedFK struct {
+	Schema     string `json:"schema"`
+	Table      string `json:"table"`
+	Constraint string `json:"constraint"`
+	Columns    string `json:"columns"`
+	ChildBytes int64  `json:"child_bytes"`
 }
 
 // RedundantIndex is an index whose columns are a leading prefix of (or identical

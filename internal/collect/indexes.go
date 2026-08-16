@@ -15,6 +15,9 @@ var sqlIndexes string
 //go:embed sql/redundant_indexes.sql
 var sqlRedundantIndexes string
 
+//go:embed sql/unindexed_fks.sql
+var sqlUnindexedFKs string
+
 // indexes = pg_stat_user_indexes. Zero-scan, non-trivial indexes that don't
 // back a primary key or unique constraint become the unused-index finding.
 type indexesCollector struct{}
@@ -46,9 +49,18 @@ type redundantRow struct {
 	Bytes     int64  `db:"redundant_bytes"`
 }
 
+type fkRow struct {
+	Schema     string `db:"schema"`
+	Table      string `db:"child_table"`
+	Constraint string `db:"constraint_name"`
+	ChildBytes int64  `db:"child_bytes"`
+	FKColumns  string `db:"fk_columns"`
+}
+
 type indexesSample struct {
 	Rows      []indexRow
 	Redundant []redundantRow
+	FKs       []fkRow
 }
 
 func (indexesCollector) Sample(ctx context.Context, t *conn.Target, _ conn.Capabilities) (any, error) {
@@ -57,9 +69,10 @@ func (indexesCollector) Sample(ctx context.Context, t *conn.Target, _ conn.Capab
 		return nil, err
 	}
 	out := indexesSample{Rows: rows}
-	// Redundant-index detection is a pure catalog read; a failure here must not
-	// sink the whole indexes section (it degrades to no redundant list).
+	// Redundant-index and unindexed-FK detection are pure catalog reads; a failure
+	// in either must not sink the whole indexes section (it degrades to no list).
 	out.Redundant, _ = queryMany[redundantRow](ctx, t, sqlRedundantIndexes)
+	out.FKs, _ = queryMany[fkRow](ctx, t, sqlUnindexedFKs)
 	return out, nil
 }
 
@@ -74,6 +87,11 @@ func (indexesCollector) Assemble(c *model.Context, _ conn.Capabilities, s sample
 	for _, r := range sm.Redundant {
 		idx.Redundant = append(idx.Redundant, model.RedundantIndex{
 			Schema: r.Schema, Table: r.Table, Name: r.Redundant, CoveredBy: r.Covering, Bytes: r.Bytes,
+		})
+	}
+	for _, r := range sm.FKs {
+		idx.UnindexedFKs = append(idx.UnindexedFKs, model.UnindexedFK{
+			Schema: r.Schema, Table: r.Table, Constraint: r.Constraint, Columns: r.FKColumns, ChildBytes: r.ChildBytes,
 		})
 	}
 	for _, r := range rows {
