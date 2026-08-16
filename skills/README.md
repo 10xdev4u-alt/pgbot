@@ -15,15 +15,20 @@ findings.
 
 ### Install (Claude Code / Claude Desktop, Skills-aware clients)
 
-Copy it into your personal or project skills directory:
+One-liner — same shape as the pgbot binary installer:
 
 ```bash
-# personal (all your sessions):
+curl -fsSL https://pgbot.dev/skill | sh
+```
+
+It drops the skill at `~/.claude/skills/postgres-diagnostics/SKILL.md`
+(override the target with `PGBOT_SKILL_DIR`, e.g. `.claude/skills` for a
+project-scoped install). Or fetch the raw file directly:
+
+```bash
 mkdir -p ~/.claude/skills/postgres-diagnostics
 curl -fsSL https://raw.githubusercontent.com/pgrundev/pgbot/main/skills/postgres-diagnostics/SKILL.md \
   -o ~/.claude/skills/postgres-diagnostics/SKILL.md
-
-# …or project-scoped: put it at .claude/skills/postgres-diagnostics/SKILL.md
 ```
 
 Pair it with the MCP server so the agent has both the tools and the playbook:
