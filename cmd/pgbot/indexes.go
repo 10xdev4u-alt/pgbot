@@ -27,6 +27,7 @@ func newIndexesCmd() *cobra.Command {
 	fl.BoolVar(&f.noColor, "no-color", false, "disable ANSI color")
 	fl.BoolVar(&f.noStore, "no-store", true, "skip the local baseline store (default for a quick listing)")
 	fl.StringVar(&f.storePath, "store", "", "baseline DB path (default: XDG state dir)")
+	fl.DurationVar(&f.timeout, "timeout", 30*time.Second, "total wall-clock budget for the run (raise it for slow or remote databases)")
 	return cmd
 }
 
@@ -38,7 +39,7 @@ func runIndexes(cmd *cobra.Command, args []string, f inspectFlags) error {
 	f.interval = time.Second
 	f.ashHz = 0 // no wait profile needed for an index listing
 
-	ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(cmd.Context(), f.timeout)
 	defer cancel()
 
 	c, _, err := gather(ctx, connString, f)

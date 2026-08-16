@@ -36,6 +36,7 @@ func newVacuumCmd() *cobra.Command {
 	}
 	fl := cmd.Flags()
 	fl.BoolVar(&f.noColor, "no-color", false, "disable ANSI color")
+	fl.DurationVar(&f.timeout, "timeout", 30*time.Second, "total wall-clock budget for the run (raise it for slow or remote databases)")
 	return cmd
 }
 
@@ -48,7 +49,7 @@ func runVacuum(cmd *cobra.Command, args []string, f inspectFlags) error {
 	f.noStore = true
 	f.interval = time.Second
 
-	ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(cmd.Context(), f.timeout)
 	defer cancel()
 
 	c, host, err := gather(ctx, connString, f)

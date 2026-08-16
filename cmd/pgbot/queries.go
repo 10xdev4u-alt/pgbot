@@ -30,6 +30,7 @@ func newQueriesCmd() *cobra.Command {
 	fl := cmd.Flags()
 	fl.BoolVar(&f.noColor, "no-color", false, "disable ANSI color")
 	fl.BoolVar(&byCalls, "by-calls", false, "rank by call count instead of total execution time")
+	fl.DurationVar(&f.timeout, "timeout", 30*time.Second, "total wall-clock budget for the run (raise it for slow or remote databases)")
 	return cmd
 }
 
@@ -42,7 +43,7 @@ func runQueries(cmd *cobra.Command, args []string, f inspectFlags, byCalls bool)
 	f.noStore = true
 	f.interval = time.Second
 
-	ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(cmd.Context(), f.timeout)
 	defer cancel()
 
 	c, host, err := gather(ctx, connString, f)
