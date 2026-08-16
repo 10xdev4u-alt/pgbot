@@ -98,6 +98,9 @@ func TestIntegration_fullPipeline(t *testing.T) {
 	if c.Server.VersionNum == 0 {
 		t.Error("server version not detected")
 	}
+	if c.Horizon == nil || c.Horizon.Exactness == "" {
+		t.Error("horizon section missing exactness label")
+	}
 
 	// PII gate: render JSON and assert no email/uuid leaked from a fake-data table.
 	// (The caller is expected to have seeded such data; we assert the invariant

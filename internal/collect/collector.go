@@ -83,6 +83,7 @@ var registry = []Collector{
 	replicationCollector{},
 	settingsCollector{},
 	limitsCollector{},
+	horizonCollector{},
 }
 
 func nowUTC() time.Time { return time.Now().UTC() }

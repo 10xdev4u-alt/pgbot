@@ -47,6 +47,10 @@ const (
 	xidWraparoundCrit = 1_800_000_000
 	xidWraparoundWall = 2_147_483_647
 
+	// Vacuum horizon: an xmin held this many transactions behind the current xid
+	// is a real block on dead-tuple reclamation (not a momentary query).
+	vacuumHorizonWarnXIDs = 1_000_000
+
 	// Query slowdown vs the baseline (the "what changed" finding).
 	querySlowdownFactor = 2.0  // at least 2× slower
 	querySlowdownMinMs  = 10.0 // and the new mean ≥ 10ms, so micro-queries aren't noise
@@ -92,6 +96,7 @@ func Compute(c *model.Context) []model.Finding {
 	txidWraparound(c, add)
 	replicationSlotRisk(c, add)
 	subscriptionDown(c, add)
+	vacuumHorizonBlocked(c, add)
 	querySlowdown(c, add)
 	workMemLow(c, add)
 	checkpointsForced(c, add)
@@ -346,12 +351,16 @@ func bloatedTables(c *model.Context, add func(model.Finding)) {
 	if autovacKeepingPace {
 		score *= 0.6 // autovacuum has run recently — the bloat is likely transient
 	}
+	rem := "VACUUM the worst tables, and tune autovacuum (scale factor / cost limit) if the ratio stays high."
+	if c.Horizon != nil && len(c.Horizon.Holders) > 0 && c.Horizon.Holders[0].XminAge >= vacuumHorizonWarnXIDs {
+		rem = "First check vacuum_horizon_blocked — an xmin holder is pinning the horizon, so VACUUM can't reclaim these until it's released. " + rem
+	}
 	add(model.Finding{
 		ID: "table_bloat", Severity: model.SeverityWarn,
 		Title:       fmt.Sprintf("%d table(s) with high dead-tuple ratio", len(ev)),
 		Detail:      "Dead tuples inflate table size and slow scans until autovacuum reclaims them. A persistently high ratio suggests vacuum isn't keeping up.",
 		Evidence:    cap10(ev),
-		Remediation: "VACUUM the worst tables, and tune autovacuum (scale factor / cost limit) if the ratio stays high.",
+		Remediation: rem,
 		Impact: impact(model.DimStorage, score,
 			"≈"+humanBytes(int64(worstDeadBytes))+" dead in the worst table",
 			"max(dead_ratio × table size)"+map[bool]string{true: ", discounted (autovacuum recent)", false: ""}[autovacKeepingPace]),
@@ -583,6 +592,60 @@ func txidWraparound(c *model.Context, add func(model.Finding)) {
 			"max(age(datfrozenxid)) across databases"),
 		Confidence: 1.0,
 	})
+}
+
+// vacuumHorizonBlocked names WHY dead tuples aren't being reclaimed: the oldest
+// xmin still in use pins the horizon, and VACUUM frees nothing newer. It reports
+// which of the four holders (open transaction, standby feedback, replication
+// slot, prepared 2PC txn) is oldest and how far behind it is.
+func vacuumHorizonBlocked(c *model.Context, add func(model.Finding)) {
+	if c.Horizon == nil || len(c.Horizon.Holders) == 0 {
+		return
+	}
+	top := c.Horizon.Holders[0] // collector orders oldest-xmin first
+	if top.XminAge < vacuumHorizonWarnXIDs {
+		return
+	}
+	sev := model.SeverityWarn
+	dim := model.DimStorage
+	score := 45.0
+	if top.XminAge >= xidWraparoundWarn { // old enough to threaten wraparound
+		sev = model.SeverityCritical
+		dim = model.DimRisk
+		score = float64(top.XminAge) / float64(xidWraparoundWall) * 100
+	}
+	ev := make([]string, 0, len(c.Horizon.Holders))
+	for _, h := range c.Horizon.Holders {
+		d := ""
+		if h.Detail != "" {
+			d = " — " + h.Detail
+		}
+		ev = append(ev, fmt.Sprintf("%s %s: xmin %s txns behind%s", h.Source, h.Holder, human(h.XminAge), d))
+	}
+	add(model.Finding{
+		ID: "vacuum_horizon_blocked", Severity: sev,
+		Title:       fmt.Sprintf("Vacuum horizon pinned by %s %s (%s transactions behind)", top.Source, top.Holder, human(top.XminAge)),
+		Detail:      "Dead tuples can't be reclaimed past the oldest xmin still in use. Until this holder releases it, VACUUM frees nothing newer — bloat grows, and if it persists, transaction-id age climbs toward wraparound.",
+		Evidence:    cap10(ev),
+		Remediation: horizonRemediation(top.Source),
+		Impact:      impact(dim, score, human(top.XminAge)+" transactions pinned", "oldest backend_xmin / slot xmin / prepared-xact age"),
+		Confidence:  0.9,
+	})
+}
+
+func horizonRemediation(source string) string {
+	switch source {
+	case "backend":
+		return "End or commit the long-open transaction (find the pid in pg_stat_activity); set idle_in_transaction_session_timeout so it can't recur."
+	case "replication_slot":
+		return "If the slot's consumer is gone for good, drop it: SELECT pg_drop_replication_slot('…'). Otherwise let the consumer catch up."
+	case "standby_feedback":
+		return "A replica's hot_standby_feedback is holding the horizon. Shorten long queries on the standby, or weigh turning hot_standby_feedback off (risks query cancellations there)."
+	case "prepared_xact":
+		return "An abandoned prepared (2PC) transaction blocks vacuum forever. COMMIT PREPARED / ROLLBACK PREPARED the gid once you confirm its transaction manager is done."
+	default:
+		return "Identify and release the holder of the oldest xmin."
+	}
 }
 
 // replicationSlotRisk flags an inactive replication slot that is holding back WAL
