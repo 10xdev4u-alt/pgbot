@@ -50,6 +50,7 @@ type Context struct {
 	Horizon       *VacuumHorizon `json:"horizon,omitempty"`   // what pins the xmin/vacuum horizon (A1)
 	Sequences     *Sequences     `json:"sequences,omitempty"` // sequence exhaustion headroom (A8)
 	Progress      *Progress      `json:"progress,omitempty"`  // in-flight pg_stat_progress_* operations (A11)
+	Archiver      *Archiver      `json:"archiver,omitempty"`  // WAL archiving health (A15)
 	Deltas        *Deltas        `json:"deltas,omitempty"`    // vs baseline; nil on first run
 	// Set (with Deltas nil) when a stats reset / restart between runs makes any
 	// comparison fiction — e.g. serverless scale-to-zero. See T2.
@@ -160,8 +161,8 @@ type ServerInfo struct {
 	Database      string     `json:"database"`
 	Provider      string     `json:"provider,omitempty"`    // detected managed platform: rds/aurora/cloudsql/azure/supabase/neon/unknown
 	InRecovery    bool       `json:"in_recovery,omitempty"` // true on a physical standby (A15-0)
-	ViaPooler     bool       `json:"via_pooler,omitempty"` // connected through a transaction pooler (rates still correct)
-	StartedAt     *time.Time `json:"started_at,omitempty"` // pg_postmaster_start_time()
+	ViaPooler     bool       `json:"via_pooler,omitempty"`  // connected through a transaction pooler (rates still correct)
+	StartedAt     *time.Time `json:"started_at,omitempty"`  // pg_postmaster_start_time()
 	UptimeSeconds int64      `json:"uptime_seconds"`
 	Extensions    []string   `json:"extensions"`
 	Capabilities  []string   `json:"capabilities"` // human-readable flags that were satisfied
@@ -373,6 +374,20 @@ type Replication struct {
 	Subscriptions  []Subscription    `json:"subscriptions,omitempty"`
 }
 
+// Archiver is WAL archiving health from pg_stat_archiver. HasArchiveCommand is
+// only whether archive_command/library is set — never the value (credentials).
+type Archiver struct {
+	Section
+	ArchivedCount     int64      `json:"archived_count"`
+	LastArchivedWAL   string     `json:"last_archived_wal,omitempty"`
+	LastArchivedTime  *time.Time `json:"last_archived_time,omitempty"`
+	FailedCount       int64      `json:"failed_count"`
+	LastFailedWAL     string     `json:"last_failed_wal,omitempty"`
+	LastFailedTime    *time.Time `json:"last_failed_time,omitempty"`
+	StatsReset        *time.Time `json:"stats_reset,omitempty"`
+	HasArchiveCommand bool       `json:"has_archive_command"`
+}
+
 // Progress lists in-flight maintenance operations from the pg_stat_progress_*
 // views — live truth (a vacuum 60% through heap-scan), not inference.
 type Progress struct {
@@ -471,6 +486,7 @@ type Finding struct {
 	Impact     Impact   `json:"impact"`
 	Confidence float64  `json:"confidence"` // 0.0–1.0; below 0.5 renders as "possible", not an assertion
 	Caveats    []string `json:"caveats,omitempty"`
+	Related    []string `json:"related,omitempty"` // ids of findings that travel with this one (rendered adjacently)
 }
 
 // Impact is why a finding matters and how much, in ONE dimension. Two findings

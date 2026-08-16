@@ -5,6 +5,7 @@
 package diff
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/pgrundev/pgbot/internal/model"
@@ -46,7 +47,27 @@ func Compute(now *model.Context, primary *Baseline, _ *Baseline) *model.Deltas {
 	connectionDelta(now, base, primary.CollectedAt, d)
 	deadRatioDelta(now, base, primary.CollectedAt, d)
 	replicationDelta(now, base, primary.CollectedAt, d)
+	archiverFailedDelta(now, base, primary.CollectedAt, d)
 	return d
+}
+
+// archiverFailedDelta reports NEW WAL-archiving failures since the baseline — the
+// run-over-run signal that catches intermittent archiving failure, which a
+// point-in-time last_failed_time < last_archived_time comparison misses. Only a
+// genuine increase (not a counter reset going backwards) is reported.
+func archiverFailedDelta(now, base *model.Context, baseAt time.Time, d *model.Deltas) {
+	if now.Archiver == nil || base.Archiver == nil {
+		return
+	}
+	if inc := now.Archiver.FailedCount - base.Archiver.FailedCount; inc > 0 {
+		at := baseAt
+		d.Changes = append(d.Changes, model.Delta{
+			ID: "archiver.failed_count", Subject: "archiver", Severity: model.SeverityWarn,
+			Before: float64(base.Archiver.FailedCount), After: float64(now.Archiver.FailedCount),
+			FirstObserved: &at,
+			Note:          fmt.Sprintf("%d new archiving failures since the last run", inc),
+		})
+	}
 }
 
 func queryDeltas(now, base *model.Context, baseAt time.Time, d *model.Deltas) {

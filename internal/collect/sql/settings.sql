@@ -12,6 +12,7 @@ WHERE name IN (
   'work_mem', 'maintenance_work_mem', 'max_wal_size', 'max_connections',
   'shared_buffers', 'effective_cache_size', 'autovacuum_max_workers',
   'autovacuum_vacuum_scale_factor', 'random_page_cost', 'track_io_timing',
-  'fsync', 'full_page_writes', 'autovacuum', 'statement_timeout'
+  'fsync', 'full_page_writes', 'autovacuum', 'statement_timeout',
+  'archive_mode', 'archive_timeout', 'wal_level'
 )
 ORDER BY 1;

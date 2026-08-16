@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pgrundev/pgbot/internal/model"
 )
@@ -60,6 +61,11 @@ const (
 	// Sequence exhaustion (last_value / effective ceiling).
 	seqExhaustionWarn = 0.80
 	seqExhaustionCrit = 0.90
+
+	// WAL archiving: pg_wal size at which broken archiving becomes a compound
+	// disk-fill emergency (unarchived WAL can't be recycled).
+	walDirCompoundBytes int64 = 10 << 30 // 10 GiB
+	archiveStallFloorS        = 3600     // stalled-archiving floor: 1h
 
 	// Query slowdown vs the baseline (the "what changed" finding).
 	querySlowdownFactor = 2.0  // at least 2× slower
@@ -117,6 +123,7 @@ func Compute(c *model.Context) []model.Finding {
 	txidWraparound(c, add)
 	mxidWraparound(c, add)
 	sequenceExhaustion(c, add)
+	walArchiving(c, add)
 	replicationSlotRisk(c, add)
 	subscriptionDown(c, add)
 	vacuumHorizonBlocked(c, add)
@@ -932,6 +939,150 @@ func horizonRemediation(source string) string {
 	default:
 		return "Identify and release the holder of the oldest xmin."
 	}
+}
+
+// walArchiving flags the WAL-archiving / PITR failure modes. On a detected
+// managed provider the backup mechanism is usually outside archive_command, so
+// every archiving finding is downgraded to info with wording that says pgbot
+// cannot see the provider's backups (A15-0 rule 2). The archiver collector only
+// runs on a primary/unknown node, so this is inherently primary-scoped.
+func walArchiving(c *model.Context, add func(model.Finding)) {
+	if c.Archiver == nil {
+		return
+	}
+	a := c.Archiver
+	managed := cloudProvider(c)
+	managedNote := "pgbot can't see this managed provider's backup mechanism — snapshots/WAL are handled outside archive_command; verify backups in the provider console"
+	sev := func(base string) string {
+		if managed {
+			return model.SeverityInfo
+		}
+		return base
+	}
+	archiveMode := settingParam(c, "archive_mode")
+	walLevel := settingParam(c, "wal_level")
+
+	// archiving_failing: the most recent archive attempt was a failure and no
+	// success has followed. Timestamp comparison, so an old transient failure two
+	// months ago (last_failed < last_archived since) never fires — no baseline
+	// needed and no stale-counter false positive.
+	// Two triggers: the point-in-time comparison (baseline-free, catches a
+	// persistent failure and ignores an old transient one), and the run-over-run
+	// failed_count delta (catches intermittent failure the timestamp misses).
+	failing := a.LastFailedTime != nil && (a.LastArchivedTime == nil || a.LastFailedTime.After(*a.LastArchivedTime))
+	failedDelta := archiverFailedDelta(c)
+	if failing || failedDelta > 0 {
+		ev := []string{}
+		basis := "pg_stat_archiver: last_failed_time > last_archived_time"
+		if failing {
+			ev = append(ev, fmt.Sprintf("last failure %s is newer than last success %s", tsOr(a.LastFailedTime), tsOr(a.LastArchivedTime)))
+		}
+		if failedDelta > 0 {
+			ev = append(ev, fmt.Sprintf("%d new archiving failures since the last run", failedDelta))
+			basis = "archiving failures increased since the baseline"
+		} else {
+			// Lifetime count is corroborating only — never the trigger (spec discipline:
+			// don't fire critical on a stale cumulative counter without a baseline).
+			ev = append(ev, fmt.Sprintf("%d failures since %s (lifetime, corroborating)", a.FailedCount, tsOr(a.StatsReset)))
+		}
+		f := model.Finding{
+			ID: "archiving_failing", Severity: sev(model.SeverityCritical),
+			Title:       "WAL archiving is failing — the PITR window is broken",
+			Detail:      "An archive_command attempt failed and was not (or not consistently) followed by success. Unarchived WAL means point-in-time recovery is broken from that point, silently — no client error, no symptom until a restore is attempted.",
+			Evidence:    ev,
+			Remediation: "Check the archive_command target (permissions, disk, network) in the server log; failed WAL is retried, so fixing the cause resumes archiving.",
+			Impact:      impact(model.DimRisk, 95, "archiving broken", basis),
+			Confidence:  0.95,
+		}
+		if managed {
+			f.Caveats = append(f.Caveats, managedNote)
+		}
+		crossLinkWAL(c, &f)
+		add(f)
+	}
+
+	// archiving_stalled: mode on, WAL flowing, nothing archived recently.
+	if (archiveMode == "on" || archiveMode == "always") && !failing {
+		walFlowing := c.WAL != nil && c.WAL.BytesPerSec != nil && *c.WAL.BytesPerSec > 0
+		if walFlowing && a.LastArchivedTime != nil && time.Since(*a.LastArchivedTime) > archiveStallThreshold(c) {
+			age := int64(time.Since(*a.LastArchivedTime).Seconds())
+			f := model.Finding{
+				ID: "archiving_stalled", Severity: sev(model.SeverityCritical),
+				Title:       fmt.Sprintf("WAL archiving stalled — nothing archived in %s while WAL is being written", shortDur(age)),
+				Detail:      "archive_mode is on and WAL is being generated, but no segment has been archived recently. WAL can't be recycled until it's archived, so this both breaks PITR and fills the disk.",
+				Evidence:    []string{fmt.Sprintf("last archived %s ago; archive_timeout=%s", shortDur(age), orUnknownSetting(settingParam(c, "archive_timeout")))},
+				Remediation: "Check that the archiver process is running and the archive_command target is reachable.",
+				Impact:      impact(model.DimRisk, 90, "archiving stalled", "last_archived_time age vs max(archive_timeout×3, 1h)"),
+				Confidence:  0.85,
+			}
+			if managed {
+				f.Caveats = append(f.Caveats, managedNote)
+			}
+			crossLinkWAL(c, &f)
+			add(f)
+		}
+	}
+
+	// archiving_disabled: no PITR by this mechanism.
+	if archiveMode == "off" && walLevel != "minimal" && !replicationInUse(c) {
+		s := model.SeverityWarn
+		if managed {
+			s = model.SeverityInfo
+		}
+		f := model.Finding{
+			ID: "archiving_disabled", Severity: s,
+			Title:       "WAL archiving is off — no point-in-time recovery",
+			Detail:      "archive_mode is off, so no WAL is archived. Without it (and with no replication streaming elsewhere) there is no PITR: recovery is limited to your last base backup.",
+			Remediation: "If you rely on PITR, set archive_mode=on with an archive_command (or use pgBackRest / a streaming replica). If backups are handled elsewhere, this is expected.",
+			Impact:      impact(model.DimRisk, 50, "no PITR", "archive_mode=off, wal_level≠minimal, no slots"),
+			Confidence:  0.8,
+		}
+		if managed {
+			f.Caveats = append(f.Caveats, managedNote)
+		}
+		add(f)
+	}
+}
+
+// crossLinkWAL enriches an archiving finding when pg_wal (A14) is large: broken
+// archiving PLUS a filling pg_wal is a compound emergency — unarchived WAL can't
+// be recycled, so the disk fills on top of the broken recovery window.
+func crossLinkWAL(c *model.Context, f *model.Finding) {
+	if c.WAL != nil && c.WAL.DirBytes != nil && *c.WAL.DirBytes >= walDirCompoundBytes {
+		f.Evidence = append(f.Evidence, fmt.Sprintf("pg_wal is now %s and cannot be recycled while archiving is broken — compound disk-fill risk", humanBytes(*c.WAL.DirBytes)))
+	}
+}
+
+func tsOr(t *time.Time) string {
+	if t == nil {
+		return "never"
+	}
+	return t.UTC().Format("2006-01-02 15:04Z")
+}
+
+// archiverFailedDelta returns the number of NEW archiving failures since the
+// baseline (0 if none / no baseline), from the diff's archiver.failed_count delta.
+func archiverFailedDelta(c *model.Context) int64 {
+	if c.Deltas == nil {
+		return 0
+	}
+	for _, ch := range c.Deltas.Changes {
+		if ch.ID == "archiver.failed_count" {
+			return int64(ch.After - ch.Before)
+		}
+	}
+	return 0
+}
+
+// archiveStallThreshold is max(archive_timeout × 3, 1h).
+func archiveStallThreshold(c *model.Context) time.Duration {
+	base := time.Duration(archiveStallFloorS) * time.Second
+	if secs, err := strconv.Atoi(strings.TrimSpace(settingParam(c, "archive_timeout"))); err == nil && secs > 0 {
+		if t := time.Duration(secs) * 3 * time.Second; t > base {
+			base = t
+		}
+	}
+	return base
 }
 
 // replicationSlotRisk flags an inactive replication slot that is holding back WAL
