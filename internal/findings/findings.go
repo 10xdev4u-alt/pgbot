@@ -67,6 +67,10 @@ const (
 	walDirCompoundBytes int64 = 10 << 30 // 10 GiB
 	archiveStallFloorS        = 3600     // stalled-archiving floor: 1h
 
+	// Replica replay lag (time-based failover RPO).
+	replicaLagWarnSec = 60.0
+	replicaLagCritSec = 300.0
+
 	// Query slowdown vs the baseline (the "what changed" finding).
 	querySlowdownFactor = 2.0  // at least 2× slower
 	querySlowdownMinMs  = 10.0 // and the new mean ≥ 10ms, so micro-queries aren't noise
@@ -125,6 +129,7 @@ func Compute(c *model.Context) []model.Finding {
 	sequenceExhaustion(c, add)
 	walArchiving(c, add)
 	checksumFindings(c, add)
+	failoverReadiness(c, add)
 	replicationSlotRisk(c, add)
 	subscriptionDown(c, add)
 	vacuumHorizonBlocked(c, add)
@@ -940,6 +945,147 @@ func horizonRemediation(source string) string {
 	default:
 		return "Identify and release the holder of the oldest xmin."
 	}
+}
+
+// failoverReadiness answers "if I promote right now, what do I lose, and will
+// writes hang?" — sync-standby consistency, time-based replay lag, a vanished
+// standby, and standby recovery conflicts.
+func failoverReadiness(c *model.Context, add func(model.Finding)) {
+	// sync_rep_degraded — the important one. Not visible in any latency graph.
+	sc := settingParam(c, "synchronous_commit")
+	required := requiredSyncStandbys(settingParam(c, "synchronous_standby_names"))
+	if required > 0 && (sc == "on" || sc == "remote_write" || sc == "remote_apply") {
+		got := 0
+		if c.Replication != nil {
+			for _, r := range c.Replication.Replicas {
+				if r.SyncState == "sync" || r.SyncState == "quorum" {
+					got++
+				}
+			}
+		}
+		if got < required {
+			add(model.Finding{
+				ID: "sync_rep_degraded", Severity: model.SeverityCritical,
+				Title:       fmt.Sprintf("Synchronous replication degraded — %d of %d required sync standbys present", got, required),
+				Detail:      "synchronous_standby_names requires sync standbys and synchronous_commit waits for them, but fewer are connected in sync/quorum state than required. Either writes are about to hang waiting for a standby that isn't there, or — if synchronous_commit was quietly relaxed — the RPO guarantee everyone believes in has silently stopped applying.",
+				Remediation: "Reconnect or replace the missing sync standby, and confirm synchronous_standby_names matches the standbys actually running.",
+				Impact:      impact(model.DimRisk, 88, fmt.Sprintf("%d/%d sync standbys", got, required), "sync_state count vs synchronous_standby_names"),
+				Confidence:  0.9,
+			})
+		}
+	}
+
+	// replica_lag_time — gated on observed WAL generation (replay_lag is stale on
+	// an idle primary, and a naive read there says a reassuring "zero").
+	walFlowing := c.WAL != nil && c.WAL.BytesPerSec != nil && *c.WAL.BytesPerSec > 0
+	if c.Replication != nil && walFlowing {
+		var ev []string
+		worst, crit := 0.0, false
+		for _, r := range c.Replication.Replicas {
+			if r.ReplayLagSec == nil || *r.ReplayLagSec < replicaLagWarnSec {
+				continue
+			}
+			if *r.ReplayLagSec > worst {
+				worst = *r.ReplayLagSec
+			}
+			if *r.ReplayLagSec >= replicaLagCritSec {
+				crit = true
+			}
+			ev = append(ev, fmt.Sprintf("%s: %.0fs replay lag", orText(r.AppName, r.ClientAddr), *r.ReplayLagSec))
+		}
+		if len(ev) > 0 {
+			sev := model.SeverityWarn
+			if crit {
+				sev = model.SeverityCritical
+			}
+			add(model.Finding{
+				ID: "replica_lag_time", Severity: sev,
+				Title:       fmt.Sprintf("Replica replay lag %.0fs — the writes you'd lose on failover", worst),
+				Detail:      "A standby's replay is behind by this much wall-clock time — that IS the RPO: promote now and you lose that much committed work. Byte lag can't tell you this; it needs the write rate, which pgbot has from WAL sampling.",
+				Evidence:    cap10(ev),
+				Remediation: "Check the standby's apply rate (IO, CPU, recovery conflicts) and the network between primary and standby.",
+				Impact:      impact(model.DimRisk, math.Min(90, 40+worst/10), fmt.Sprintf("%.0fs behind", worst), "pg_stat_replication.replay_lag, gated on WAL generation"),
+				Confidence:  0.85,
+			})
+		}
+	}
+
+	// recovery_conflicts — standby side.
+	if c.Standby != nil && c.Standby.Total() > 0 {
+		add(model.Finding{
+			ID: "recovery_conflicts", Severity: model.SeverityWarn,
+			Title:       fmt.Sprintf("%d recovery conflict(s) on this standby", c.Standby.Total()),
+			Detail:      "Queries on this standby have been cancelled because recovery had to apply a change that conflicted with them. Frequent conflicts make read queries here unreliable.",
+			Evidence:    []string{fmt.Sprintf("snapshot=%d lock=%d bufferpin=%d deadlock=%d tablespace=%d (cumulative)", c.Standby.ConflSnapshot, c.Standby.ConflLock, c.Standby.ConflBufferpin, c.Standby.ConflDeadlock, c.Standby.ConflTablespace)},
+			Remediation: "Raise max_standby_streaming_delay for long read queries, or enable hot_standby_feedback (at the cost of bloat on the primary — see vacuum_horizon_blocked).",
+			Impact:      impact(model.DimRisk, 40, fmt.Sprintf("%d conflicts", c.Standby.Total()), "pg_stat_database_conflicts"),
+			Confidence:  0.7,
+		})
+	}
+
+	// replica_disconnected — a standby that was streaming last run is gone now.
+	if gone := replicaDisconnected(c); gone != "" {
+		add(model.Finding{
+			ID: "replica_disconnected", Severity: model.SeverityWarn,
+			Title:       fmt.Sprintf("A standby stopped connecting: %s", gone),
+			Detail:      "A standby that was streaming at the last run is absent from pg_stat_replication now. A silently disconnected standby is invisible to any point-in-time tool — only run-over-run history sees it.",
+			Remediation: "Check whether the standby is down, was reconfigured, or had its replication slot dropped.",
+			Impact:      impact(model.DimRisk, 55, "standby gone", "present in baseline, absent now"),
+			Confidence:  0.8,
+		})
+	}
+}
+
+// requiredSyncStandbys parses synchronous_standby_names for the count of sync
+// standbys it requires: "ANY N (...)"/"FIRST N (...)" → N, a leading "N (...)"
+// → N, a bare list → 1, empty → 0 (not using sync rep).
+func requiredSyncStandbys(names string) int {
+	fields := strings.Fields(strings.TrimSpace(names))
+	if len(fields) == 0 {
+		return 0
+	}
+	switch strings.ToUpper(fields[0]) {
+	case "ANY", "FIRST":
+		if len(fields) >= 2 {
+			if n := leadingInt(fields[1]); n > 0 {
+				return n
+			}
+		}
+		return 1
+	}
+	if n := leadingInt(fields[0]); n > 0 {
+		return n
+	}
+	return 1
+}
+
+// leadingInt parses the leading run of digits ("3(a,b)" → 3, "s1" → 0).
+func leadingInt(s string) int {
+	d := ""
+	for _, ch := range s {
+		if ch < '0' || ch > '9' {
+			break
+		}
+		d += string(ch)
+	}
+	if n, err := strconv.Atoi(d); err == nil {
+		return n
+	}
+	return 0
+}
+
+// replicaDisconnected returns the name of a standby that was in the baseline but
+// is gone now (from the diff's replication.standby_gone delta), or "".
+func replicaDisconnected(c *model.Context) string {
+	if c.Deltas == nil {
+		return ""
+	}
+	for _, ch := range c.Deltas.Changes {
+		if ch.ID == "replication.standby_gone" {
+			return ch.Subject
+		}
+	}
+	return ""
 }
 
 // checksumFindings covers data-integrity: actual checksum failures (corruption),

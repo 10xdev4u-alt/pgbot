@@ -14,6 +14,7 @@ WHERE name IN (
   'autovacuum_vacuum_scale_factor', 'random_page_cost', 'track_io_timing',
   'fsync', 'full_page_writes', 'autovacuum', 'statement_timeout',
   'archive_mode', 'archive_timeout', 'wal_level',
-  'data_checksums', 'ignore_checksum_failure'
+  'data_checksums', 'ignore_checksum_failure',
+  'synchronous_commit', 'synchronous_standby_names'
 )
 ORDER BY 1;

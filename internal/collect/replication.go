@@ -19,12 +19,15 @@ var sqlReplication string
 type replicationCollector struct{}
 
 type replRow struct {
-	ClientAddr string `db:"client_addr"`
-	State      string `db:"state"`
-	SyncState  string `db:"sync_state"`
-	WriteLagB  int64  `db:"write_lag_bytes"`
-	FlushLagB  int64  `db:"flush_lag_bytes"`
-	ReplayLagB int64  `db:"replay_lag_bytes"`
+	ClientAddr   string   `db:"client_addr"`
+	AppName      string   `db:"application_name"`
+	State        string   `db:"state"`
+	SyncState    string   `db:"sync_state"`
+	SyncPriority int      `db:"sync_priority"`
+	ReplayLagSec *float64 `db:"replay_lag_sec"`
+	WriteLagB    int64    `db:"write_lag_bytes"`
+	FlushLagB    int64    `db:"flush_lag_bytes"`
+	ReplayLagB   int64    `db:"replay_lag_bytes"`
 }
 
 type slotRow struct {
@@ -112,7 +115,8 @@ func (replicationCollector) Assemble(c *model.Context, _ conn.Capabilities, s sa
 	r := &model.Replication{Section: model.Section{Exactness: model.ExactnessScraped}, IsReplica: rs.IsReplica, ReceiverLagSec: round2p(rs.RecvLag)}
 	for _, row := range rs.Repl {
 		r.Replicas = append(r.Replicas, model.ReplicaRow{
-			ClientAddr: row.ClientAddr, State: row.State, SyncState: row.SyncState,
+			ClientAddr: row.ClientAddr, AppName: row.AppName, State: row.State,
+			SyncState: row.SyncState, SyncPriority: row.SyncPriority, ReplayLagSec: round2p(row.ReplayLagSec),
 			WriteLagB: row.WriteLagB, FlushLagB: row.FlushLagB, ReplayLagB: row.ReplayLagB,
 		})
 	}

@@ -48,7 +48,37 @@ func Compute(now *model.Context, primary *Baseline, _ *Baseline) *model.Deltas {
 	deadRatioDelta(now, base, primary.CollectedAt, d)
 	replicationDelta(now, base, primary.CollectedAt, d)
 	archiverFailedDelta(now, base, primary.CollectedAt, d)
+	replicaGoneDelta(now, base, primary.CollectedAt, d)
 	return d
+}
+
+// replicaGoneDelta flags a standby that was streaming at the baseline but is
+// absent from pg_stat_replication now — a silent disconnect only history sees.
+func replicaGoneDelta(now, base *model.Context, baseAt time.Time, d *model.Deltas) {
+	if now.Replication == nil || base.Replication == nil {
+		return
+	}
+	present := map[string]bool{}
+	for _, r := range now.Replication.Replicas {
+		present[standbyKey(r)] = true
+	}
+	for _, r := range base.Replication.Replicas {
+		if k := standbyKey(r); k != "" && !present[k] {
+			at := baseAt
+			d.Changes = append(d.Changes, model.Delta{
+				ID: "replication.standby_gone", Subject: k, Severity: model.SeverityWarn,
+				Before: 1, After: 0, FirstObserved: &at,
+				Note: "a standby present at the last run is no longer connected",
+			})
+		}
+	}
+}
+
+func standbyKey(r model.ReplicaRow) string {
+	if r.AppName != "" {
+		return r.AppName
+	}
+	return r.ClientAddr
 }
 
 // archiverFailedDelta reports NEW WAL-archiving failures since the baseline — the

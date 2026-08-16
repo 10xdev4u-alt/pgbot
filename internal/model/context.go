@@ -52,6 +52,7 @@ type Context struct {
 	Progress      *Progress      `json:"progress,omitempty"`  // in-flight pg_stat_progress_* operations (A11)
 	Archiver      *Archiver      `json:"archiver,omitempty"`  // WAL archiving health (A15)
 	Checksums     *Checksums     `json:"checksums,omitempty"` // data-checksum failures cluster-wide (A16)
+	Standby       *StandbyStatus `json:"standby,omitempty"`   // standby-side recovery conflicts (A17)
 	Deltas        *Deltas        `json:"deltas,omitempty"`    // vs baseline; nil on first run
 	// Set (with Deltas nil) when a stats reset / restart between runs makes any
 	// comparison fiction — e.g. serverless scale-to-zero. See T2.
@@ -375,6 +376,22 @@ type Replication struct {
 	Subscriptions  []Subscription    `json:"subscriptions,omitempty"`
 }
 
+// StandbyStatus holds standby-only recovery-conflict counters (queries cancelled
+// because recovery needed to apply a conflicting change). Cumulative.
+type StandbyStatus struct {
+	Section
+	ConflTablespace int64 `json:"confl_tablespace"`
+	ConflLock       int64 `json:"confl_lock"`
+	ConflSnapshot   int64 `json:"confl_snapshot"`
+	ConflBufferpin  int64 `json:"confl_bufferpin"`
+	ConflDeadlock   int64 `json:"confl_deadlock"`
+}
+
+// Total is the sum of all recovery-conflict counters.
+func (s StandbyStatus) Total() int64 {
+	return s.ConflTablespace + s.ConflLock + s.ConflSnapshot + s.ConflBufferpin + s.ConflDeadlock
+}
+
 // Checksums lists data-checksum failures per database (cluster-wide). Any entry
 // means Postgres read a page whose checksum didn't match — likely corruption.
 type Checksums struct {
@@ -470,12 +487,15 @@ type Subscription struct {
 }
 
 type ReplicaRow struct {
-	ClientAddr string `json:"client_addr"`
-	State      string `json:"state"`
-	SyncState  string `json:"sync_state"`
-	WriteLagB  int64  `json:"write_lag_bytes"`
-	FlushLagB  int64  `json:"flush_lag_bytes"`
-	ReplayLagB int64  `json:"replay_lag_bytes"`
+	ClientAddr   string   `json:"client_addr"`
+	AppName      string   `json:"application_name,omitempty"`
+	State        string   `json:"state"`
+	SyncState    string   `json:"sync_state"`
+	SyncPriority int      `json:"sync_priority,omitempty"`
+	ReplayLagSec *float64 `json:"replay_lag_sec,omitempty"` // seconds of writes lost if promoted now; null on an idle primary
+	WriteLagB    int64    `json:"write_lag_bytes"`
+	FlushLagB    int64    `json:"flush_lag_bytes"`
+	ReplayLagB   int64    `json:"replay_lag_bytes"`
 }
 
 // Settings is non-default pg_settings plus sizes worth surfacing.

@@ -88,6 +88,7 @@ var registry = []Collector{
 	progressCollector{},
 	archiverCollector{},
 	checksumsCollector{},
+	standbyCollector{},
 }
 
 func nowUTC() time.Time { return time.Now().UTC() }
