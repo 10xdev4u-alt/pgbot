@@ -1,0 +1,15 @@
+{
+  "name": "pgbot",
+  "displayName": "pgbot — PostgreSQL diagnostics",
+  "version": "0.1.0",
+  "description": "Read-only, deterministic PostgreSQL diagnostics as an agent tool: health, slow queries, unused indexes, bloat, vacuum, config — findings-first, never writes.",
+  "author": {
+    "name": "pgrundev",
+    "url": "https://github.com/pgrundev/pgbot"
+  },
+  "homepage": "https://pgbot.dev",
+  "repository": "https://github.com/pgrundev/pgbot",
+  "license": "Apache-2.0",
+  "keywords": ["postgres", "postgresql", "diagnostics", "observability", "performance", "database"],
+  "mcpServers": "./.mcp.json"
+}
