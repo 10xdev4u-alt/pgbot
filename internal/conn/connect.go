@@ -135,13 +135,15 @@ func probe(ctx context.Context, cc *pgx.ConnConfig) (Capabilities, PoolerInfo, e
 		       pg_has_role(current_user, 'pg_monitor', 'MEMBER'),
 		       (SELECT count(*) FROM pg_settings WHERE name LIKE 'rds.%') > 0,
 		       (SELECT count(*) FROM pg_settings WHERE name LIKE 'cloudsql.%') > 0,
-		       (SELECT count(*) FROM pg_settings WHERE name LIKE 'azure.%') > 0`
+		       (SELECT count(*) FROM pg_settings WHERE name LIKE 'azure.%') > 0,
+		       pg_is_in_recovery()`
 	err = c.QueryRow(ctx, q, mode...).Scan(&caps.VersionNum, &caps.VersionText, &caps.Database,
 		&caps.StartedAt, &caps.HasStatStatements, &caps.HasHypopg, &caps.HasPgMonitor,
-		&mk.HasRDS, &mk.HasCloudSQL, &mk.HasAzure)
+		&mk.HasRDS, &mk.HasCloudSQL, &mk.HasAzure, &caps.InRecovery)
 	if err != nil {
 		return Capabilities{}, pooler, fmt.Errorf("probe capabilities: %w", err)
 	}
+	caps.RecoveryChecked = true // the probe scan succeeded, so InRecovery is trustworthy
 	// Aurora exposes aurora_version(); a failure just means "not Aurora".
 	var av string
 	mk.IsAurora = c.QueryRow(ctx, `SELECT aurora_version()`, mode...).Scan(&av) == nil

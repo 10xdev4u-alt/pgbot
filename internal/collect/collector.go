@@ -107,6 +107,7 @@ func newContext(caps conn.Capabilities, tB time.Time, dt time.Duration) *model.C
 		VersionText:  caps.VersionText,
 		Database:     caps.Database,
 		Provider:     string(caps.Provider),
+		InRecovery:   caps.Standby(),
 		Extensions:   caps.Extensions,
 		Capabilities: caps.Satisfied(),
 		HasPgMonitor: caps.HasPgMonitor,
