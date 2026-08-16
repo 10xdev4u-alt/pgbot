@@ -12,6 +12,9 @@ import (
 //go:embed sql/activity.sql
 var sqlActivity string
 
+//go:embed sql/conn_breakdown.sql
+var sqlConnBreakdown string
+
 // activity = a point-in-time read of pg_stat_activity.
 type activityCollector struct{}
 
@@ -27,17 +30,41 @@ func (activityCollector) Name() string                     { return "activity" }
 func (activityCollector) Kind() Kind                       { return KindGauge }
 func (activityCollector) Available(conn.Capabilities) bool { return true }
 
+type connRow struct {
+	AppName  string `db:"app_name"`
+	Username string `db:"username"`
+	State    string `db:"state"`
+	N        int    `db:"n"`
+}
+
+type activitySample struct {
+	Rows  []activityRow
+	Conns []connRow
+}
+
 func (activityCollector) Sample(ctx context.Context, t *conn.Target, _ conn.Capabilities) (any, error) {
-	return queryMany[activityRow](ctx, t, sqlActivity)
+	rows, err := queryMany[activityRow](ctx, t, sqlActivity)
+	if err != nil {
+		return nil, err
+	}
+	out := activitySample{Rows: rows}
+	out.Conns, _ = queryMany[connRow](ctx, t, sqlConnBreakdown) // best-effort breakdown
+	return out, nil
 }
 
 func (activityCollector) Assemble(c *model.Context, _ conn.Capabilities, s sampled, _ time.Duration, _ Options) {
-	rows, ok := s.A.([]activityRow)
+	as, ok := s.A.(activitySample)
 	if s.Err != nil || !ok {
 		c.Activity = &model.Activity{Section: unavail(s.Err, "pg_stat_activity unavailable")}
 		return
 	}
+	rows := as.Rows
 	act := &model.Activity{ByState: map[string]int{}, WaitEvents: map[string]int{}, Section: model.Section{Exactness: model.ExactnessScraped}}
+	for _, r := range as.Conns {
+		act.Connections = append(act.Connections, model.ConnGroup{
+			AppName: r.AppName, User: r.Username, State: r.State, Count: r.N,
+		})
+	}
 	for _, r := range rows {
 		act.Total += r.N
 		act.ByState[r.State] += r.N

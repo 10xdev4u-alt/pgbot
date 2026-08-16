@@ -215,6 +215,16 @@ type Activity struct {
 	WaitEvents        map[string]int `json:"wait_events,omitempty"`
 	LongestXactSec    float64        `json:"longest_xact_sec"`
 	LongestActiveSec  float64        `json:"longest_active_sec"`
+	Connections       []ConnGroup    `json:"connections,omitempty"` // top contributors by app/user/state (A13)
+}
+
+// ConnGroup is a group of connections by application, role, and state — the
+// answer to "who is using the connections" when the pool is near saturation.
+type ConnGroup struct {
+	AppName string `json:"app_name"`
+	User    string `json:"user"`
+	State   string `json:"state"`
+	Count   int    `json:"count"`
 }
 
 // Locks holds current blocking chains (scrubbed query text).

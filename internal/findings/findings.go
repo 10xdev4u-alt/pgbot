@@ -738,11 +738,19 @@ func connectionSaturation(c *model.Context, add func(model.Finding)) {
 	if frac >= connSaturationCrit {
 		sev = model.SeverityCritical
 	}
+	// Where the connections come from turns the warning into an action (A13).
+	var ev []string
+	if c.Activity != nil {
+		for _, g := range c.Activity.Connections {
+			ev = append(ev, fmt.Sprintf("%d × %s / %s (%s)", g.Count, g.AppName, g.User, g.State))
+		}
+	}
 	add(model.Finding{
 		ID: "connection_saturation", Severity: sev,
 		Title:       fmt.Sprintf("Connection usage at %.0f%% (%d/%d)", frac*100, used, max),
 		Detail:      "New connections are refused once max_connections is reached. A pool leak or a traffic burst can exhaust the slots and lock the application out.",
-		Remediation: "Put a pooler (PgBouncer) in front, lower per-service pool sizes, or raise max_connections.",
+		Evidence:    cap10(ev),
+		Remediation: "Put a pooler (PgBouncer) in front, lower per-service pool sizes, or raise max_connections. The breakdown above points at the biggest contributor.",
 		Impact: impact(model.DimRisk, frac*100,
 			fmt.Sprintf("%d of %d slots", used, max),
 			"count(pg_stat_activity) / max_connections"),
