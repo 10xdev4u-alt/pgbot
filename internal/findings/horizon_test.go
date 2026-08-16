@@ -41,6 +41,38 @@ func TestVacuumHorizonBlocked(t *testing.T) {
 	}
 }
 
+func TestPreparedXactAbandoned(t *testing.T) {
+	fresh := &model.Context{Horizon: &model.VacuumHorizon{Holders: []model.HorizonHolder{
+		{Source: "prepared_xact", Holder: "g1", XminAge: 100, AgeSec: 60},
+	}}}
+	if has(Compute(fresh), "prepared_xact_abandoned") != nil {
+		t.Error("a fresh prepared xact must not fire")
+	}
+	warn := &model.Context{Horizon: &model.VacuumHorizon{Holders: []model.HorizonHolder{
+		{Source: "prepared_xact", Holder: "g2", XminAge: 5000, AgeSec: 600},
+	}}}
+	f := has(Compute(warn), "prepared_xact_abandoned")
+	if f == nil || f.Severity != model.SeverityWarn {
+		t.Fatalf("expected warn, got %+v", f)
+	}
+	if !strings.Contains(f.Remediation, "COMMIT PREPARED 'g2'") {
+		t.Errorf("remediation should name the gid: %q", f.Remediation)
+	}
+	crit := &model.Context{Horizon: &model.VacuumHorizon{Holders: []model.HorizonHolder{
+		{Source: "prepared_xact", Holder: "g3", XminAge: 9000, AgeSec: 7200},
+	}}}
+	if f := has(Compute(crit), "prepared_xact_abandoned"); f == nil || f.Severity != model.SeverityCritical {
+		t.Errorf("expected critical, got %+v", f)
+	}
+	// A non-prepared holder must not trigger this finding.
+	backend := &model.Context{Horizon: &model.VacuumHorizon{Holders: []model.HorizonHolder{
+		{Source: "backend", Holder: "123", XminAge: 9000, AgeSec: 7200},
+	}}}
+	if has(Compute(backend), "prepared_xact_abandoned") != nil {
+		t.Error("a backend holder must not fire the prepared-xact finding")
+	}
+}
+
 // The table_bloat remediation must point at vacuum_horizon_blocked when a holder
 // is pinning the horizon — the cross-reference that turns a warning into a fix.
 func TestTableBloat_crossReferencesHorizon(t *testing.T) {

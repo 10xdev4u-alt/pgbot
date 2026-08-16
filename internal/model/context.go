@@ -327,10 +327,11 @@ type VacuumHorizon struct {
 // HorizonHolder is one thing holding back the vacuum horizon. Source is one of
 // backend | replication_slot | standby_feedback | prepared_xact.
 type HorizonHolder struct {
-	Source  string `json:"source"`
-	Holder  string `json:"holder"`   // pid / slot name / client / gid
-	XminAge int64  `json:"xmin_age"` // transactions behind the current xid
-	Detail  string `json:"detail,omitempty"`
+	Source  string  `json:"source"`
+	Holder  string  `json:"holder"`          // pid / slot name / client / gid
+	XminAge int64   `json:"xmin_age"`        // transactions behind the current xid
+	AgeSec  float64 `json:"age_s,omitempty"` // wall-clock age where a timestamp exists (backend / prepared xact)
+	Detail  string  `json:"detail,omitempty"`
 }
 
 // ReplicationSlot is one row of pg_replication_slots. An inactive slot holds

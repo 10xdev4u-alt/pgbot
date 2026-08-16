@@ -18,10 +18,11 @@ var sqlHorizon string
 type horizonCollector struct{}
 
 type horizonRow struct {
-	Source  string `db:"source"`
-	Holder  string `db:"holder"`
-	XminAge int64  `db:"xmin_age"`
-	Detail  string `db:"detail"`
+	Source  string  `db:"source"`
+	Holder  string  `db:"holder"`
+	XminAge int64   `db:"xmin_age"`
+	AgeSec  float64 `db:"age_s"`
+	Detail  string  `db:"detail"`
 }
 
 func (horizonCollector) Name() string                     { return "horizon" }
@@ -41,7 +42,7 @@ func (horizonCollector) Assemble(c *model.Context, _ conn.Capabilities, s sample
 	h := &model.VacuumHorizon{Section: model.Section{Exactness: model.ExactnessScraped}}
 	for _, r := range rows {
 		h.Holders = append(h.Holders, model.HorizonHolder{
-			Source: r.Source, Holder: r.Holder, XminAge: r.XminAge, Detail: r.Detail,
+			Source: r.Source, Holder: r.Holder, XminAge: r.XminAge, AgeSec: round2(r.AgeSec), Detail: r.Detail,
 		})
 	}
 	c.Horizon = h

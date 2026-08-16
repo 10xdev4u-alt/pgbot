@@ -21,6 +21,8 @@ const (
 	cacheHitWarn          = 0.90 // sustained cache hit below this is disk-bound
 	longXactWarnSec       = 300  // a transaction open > 5 min
 	idleInTxnWarnSec      = 60
+	preparedXactWarnSec   = 300  // a prepared (2PC) transaction open > 5 min is likely abandoned
+	preparedXactCritSec   = 3600 // > 1h — it never times out; blocks vacuum until resolved
 	rollbackRatioWarn     = 0.10  // >10% of transactions rolling back
 	rollbackMinTxns       = 20    // below this many transactions in the window the ratio is noise
 	staleStatsWarnDays    = 30    // rates computed over a very old window are near-meaningless
@@ -98,6 +100,7 @@ func Compute(c *model.Context) []model.Finding {
 	replicationSlotRisk(c, add)
 	subscriptionDown(c, add)
 	vacuumHorizonBlocked(c, add)
+	preparedXactAbandoned(c, add)
 	querySlowdown(c, add)
 	workMemLow(c, add)
 	checkpointsForced(c, add)
@@ -658,6 +661,36 @@ func vacuumHorizonBlocked(c *model.Context, add func(model.Finding)) {
 		Impact:      impact(dim, score, human(top.XminAge)+" transactions pinned", "oldest backend_xmin / slot xmin / prepared-xact age"),
 		Confidence:  0.9,
 	})
+}
+
+// preparedXactAbandoned flags a prepared (2PC) transaction left open. Unlike an
+// idle backend it is invisible in pg_stat_activity and never times out, so it
+// blocks vacuum and pins the xmin horizon indefinitely. Reads the prepared-xact
+// holders the horizon collector already gathered.
+func preparedXactAbandoned(c *model.Context, add func(model.Finding)) {
+	if c.Horizon == nil {
+		return
+	}
+	for _, h := range c.Horizon.Holders {
+		if h.Source != "prepared_xact" || h.AgeSec < preparedXactWarnSec {
+			continue
+		}
+		sev := model.SeverityWarn
+		score := 55.0
+		if h.AgeSec >= preparedXactCritSec {
+			sev = model.SeverityCritical
+			score = 78
+		}
+		add(model.Finding{
+			ID: "prepared_xact_abandoned", Severity: sev,
+			Title:       fmt.Sprintf("Prepared transaction %q open for %.0fs", h.Holder, h.AgeSec),
+			Detail:      "An abandoned prepared (2PC) transaction is invisible in pg_stat_activity and never times out. It holds back the xmin horizon and vacuum indefinitely until it is committed or rolled back.",
+			Evidence:    []string{fmt.Sprintf("gid %q, prepared %.0fs ago, xmin %s txns behind", h.Holder, h.AgeSec, human(h.XminAge))},
+			Remediation: fmt.Sprintf("Confirm the transaction manager is finished, then COMMIT PREPARED '%s' or ROLLBACK PREPARED '%s'.", h.Holder, h.Holder),
+			Impact:      impact(model.DimRisk, score, fmt.Sprintf("open %.0fs", h.AgeSec), "pg_prepared_xacts"),
+			Confidence:  0.9,
+		})
+	}
 }
 
 func horizonRemediation(source string) string {
