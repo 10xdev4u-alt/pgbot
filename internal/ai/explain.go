@@ -117,22 +117,22 @@ func BuildAskPrompt(c *model.Context, question string) (system, user string) {
 
 // Explain builds the prompt and calls the model, returning the labeled-elsewhere
 // explanation text. A nil/empty findings set still gets an explanation (the model
-// is told to confirm health briefly).
-func Explain(ctx context.Context, c *Client, mc *model.Context) (string, error) {
-	if c == nil {
-		return "", fmt.Errorf("no Gemini client")
+// is told to confirm health briefly). The Provider may be OpenAI or Gemini.
+func Explain(ctx context.Context, p Provider, mc *model.Context) (string, error) {
+	if p == nil {
+		return "", fmt.Errorf("no AI client")
 	}
 	system, user := BuildExplainPrompt(mc)
-	return c.Generate(ctx, system, user)
+	return p.Generate(ctx, system, user)
 }
 
 // Ask answers a specific question grounded on the report.
-func Ask(ctx context.Context, c *Client, mc *model.Context, question string) (string, error) {
-	if c == nil {
-		return "", fmt.Errorf("no Gemini client")
+func Ask(ctx context.Context, p Provider, mc *model.Context, question string) (string, error) {
+	if p == nil {
+		return "", fmt.Errorf("no AI client")
 	}
 	system, user := BuildAskPrompt(mc, question)
-	return c.Generate(ctx, system, user)
+	return p.Generate(ctx, system, user)
 }
 
 func topBuckets(b []model.WaitBucket, n int) []model.WaitBucket {

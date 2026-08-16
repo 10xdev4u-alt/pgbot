@@ -35,12 +35,12 @@ type Client struct {
 	HTTP    *http.Client
 }
 
-// NewFromEnv builds a client from the environment. The key comes ONLY from
+// NewGeminiFromEnv builds a client from the environment. The key comes ONLY from
 // GEMINI_API_KEY (or GOOGLE_API_KEY, the SDK's other convention) — never a flag,
 // so it can't leak into shell history or the process list. PGBOT_GEMINI_MODEL and
 // PGBOT_GEMINI_URL override the defaults. Both AI-Studio "auth" keys (AQ.…) and
 // legacy standard keys (AIza…) work — they travel in the same header.
-func NewFromEnv() (*Client, error) {
+func NewGeminiFromEnv() (*Client, error) {
 	key := strings.TrimSpace(os.Getenv("GEMINI_API_KEY"))
 	if key == "" {
 		key = strings.TrimSpace(os.Getenv("GOOGLE_API_KEY"))
@@ -57,6 +57,9 @@ func NewFromEnv() (*Client, error) {
 		HTTP:    &http.Client{Timeout: 60 * time.Second},
 	}, nil
 }
+
+func (c *Client) ModelName() string { return c.Model }
+func (c *Client) Vendor() string    { return "Google Gemini" }
 
 func envOr(name, def string) string {
 	if v := strings.TrimSpace(os.Getenv(name)); v != "" {

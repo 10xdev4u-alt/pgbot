@@ -24,8 +24,8 @@ func newAskCmd() *cobra.Command {
 		Short: "Ask an AI about your database, grounded on pgbot's findings",
 		Long: "Runs the same read-only inspection, then answers your question using ONLY the\n" +
 			"deterministic findings (the model can't reach into the database). Connection\n" +
-			"comes from --url or $DATABASE_URL. Sends the PII-free findings to Gemini —\n" +
-			"$GEMINI_API_KEY must be set.",
+			"comes from --url or $DATABASE_URL. Sends the PII-free findings to an AI provider —\n" +
+			"set $OPENAI_API_KEY (OpenAI) or $GEMINI_API_KEY (Google Gemini).",
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAsk(cmd, strings.Join(args, " "), url, f, yes)
@@ -37,7 +37,7 @@ func newAskCmd() *cobra.Command {
 	fl.IntVar(&f.ashHz, "ash-hz", 10, "active-session sampling rate in Hz (0 disables)")
 	fl.BoolVar(&f.noStore, "no-store", false, "do not read or write the local baseline store")
 	fl.BoolVar(&f.strictPooler, "strict-pooler", false, "refuse (exit 3) behind a transaction pooler")
-	fl.BoolVar(&yes, "yes", false, "skip the 'this sends data to Google' confirmation prompt")
+	fl.BoolVar(&yes, "yes", false, "skip the 'this sends data to the AI provider' confirmation prompt")
 	return cmd
 }
 
@@ -46,7 +46,7 @@ func runAsk(cmd *cobra.Command, question, url string, f inspectFlags, yes bool) 
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "pgbot ask: this sends the PII-free findings to Google Gemini (model %s).\n", client.Model)
+	fmt.Fprintf(os.Stderr, "pgbot ask: this sends the PII-free findings to %s (model %s).\n", client.Vendor(), client.ModelName())
 	if !yes && isInteractive() && !confirm() {
 		return fmt.Errorf("aborted")
 	}
@@ -66,7 +66,7 @@ func runAsk(cmd *cobra.Command, question, url string, f inspectFlags, yes bool) 
 	}
 
 	answer, aiErr := ai.Ask(ctx, client, c, question)
-	printAnswer(useColor(false), client.Model, answer, aiErr)
+	printAnswer(useColor(false), client.ModelName(), answer, aiErr)
 	return nil
 }
 

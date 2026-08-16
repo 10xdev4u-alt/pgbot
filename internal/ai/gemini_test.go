@@ -10,21 +10,21 @@ import (
 	"testing"
 )
 
-func TestNewFromEnv(t *testing.T) {
+func TestNewGeminiFromEnv(t *testing.T) {
 	t.Setenv("GEMINI_API_KEY", "")
 	t.Setenv("GOOGLE_API_KEY", "")
-	if _, err := NewFromEnv(); err == nil {
+	if _, err := NewGeminiFromEnv(); err == nil {
 		t.Error("missing key must be an error")
 	}
 	// GOOGLE_API_KEY is accepted as a fallback (the SDK's other convention).
 	t.Setenv("GOOGLE_API_KEY", "fromgoogle")
-	if c, err := NewFromEnv(); err != nil || c.APIKey != "fromgoogle" {
+	if c, err := NewGeminiFromEnv(); err != nil || c.APIKey != "fromgoogle" {
 		t.Errorf("GOOGLE_API_KEY fallback not honored: %v / %+v", err, c)
 	}
 	t.Setenv("GOOGLE_API_KEY", "")
 	t.Setenv("GEMINI_API_KEY", "secret")
 	t.Setenv("PGBOT_GEMINI_MODEL", "gemini-3-pro")
-	c, err := NewFromEnv()
+	c, err := NewGeminiFromEnv()
 	if err != nil {
 		t.Fatal(err)
 	}

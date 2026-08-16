@@ -27,12 +27,13 @@ func newExplainCmd() *cobra.Command {
 		Use:   "explain <connection-string>",
 		Short: "Inspect, then have an AI explain the findings in plain language",
 		Long: "Runs the same read-only inspection as `pgbot inspect`, prints the deterministic\n" +
-			"report, then sends the PII-free findings to Google Gemini for a plain-language\n" +
+			"report, then sends the PII-free findings to an AI provider for a plain-language\n" +
 			"explanation. The findings are still computed locally in Go — the model only\n" +
 			"explains them, never invents them.\n\n" +
-			"The key is read from $GEMINI_API_KEY (never a flag). This is the only pgbot\n" +
-			"command that sends data off the machine; the payload is the same PII-free\n" +
-			"Context you can inspect with `pgbot inspect --json`.",
+			"The key is read from $OPENAI_API_KEY (OpenAI) or $GEMINI_API_KEY (Google Gemini),\n" +
+			"never a flag; set PGBOT_AI_PROVIDER to force one. This is the only pgbot command\n" +
+			"that sends data off the machine; the payload is the same PII-free Context you can\n" +
+			"inspect with `pgbot inspect --json`.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runExplain(cmd, args, f, yes)
@@ -46,7 +47,7 @@ func newExplainCmd() *cobra.Command {
 	fl.BoolVar(&f.strictPooler, "strict-pooler", false, "refuse (exit 3) if connected through a transaction pooler")
 	fl.IntVar(&f.ashHz, "ash-hz", 10, "active-session sampling rate in Hz (0 disables the wait-event profile)")
 	fl.DurationVar(&f.window, "window", 5*time.Second, "active-session sampling window")
-	fl.BoolVar(&yes, "yes", false, "skip the 'this sends data to Google' confirmation prompt")
+	fl.BoolVar(&yes, "yes", false, "skip the 'this sends data to the AI provider' confirmation prompt")
 	return cmd
 }
 
@@ -60,7 +61,7 @@ func runExplain(cmd *cobra.Command, args []string, f inspectFlags, yes bool) err
 
 	// This is the one command that sends data off the box. Say so, loudly, and
 	// require an explicit go-ahead unless --yes (or non-interactive).
-	fmt.Fprintf(os.Stderr, "pgbot explain: this sends the PII-free findings (same as `inspect --json`) to Google Gemini (model %s).\n", client.Model)
+	fmt.Fprintf(os.Stderr, "pgbot explain: this sends the PII-free findings (same as `inspect --json`) to %s (model %s).\n", client.Vendor(), client.ModelName())
 	if !yes && isInteractive() {
 		fmt.Fprint(os.Stderr, "Continue? [y/N] ")
 		var resp string
@@ -119,7 +120,7 @@ func runExplain(cmd *cobra.Command, args []string, f inspectFlags, yes bool) err
 	// deterministic report above still stands; we just note the explanation is
 	// unavailable and exit on the findings' code.
 	explanation, aiErr := ai.Explain(ctx, client, c)
-	printAISection(color, client.Model, explanation, aiErr)
+	printAISection(color, client.ModelName(), explanation, aiErr)
 
 	os.Exit(exitCode(c.Findings))
 	return nil
