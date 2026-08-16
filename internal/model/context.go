@@ -302,8 +302,13 @@ type TableStat struct {
 	ModsSinceAnalyze int64      `json:"mods_since_analyze"`
 	Updates          int64      `json:"updates,omitempty"`
 	HotUpdates       int64      `json:"hot_updates,omitempty"`
-	LastVacuum       *time.Time `json:"last_vacuum,omitempty"`
-	LastAutovac      *time.Time `json:"last_autovacuum,omitempty"`
+	LastAnalyze      *time.Time `json:"last_analyze,omitempty"`
+	LastAutoanalyze  *time.Time `json:"last_autoanalyze,omitempty"`
+	// Per-table reloption overrides of the global analyze knobs (nil = use global).
+	AnalyzeScaleOverride     *float64   `json:"analyze_scale_override,omitempty"`
+	AnalyzeThresholdOverride *float64   `json:"analyze_threshold_override,omitempty"`
+	LastVacuum               *time.Time `json:"last_vacuum,omitempty"`
+	LastAutovac              *time.Time `json:"last_autovacuum,omitempty"`
 }
 
 // Indexes is pg_stat_user_indexes.

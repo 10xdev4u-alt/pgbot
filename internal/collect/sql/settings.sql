@@ -15,6 +15,7 @@ WHERE name IN (
   'fsync', 'full_page_writes', 'autovacuum', 'statement_timeout',
   'archive_mode', 'archive_timeout', 'wal_level',
   'data_checksums', 'ignore_checksum_failure',
-  'synchronous_commit', 'synchronous_standby_names'
+  'synchronous_commit', 'synchronous_standby_names',
+  'autovacuum_analyze_threshold', 'autovacuum_analyze_scale_factor', 'default_statistics_target'
 )
 ORDER BY 1;

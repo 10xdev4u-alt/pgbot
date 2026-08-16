@@ -119,6 +119,7 @@ func Compute(c *model.Context) []model.Finding {
 	seqScanHeavy(c, add)
 	partitionSeqScanHeavy(c, add)
 	bloatedTables(c, add)
+	staleStatistics(c, add)
 	lowHotUpdateRatio(c, add)
 	lowCacheHit(c, add)
 	idleInTransaction(c, add)
@@ -557,6 +558,94 @@ func seqScanHeavy(c *model.Context, add func(model.Finding)) {
 			"seq_scans ≫ index_scans on tables ≥ 50k rows"),
 		Confidence: 0.6,
 	})
+}
+
+// staleStatistics flags tables whose planner statistics are far behind the data
+// — the most common cause of the plan flip query_slowdown detects. Uses n_live_tup
+// (NOT reltuples, which is -1 for never-analyzed tables on PG14+) and per-table
+// reloption overrides of the analyze threshold/scale. never_analyzed is the
+// stronger case: a table above the floor that has never been analyzed at all.
+func staleStatistics(c *model.Context, add func(model.Finding)) {
+	if c.Tables == nil {
+		return
+	}
+	gThresh := settingFloat(c, "autovacuum_analyze_threshold", 50)
+	gScale := settingFloat(c, "autovacuum_analyze_scale_factor", 0.1)
+
+	var staleEv, neverEv []string
+	for _, t := range c.Tables.Top {
+		if t.LiveTuples < deadRatioTableMinRows {
+			continue
+		}
+		if t.LastAnalyze == nil && t.LastAutoanalyze == nil {
+			neverEv = append(neverEv, fmt.Sprintf("%s.%s (%s rows)", t.Schema, t.Name, human(t.LiveTuples)))
+			continue // never-analyzed is reported by its own finding, not stale
+		}
+		th, sf := gThresh, gScale
+		if t.AnalyzeThresholdOverride != nil {
+			th = *t.AnalyzeThresholdOverride
+		}
+		if t.AnalyzeScaleOverride != nil {
+			sf = *t.AnalyzeScaleOverride
+		}
+		trigger := th + sf*float64(t.LiveTuples)
+		if trigger > 0 && float64(t.ModsSinceAnalyze) >= 2*trigger {
+			staleEv = append(staleEv, fmt.Sprintf("%s.%s: %s rows modified since analyze (trigger ≈%s)", t.Schema, t.Name, human(t.ModsSinceAnalyze), human(int64(trigger))))
+		}
+	}
+
+	if len(staleEv) > 0 {
+		f := model.Finding{
+			ID: "stale_statistics", Severity: model.SeverityWarn,
+			Title:       fmt.Sprintf("%d table(s) with stale planner statistics", len(staleEv)),
+			Detail:      "These tables have changed far more than the autoanalyze threshold since their statistics were last refreshed, so the planner is estimating from an out-of-date picture — the usual cause of a sudden plan flip to a bad plan.",
+			Evidence:    cap10(staleEv),
+			Remediation: "ANALYZE the affected tables; if it recurs, lower autovacuum_analyze_scale_factor (globally or per-table).",
+			Impact:      impact(model.DimLatency, 45, fmt.Sprintf("%d tables past 2× the analyze trigger", len(staleEv)), "n_mod_since_analyze vs threshold + scale × n_live_tup"),
+			Confidence:  0.7,
+		}
+		// Cross-reference, NOT causation: pgbot can't map a normalized query to its
+		// tables, so it only notes the two travel together.
+		if querySlowdownPresent(c) {
+			f.Related = append(f.Related, "query_slowdown")
+			f.Caveats = append(f.Caveats, "a query regressed this run too (query_slowdown) — stale stats often cause plan flips, but pgbot can't confirm the slow query touches these tables; check whether it does")
+		}
+		add(f)
+	}
+	if len(neverEv) > 0 {
+		add(model.Finding{
+			ID: "never_analyzed", Severity: model.SeverityWarn,
+			Title:       fmt.Sprintf("%d table(s) never analyzed", len(neverEv)),
+			Detail:      "These tables have no statistics at all — the planner is guessing from defaults, which produces bad plans on anything non-trivial.",
+			Evidence:    cap10(neverEv),
+			Remediation: "Run ANALYZE on them; check why autovacuum hasn't (disabled globally or per-table, or the table is newer than the last cycle).",
+			Impact:      impact(model.DimLatency, 50, fmt.Sprintf("%d unanalyzed tables", len(neverEv)), "last_analyze and last_autoanalyze both null"),
+			Confidence:  0.8,
+		})
+	}
+}
+
+// querySlowdownPresent reports whether a query.mean_ms regression exists this run
+// (the same condition query_slowdown fires on).
+func querySlowdownPresent(c *model.Context) bool {
+	if c.Deltas == nil {
+		return false
+	}
+	for i := range c.Deltas.Changes {
+		d := &c.Deltas.Changes[i]
+		if d.ID == "query.mean_ms" && d.Before > 0 && d.After >= querySlowdownMinMs && d.After/d.Before >= querySlowdownFactor {
+			return true
+		}
+	}
+	return false
+}
+
+// settingFloat reads a numeric setting, falling back to def.
+func settingFloat(c *model.Context, name string, def float64) float64 {
+	if v, err := strconv.ParseFloat(settingParam(c, name), 64); err == nil {
+		return v
+	}
+	return def
 }
 
 // lowHotUpdateRatio flags a heavily-updated table where few updates are HOT

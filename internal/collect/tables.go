@@ -19,18 +19,22 @@ var sqlPartitions string
 type tablesCollector struct{}
 
 type tableRow struct {
-	Schema           string     `db:"schema"`
-	Table            string     `db:"table"`
-	TotalBytes       int64      `db:"total_bytes"`
-	LiveTuples       int64      `db:"live_tuples"`
-	DeadTuples       int64      `db:"dead_tuples"`
-	SeqScans         int64      `db:"seq_scans"`
-	IndexScans       int64      `db:"index_scans"`
-	ModsSinceAnalyze int64      `db:"mods_since_analyze"`
-	Updates          int64      `db:"updates"`
-	HotUpdates       int64      `db:"hot_updates"`
-	LastVacuum       *time.Time `db:"last_vacuum"`
-	LastAutovacuum   *time.Time `db:"last_autovacuum"`
+	Schema              string     `db:"schema"`
+	Table               string     `db:"table"`
+	TotalBytes          int64      `db:"total_bytes"`
+	LiveTuples          int64      `db:"live_tuples"`
+	DeadTuples          int64      `db:"dead_tuples"`
+	SeqScans            int64      `db:"seq_scans"`
+	IndexScans          int64      `db:"index_scans"`
+	ModsSinceAnalyze    int64      `db:"mods_since_analyze"`
+	Updates             int64      `db:"updates"`
+	HotUpdates          int64      `db:"hot_updates"`
+	LastAnalyze         *time.Time `db:"last_analyze"`
+	LastAutoanalyze     *time.Time `db:"last_autoanalyze"`
+	LastVacuum          *time.Time `db:"last_vacuum"`
+	LastAutovacuum      *time.Time `db:"last_autovacuum"`
+	RelAnalyzeScale     *float64   `db:"rel_analyze_scale"`
+	RelAnalyzeThreshold *float64   `db:"rel_analyze_threshold"`
 }
 
 type partitionRow struct {
@@ -85,7 +89,9 @@ func (tablesCollector) Assemble(c *model.Context, _ conn.Capabilities, s sampled
 			LiveTuples: r.LiveTuples, DeadTuples: r.DeadTuples, DeadRatio: round4(dead),
 			SeqScans: r.SeqScans, IndexScans: r.IndexScans, ModsSinceAnalyze: r.ModsSinceAnalyze,
 			Updates: r.Updates, HotUpdates: r.HotUpdates,
+			LastAnalyze: r.LastAnalyze, LastAutoanalyze: r.LastAutoanalyze,
 			LastVacuum: r.LastVacuum, LastAutovac: r.LastAutovacuum,
+			AnalyzeScaleOverride: r.RelAnalyzeScale, AnalyzeThresholdOverride: r.RelAnalyzeThreshold,
 		})
 	}
 	for _, p := range ts.Partitions {
