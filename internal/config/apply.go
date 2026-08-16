@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"path"
 	"strings"
 	"time"
@@ -99,6 +100,48 @@ func (c *Config) AddInlineIgnores(specs []string) {
 		}
 		c.Ignore = append(c.Ignore, IgnoreRule{Finding: finding, Object: object, Reason: "--ignore flag"})
 	}
+}
+
+// ExpiredFindings returns an info finding for each ignore rule whose expiry has
+// passed (B2-3). The rule has stopped applying, so the finding it muted will
+// resurface — by design. The note prompts the user to renew or delete it.
+func (c *Config) ExpiredFindings(now time.Time) []model.Finding {
+	var out []model.Finding
+	for _, r := range c.Ignore {
+		if r.Expires == "" || !expired(r, now) {
+			continue
+		}
+		obj := r.Object
+		if obj != "" {
+			obj = " (" + obj + ")"
+		}
+		out = append(out, model.Finding{
+			ID: "suppression_expired", Severity: model.SeverityInfo,
+			Title:       fmt.Sprintf("suppression for %s%s expired on %s", r.Finding, obj, r.Expires),
+			Detail:      "This [[ignore]] rule's expires date has passed, so it no longer suppresses anything and the finding it muted will surface again. Suppressions are meant to be revisited, not left forever.",
+			Remediation: "Confirm the underlying issue is resolved and delete the rule, or renew its `expires` date if it still applies.",
+			Impact:      model.Impact{Score: 5, Basis: "ignore rule past its expires date"},
+			Confidence:  1.0,
+		})
+	}
+	return out
+}
+
+// UnusedFindings builds a single info finding naming ignore rules that have
+// matched nothing across the last several runs (the store decides which — B2-3).
+func UnusedFindings(ruleStrings []string) []model.Finding {
+	if len(ruleStrings) == 0 {
+		return nil
+	}
+	return []model.Finding{{
+		ID: "suppression_unused", Severity: model.SeverityInfo,
+		Title:       fmt.Sprintf("%d suppression rule(s) haven't matched anything recently", len(ruleStrings)),
+		Detail:      "These [[ignore]] rules have suppressed nothing across the last several runs — the finding they mute may be gone (the index was dropped, the setting fixed) or its identity changed (a queryid shifts across a major-version upgrade). A stale ignore list becomes a second, invisible config nobody audits.",
+		Evidence:    ruleStrings,
+		Remediation: "Remove the rules you no longer need; if one should still apply, check the object name still matches (major upgrades reset queryids).",
+		Impact:      model.Impact{Score: 5, Basis: "no match across recent snapshots"},
+		Confidence:  0.7,
+	}}
 }
 
 // MatchedRules reports, for a set of findings, which ignore rules actually fired.

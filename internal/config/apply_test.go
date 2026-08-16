@@ -98,6 +98,34 @@ func TestApply_recordsRuleAndReason(t *testing.T) {
 	}
 }
 
+func TestExpiredFindings(t *testing.T) {
+	c := &Config{Ignore: []IgnoreRule{
+		{Finding: "checksums_disabled", Expires: "2026-08-15", Reason: "temp"}, // expired at fixedNow
+		{Finding: "unused_indexes", Expires: "2027-01-01"},                     // still valid
+		{Finding: "io_timing_off"},                                            // no expiry
+	}}
+	fs := c.ExpiredFindings(fixedNow())
+	if len(fs) != 1 {
+		t.Fatalf("expected exactly one expired finding, got %d: %+v", len(fs), fs)
+	}
+	if fs[0].ID != "suppression_expired" || fs[0].Severity != model.SeverityInfo {
+		t.Errorf("wrong meta-finding: %+v", fs[0])
+	}
+	if !contains(fs[0].Title, "checksums_disabled") {
+		t.Errorf("expired finding should name the rule: %q", fs[0].Title)
+	}
+}
+
+func contains(s, sub string) bool { return len(s) >= len(sub) && indexOf(s, sub) >= 0 }
+func indexOf(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
+}
+
 func TestAddInlineIgnores(t *testing.T) {
 	c := Default()
 	c.AddInlineIgnores([]string{"unused_indexes", "checksums_disabled:setting:data_checksums", "", "  "})
