@@ -39,10 +39,32 @@ func (queriesCollector) Available(caps conn.Capabilities) bool {
 	return caps.HasStatStatements
 }
 
+// queriesSample bundles the top-N rows with pg_stat_statements saturation health
+// (A4): whether it's evicting entries, which biases the top list and can reset a
+// query's stats mid-comparison.
+type queriesSample struct {
+	Rows    []queryRow
+	Dealloc int64
+	Count   int
+	Max     int
+}
+
 func (queriesCollector) Sample(ctx context.Context, t *conn.Target, caps conn.Capabilities) (any, error) {
 	// The version-appropriate total-time column comes from a fixed allowlist
 	// (never user input); %% in the SQL escapes the ILIKE literal.
-	return queryMany[queryRow](ctx, t, fmt.Sprintf(sqlQueries, caps.StatStatementsTotalCol()))
+	rows, err := queryMany[queryRow](ctx, t, fmt.Sprintf(sqlQueries, caps.StatStatementsTotalCol()))
+	if err != nil {
+		return nil, err
+	}
+	out := queriesSample{Rows: rows}
+	out.Count, _ = scalar[int](ctx, t, `SELECT count(*)::int FROM pg_stat_statements`)
+	if m, err := scalar[int](ctx, t, `SELECT current_setting('pg_stat_statements.max')::int`); err == nil {
+		out.Max = m
+	}
+	if caps.VersionNum >= 140000 { // pg_stat_statements_info (dealloc) is PG14+
+		out.Dealloc, _ = scalar[int64](ctx, t, `SELECT dealloc FROM pg_stat_statements_info`)
+	}
+	return out, nil
 }
 
 func (queriesCollector) Assemble(c *model.Context, caps conn.Capabilities, s sampled, _ time.Duration, _ Options) {
@@ -55,12 +77,14 @@ func (queriesCollector) Assemble(c *model.Context, caps conn.Capabilities, s sam
 		}}
 		return
 	}
-	rows, ok := s.A.([]queryRow)
+	sm, ok := s.A.(queriesSample)
 	if s.Err != nil || !ok {
 		c.Queries = &model.Queries{Enabled: true, Section: unavail(s.Err, "pg_stat_statements read failed")}
 		return
 	}
-	q := &model.Queries{Enabled: true, Section: model.Section{Exactness: model.ExactnessCumulative}}
+	rows := sm.Rows
+	q := &model.Queries{Enabled: true, Section: model.Section{Exactness: model.ExactnessCumulative},
+		PgssDealloc: sm.Dealloc, PgssCount: sm.Count, PgssMax: sm.Max}
 	if len(rows) > 0 {
 		q.TotalExecMS = round2(rows[0].TotalExecAll)
 	}

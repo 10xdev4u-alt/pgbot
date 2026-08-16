@@ -108,6 +108,7 @@ func Compute(c *model.Context) []model.Finding {
 	waitFindings(c, add)
 	highRollbacks(c, add)
 	missingPgss(c, add)
+	pgssEntriesEvicted(c, add)
 	staleStatsWindow(c, add)
 
 	// T9 ordering: risk (time-to-incident) is pinned to the top — a wraparound or
@@ -809,6 +810,15 @@ func querySlowdown(c *model.Context, add func(model.Finding)) {
 	if worst == nil {
 		return
 	}
+	// If pg_stat_statements is evicting entries, this query may have been evicted
+	// and re-entered (stats reset to zero) — the "regression" could be an artifact.
+	// Carry that as a load-bearing caveat and drop confidence below the assertion line.
+	conf := 0.8
+	var caveats []string
+	if pgssEvicting(c) {
+		caveats = append(caveats, "pg_stat_statements is evicting entries — this query may have been evicted and re-entered (stats reset), so the regression could be an artifact (see pgss_entries_evicted)")
+		conf = 0.4
+	}
 	add(model.Finding{
 		ID: "query_slowdown", Severity: model.SeverityWarn,
 		Title:       fmt.Sprintf("Query %s is %.1f× slower (%.0f → %.0f ms mean)", queryTagStr(worst.Subject), worstFactor, worst.Before, worst.After),
@@ -817,7 +827,37 @@ func querySlowdown(c *model.Context, add func(model.Finding)) {
 		Impact: impact(model.DimLatency, math.Min(90, 30+worstFactor*10),
 			fmt.Sprintf("%.1f× slower", worstFactor),
 			"pg_stat_statements mean time vs the baseline"),
-		Confidence: 0.8,
+		Confidence: conf,
+		Caveats:    caveats,
+	})
+}
+
+// pgssEvicting reports whether pg_stat_statements is discarding entries — which
+// biases the top list and can reset a query's stats between runs.
+func pgssEvicting(c *model.Context) bool {
+	if c.Queries == nil {
+		return false
+	}
+	q := c.Queries
+	return q.PgssDealloc > 0 || (q.PgssMax > 0 && q.PgssCount >= q.PgssMax)
+}
+
+// pgssEntriesEvicted is a trust finding: when pg_stat_statements fills, the
+// top-queries list is a biased sample and query_slowdown deltas can be fiction.
+// It also stamps Queries.Section.Reason so any consumer sees the caveat.
+func pgssEntriesEvicted(c *model.Context, add func(model.Finding)) {
+	if c.Queries == nil || !c.Queries.Enabled || !pgssEvicting(c) {
+		return
+	}
+	q := c.Queries
+	c.Queries.Reason = fmt.Sprintf("pg_stat_statements at capacity (%d/%d entries, %s evictions) — the top-queries list is a biased sample and cross-run query deltas may compare against an evicted-and-re-entered query", q.PgssCount, q.PgssMax, human(q.PgssDealloc))
+	add(model.Finding{
+		ID: "pgss_entries_evicted", Severity: model.SeverityWarn,
+		Title:       fmt.Sprintf("pg_stat_statements is evicting entries (%d/%d, %s discarded)", q.PgssCount, q.PgssMax, human(q.PgssDealloc)),
+		Detail:      "When pg_stat_statements fills, it discards least-used entries. The top-queries view becomes a biased sample, and a query that was evicted and re-entered resets to zero — so query_slowdown deltas can be fiction.",
+		Remediation: "Raise pg_stat_statements.max (needs a restart) so the workload fits, or accept that low-frequency queries won't appear.",
+		Impact:      impact(model.DimThroughput, 25, fmt.Sprintf("%d/%d entries", q.PgssCount, q.PgssMax), "pg_stat_statements_info.dealloc + count vs max"),
+		Confidence:  0.85,
 	})
 }
 

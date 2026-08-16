@@ -235,6 +235,9 @@ type Queries struct {
 	Section
 	Enabled     bool        `json:"enabled"`
 	TotalExecMS float64     `json:"total_exec_ms,omitempty"` // cumulative exec time across ALL statements (prop_exec_time denominator)
+	PgssDealloc int64       `json:"pgss_dealloc,omitempty"`  // pg_stat_statements evictions (PG14+); >0 means the top list is a biased sample
+	PgssCount   int         `json:"pgss_count,omitempty"`    // current entry count
+	PgssMax     int         `json:"pgss_max,omitempty"`      // pg_stat_statements.max
 	Top         []QueryStat `json:"top,omitempty"`
 }
 
