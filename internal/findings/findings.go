@@ -9,6 +9,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/pgrundev/pgbot/internal/model"
 )
@@ -21,8 +22,8 @@ const (
 	cacheHitWarn          = 0.90 // sustained cache hit below this is disk-bound
 	longXactWarnSec       = 300  // a transaction open > 5 min
 	idleInTxnWarnSec      = 60
-	preparedXactWarnSec   = 300  // a prepared (2PC) transaction open > 5 min is likely abandoned
-	preparedXactCritSec   = 3600 // > 1h — it never times out; blocks vacuum until resolved
+	preparedXactWarnSec   = 300   // a prepared (2PC) transaction open > 5 min is likely abandoned
+	preparedXactCritSec   = 3600  // > 1h — it never times out; blocks vacuum until resolved
 	rollbackRatioWarn     = 0.10  // >10% of transactions rolling back
 	rollbackMinTxns       = 20    // below this many transactions in the window the ratio is noise
 	staleStatsWarnDays    = 30    // rates computed over a very old window are near-meaningless
@@ -83,6 +84,12 @@ var TuningIDs = map[string]bool{
 	"checkpoints_forced":          true,
 	"connections_overprovisioned": true,
 	"io_timing_off":               true,
+	"fsync_off":                   true,
+	"full_page_writes_off":        true,
+	"autovacuum_off":              true,
+	"random_page_cost_high":       true,
+	"statement_timeout_unset":     true,
+	"work_mem_overcommit":         true,
 }
 
 // Compute returns findings sorted most-severe first. Order among equal
@@ -114,6 +121,7 @@ func Compute(c *model.Context) []model.Finding {
 	checkpointsForced(c, add)
 	connectionsOverprovisioned(c, add)
 	ioTimingOff(c, add)
+	configSanity(c, add)
 	waitFindings(c, add)
 	highRollbacks(c, add)
 	missingPgss(c, add)
@@ -1041,6 +1049,123 @@ func connectionsOverprovisioned(c *model.Context, add func(model.Finding)) {
 			fmt.Sprintf("%d/%d slots used", c.Limits.ConnectionsUsed, c.Limits.ConnectionsMax), "max_connections vs observed usage"),
 		Confidence: 0.6,
 	})
+}
+
+// configSanity emits the config-value red flags: the two that risk data loss
+// (fsync/full_page_writes off), autovacuum off, a rotational random_page_cost on
+// an SSD-backed managed provider, an implausible work_mem × max_connections vs
+// effective_cache_size, and a cluster with no statement_timeout.
+func configSanity(c *model.Context, add func(model.Finding)) {
+	if c.Settings == nil {
+		return
+	}
+	if settingParam(c, "fsync") == "off" {
+		add(model.Finding{
+			ID: "fsync_off", Severity: model.SeverityCritical,
+			Title:       "fsync is OFF — a crash can corrupt the database",
+			Detail:      "With fsync off, Postgres doesn't flush writes to durable storage. An OS crash or power loss can leave the database irrecoverably corrupt — not just losing recent transactions.",
+			Remediation: "Set fsync = on unless this is a throwaway instance you can rebuild from scratch.",
+			Impact:      impact(model.DimRisk, 95, "durability disabled", "fsync setting"),
+			Confidence:  1.0,
+		})
+	}
+	if settingParam(c, "full_page_writes") == "off" {
+		add(model.Finding{
+			ID: "full_page_writes_off", Severity: model.SeverityCritical,
+			Title:       "full_page_writes is OFF — torn pages can corrupt on crash",
+			Detail:      "With full_page_writes off, a crash during a page write can leave a torn (half-written) page that recovery can't repair. Safe only on storage that guarantees atomic page writes.",
+			Remediation: "Set full_page_writes = on unless your storage guarantees atomic 8 KB writes.",
+			Impact:      impact(model.DimRisk, 90, "torn-page protection disabled", "full_page_writes setting"),
+			Confidence:  1.0,
+		})
+	}
+	if settingParam(c, "autovacuum") == "off" {
+		add(model.Finding{
+			ID: "autovacuum_off", Severity: model.SeverityCritical,
+			Title:       "autovacuum is OFF — bloat and wraparound will follow",
+			Detail:      "With autovacuum off, dead tuples are never reclaimed and transaction-id/multixact age climbs unchecked toward wraparound, which eventually forces the database read-only.",
+			Remediation: "Set autovacuum = on. If it was disabled to control load, tune the cost limits instead of turning it off.",
+			Impact:      impact(model.DimRisk, 88, "no automatic vacuuming", "autovacuum setting"),
+			Confidence:  1.0,
+		})
+	}
+	// random_page_cost=4 is the rotational-disk default; on SSD-backed managed
+	// providers the planner then systematically under-uses index scans.
+	if rpc, err := strconv.ParseFloat(settingParam(c, "random_page_cost"), 64); err == nil && rpc >= 4 && cloudProvider(c) {
+		add(model.Finding{
+			ID: "random_page_cost_high", Severity: model.SeverityWarn,
+			Title:       fmt.Sprintf("random_page_cost=%g on %s (SSD) — planner under-uses indexes", rpc, orUnknownSetting(c.Server.Provider)),
+			Detail:      "random_page_cost=4 assumes a rotational disk. On SSD-backed storage (all managed cloud providers), random reads are far cheaper, so the planner over-weights sequential scans and skips index scans it should use.",
+			Remediation: "Lower random_page_cost toward 1.1 (a reload). Re-check plans afterward.",
+			Impact:      impact(model.DimLatency, 40, fmt.Sprintf("rpc=%g on SSD", rpc), "random_page_cost vs detected provider"),
+			Confidence:  0.7,
+		})
+	}
+	// Implausible worst-case sort memory: work_mem is per operation, so a busy
+	// cluster can allocate up to work_mem × max_connections; above effective_cache_size
+	// that's a mis-set knob inviting OOM.
+	if wm, ok1 := parseMemBytes(settingParam(c, "work_mem")); ok1 {
+		if ecs, ok2 := parseMemBytes(settingParam(c, "effective_cache_size")); ok2 && ecs > 0 {
+			if mc, err := strconv.Atoi(settingParam(c, "max_connections")); err == nil && mc > 0 {
+				worst := wm * int64(mc)
+				if worst > ecs {
+					add(model.Finding{
+						ID: "work_mem_overcommit", Severity: model.SeverityWarn,
+						Title:       fmt.Sprintf("work_mem × max_connections (%s) exceeds effective_cache_size (%s)", humanBytes(worst), humanBytes(ecs)),
+						Detail:      "work_mem is allocated per sort/hash operation, so worst-case memory under load is roughly work_mem × max_connections. When that exceeds the memory you've told the planner exists, a burst of concurrent sorts can push the host into OOM.",
+						Remediation: "Lower work_mem, cap concurrency with a pooler, or raise host memory. work_mem can also be raised per-session for the few queries that need it.",
+						Impact:      impact(model.DimRisk, 45, humanBytes(worst)+" worst-case", "work_mem × max_connections vs effective_cache_size"),
+						Confidence:  0.55,
+					})
+				}
+			}
+		}
+	}
+	if settingParam(c, "statement_timeout") == "0" {
+		add(model.Finding{
+			ID: "statement_timeout_unset", Severity: model.SeverityInfo,
+			Title:       "statement_timeout is unset cluster-wide",
+			Detail:      "With no statement_timeout, a runaway query can run indefinitely, holding locks and the xmin horizon. A cluster-wide cap is a cheap safety net (set a generous one and override per-session where needed).",
+			Remediation: "Consider a generous cluster default, e.g. statement_timeout = '60s', with longer per-session values for known long jobs.",
+			Impact:      impact(model.DimRisk, 20, "no statement timeout", "statement_timeout setting"),
+			Confidence:  0.8,
+		})
+	}
+}
+
+// cloudProvider reports whether pgbot detected a managed (SSD-backed) platform.
+func cloudProvider(c *model.Context) bool {
+	switch c.Server.Provider {
+	case "rds", "aurora", "cloudsql", "azure", "supabase", "neon":
+		return true
+	}
+	return false
+}
+
+// parseMemBytes parses a Postgres memory setting ("4MB", "8192kB", "1GB") to bytes.
+func parseMemBytes(s string) (int64, bool) {
+	s = strings.TrimSpace(s)
+	i := len(s)
+	for i > 0 && (s[i-1] < '0' || s[i-1] > '9') {
+		i--
+	}
+	n, err := strconv.ParseInt(strings.TrimSpace(s[:i]), 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	switch strings.ToLower(strings.TrimSpace(s[i:])) {
+	case "", "b":
+		return n, true
+	case "kb":
+		return n * 1024, true
+	case "mb":
+		return n * 1024 * 1024, true
+	case "gb":
+		return n * 1024 * 1024 * 1024, true
+	case "tb":
+		return n * 1024 * 1024 * 1024 * 1024, true
+	}
+	return 0, false
 }
 
 // ioTimingOff flags track_io_timing=off. With it off, blk_read_time/blk_write_time
