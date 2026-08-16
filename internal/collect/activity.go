@@ -37,9 +37,15 @@ type connRow struct {
 	N        int    `db:"n"`
 }
 
+type avRow struct {
+	Workers int     `db:"workers"`
+	MaxAge  float64 `db:"max_age"`
+}
+
 type activitySample struct {
-	Rows  []activityRow
-	Conns []connRow
+	Rows     []activityRow
+	Conns    []connRow
+	AVWorker avRow
 }
 
 func (activityCollector) Sample(ctx context.Context, t *conn.Target, _ conn.Capabilities) (any, error) {
@@ -49,6 +55,10 @@ func (activityCollector) Sample(ctx context.Context, t *conn.Target, _ conn.Capa
 	}
 	out := activitySample{Rows: rows}
 	out.Conns, _ = queryMany[connRow](ctx, t, sqlConnBreakdown) // best-effort breakdown
+	// Autovacuum worker count + longest-running worker (A19), best-effort.
+	out.AVWorker, _ = queryOne[avRow](ctx, t, `SELECT count(*) FILTER (WHERE backend_type = 'autovacuum worker')::int AS workers,
+		coalesce(max(extract(epoch FROM now() - xact_start)) FILTER (WHERE backend_type = 'autovacuum worker'), 0)::float8 AS max_age
+		FROM pg_stat_activity`)
 	return out, nil
 }
 
@@ -59,7 +69,8 @@ func (activityCollector) Assemble(c *model.Context, _ conn.Capabilities, s sampl
 		return
 	}
 	rows := as.Rows
-	act := &model.Activity{ByState: map[string]int{}, WaitEvents: map[string]int{}, Section: model.Section{Exactness: model.ExactnessScraped}}
+	act := &model.Activity{ByState: map[string]int{}, WaitEvents: map[string]int{}, Section: model.Section{Exactness: model.ExactnessScraped},
+		AutovacuumWorkers: as.AVWorker.Workers, AutovacuumMaxAgeSec: round2(as.AVWorker.MaxAge)}
 	for _, r := range as.Conns {
 		act.Connections = append(act.Connections, model.ConnGroup{
 			AppName: r.AppName, User: r.Username, State: r.State, Count: r.N,

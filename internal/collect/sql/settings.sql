@@ -16,6 +16,8 @@ WHERE name IN (
   'archive_mode', 'archive_timeout', 'wal_level',
   'data_checksums', 'ignore_checksum_failure',
   'synchronous_commit', 'synchronous_standby_names',
-  'autovacuum_analyze_threshold', 'autovacuum_analyze_scale_factor', 'default_statistics_target'
+  'autovacuum_analyze_threshold', 'autovacuum_analyze_scale_factor', 'default_statistics_target',
+  'autovacuum_max_workers', 'autovacuum_vacuum_threshold', 'autovacuum_naptime',
+  'autovacuum_vacuum_cost_delay', 'autovacuum_vacuum_cost_limit'
 )
 ORDER BY 1;

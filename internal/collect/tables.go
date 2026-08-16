@@ -3,11 +3,24 @@ package collect
 import (
 	"context"
 	_ "embed"
+	"strings"
 	"time"
 
 	"github.com/pgrundev/pgbot/internal/conn"
 	"github.com/pgrundev/pgbot/internal/model"
 )
+
+// relFalse reports whether a reloption boolean string means "off" (autovacuum_enabled=false).
+func relFalse(s *string) bool {
+	if s == nil {
+		return false
+	}
+	switch strings.ToLower(*s) {
+	case "false", "off", "0", "no":
+		return true
+	}
+	return false
+}
 
 //go:embed sql/tables.sql
 var sqlTables string
@@ -35,6 +48,10 @@ type tableRow struct {
 	LastAutovacuum      *time.Time `db:"last_autovacuum"`
 	RelAnalyzeScale     *float64   `db:"rel_analyze_scale"`
 	RelAnalyzeThreshold *float64   `db:"rel_analyze_threshold"`
+	AutovacuumCount     int64      `db:"autovacuum_count"`
+	RelAutovacEnabled   *string    `db:"rel_autovacuum_enabled"`
+	RelVacuumScale      *float64   `db:"rel_vacuum_scale"`
+	RelVacuumThreshold  *float64   `db:"rel_vacuum_threshold"`
 }
 
 type partitionRow struct {
@@ -92,6 +109,8 @@ func (tablesCollector) Assemble(c *model.Context, _ conn.Capabilities, s sampled
 			LastAnalyze: r.LastAnalyze, LastAutoanalyze: r.LastAutoanalyze,
 			LastVacuum: r.LastVacuum, LastAutovac: r.LastAutovacuum,
 			AnalyzeScaleOverride: r.RelAnalyzeScale, AnalyzeThresholdOverride: r.RelAnalyzeThreshold,
+			AutovacuumCount: r.AutovacuumCount, AutovacuumDisabled: relFalse(r.RelAutovacEnabled),
+			VacuumScaleOverride: r.RelVacuumScale, VacuumThresholdOverride: r.RelVacuumThreshold,
 		})
 	}
 	for _, p := range ts.Partitions {

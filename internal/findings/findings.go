@@ -32,6 +32,7 @@ const (
 	partitionSeqScanMin   = 1000  // aggregate seq scans across a partitioned table's partitions
 	hotUpdateRatioWarn    = 0.50  // below half of updates being HOT points at fillfactor / an indexed hot column
 	hotUpdateMinVolume    = 10000 // enough update volume to judge the ratio (not a cold table)
+	autovacuumLongRunSec  = 3600  // an autovacuum worker running > 1h (info)
 
 	// Wait-profile (ASH) thresholds. All gated on model.WaitMinSamples — below
 	// that the shares are noise and no wait finding fires.
@@ -120,6 +121,7 @@ func Compute(c *model.Context) []model.Finding {
 	partitionSeqScanHeavy(c, add)
 	bloatedTables(c, add)
 	staleStatistics(c, add)
+	autovacuumHealth(c, add)
 	lowHotUpdateRatio(c, add)
 	lowCacheHit(c, add)
 	idleInTransaction(c, add)
@@ -558,6 +560,100 @@ func seqScanHeavy(c *model.Context, add func(model.Finding)) {
 			"seq_scans ≫ index_scans on tables ≥ 50k rows"),
 		Confidence: 0.6,
 	})
+}
+
+// autovacuumHealth answers whether autovacuum is being OUTRUN (distinct from A1's
+// "why can't it reclaim"): a table excluded from it, one never vacuumed, dead
+// tuples piling past the trigger, worker saturation, and a long-running worker.
+func autovacuumHealth(c *model.Context, add func(model.Finding)) {
+	if c.Tables != nil {
+		gThresh := settingFloat(c, "autovacuum_vacuum_threshold", 50)
+		gScale := settingFloat(c, "autovacuum_vacuum_scale_factor", 0.2)
+		var disabled, never, starved []string
+		for _, t := range c.Tables.Top {
+			if t.AutovacuumDisabled {
+				disabled = append(disabled, fmt.Sprintf("%s.%s", t.Schema, t.Name))
+			}
+			if t.LiveTuples < deadRatioTableMinRows {
+				continue
+			}
+			if t.LastVacuum == nil && t.LastAutovac == nil {
+				never = append(never, fmt.Sprintf("%s.%s (%s rows)", t.Schema, t.Name, human(t.LiveTuples)))
+				continue
+			}
+			th, sf := gThresh, gScale
+			if t.VacuumThresholdOverride != nil {
+				th = *t.VacuumThresholdOverride
+			}
+			if t.VacuumScaleOverride != nil {
+				sf = *t.VacuumScaleOverride
+			}
+			trigger := th + sf*float64(t.LiveTuples)
+			// Dead tuples well past the trigger while no autovacuum has run: it's behind.
+			if trigger > 0 && float64(t.DeadTuples) >= 1.5*trigger && t.LastAutovac == nil {
+				starved = append(starved, fmt.Sprintf("%s.%s: %s dead (trigger ≈%s), no autovacuum recorded", t.Schema, t.Name, human(t.DeadTuples), human(int64(trigger))))
+			}
+		}
+		if len(disabled) > 0 {
+			add(model.Finding{
+				ID: "autovacuum_disabled_on_table", Severity: model.SeverityCritical,
+				Title:       fmt.Sprintf("autovacuum is DISABLED on %d table(s)", len(disabled)),
+				Detail:      "These tables have autovacuum_enabled=false in their reloptions — almost always disabled 'temporarily' during a migration and never re-enabled. Dead tuples and transaction-id age accumulate on them unchecked, invisible in every global setting and dashboard, until bloat or wraparound forces a reckoning.",
+				Evidence:    cap10(disabled),
+				Remediation: "Re-enable it: ALTER TABLE … SET (autovacuum_enabled = true); then VACUUM the table to catch up.",
+				Impact:      impact(model.DimRisk, 80, fmt.Sprintf("%d tables excluded from autovacuum", len(disabled)), "reloptions autovacuum_enabled=false"),
+				Confidence:  1.0,
+			})
+		}
+		if len(never) > 0 {
+			add(model.Finding{
+				ID: "table_never_vacuumed", Severity: model.SeverityWarn,
+				Title:       fmt.Sprintf("%d table(s) never vacuumed", len(never)),
+				Detail:      "These tables above the size floor have no record of a manual or automatic vacuum. Dead tuples and transaction-id age accumulate until the first one runs.",
+				Evidence:    cap10(never),
+				Remediation: "VACUUM them, and check autovacuum isn't disabled globally or per-table.",
+				Impact:      impact(model.DimRisk, 40, fmt.Sprintf("%d unvacuumed tables", len(never)), "last_vacuum and last_autovacuum both null"),
+				Confidence:  0.75,
+			})
+		}
+		if len(starved) > 0 {
+			add(model.Finding{
+				ID: "autovacuum_starved", Severity: model.SeverityWarn,
+				Title:       fmt.Sprintf("%d table(s) with dead tuples past the trigger and no autovacuum", len(starved)),
+				Detail:      "Dead tuples on these tables are well past the autovacuum trigger, yet no autovacuum has run — autovacuum is being outrun (not enough workers or cost budget), not blocked at the horizon.",
+				Evidence:    cap10(starved),
+				Remediation: "Raise autovacuum_max_workers / autovacuum_vacuum_cost_limit or lower autovacuum_vacuum_cost_delay so vacuum keeps pace; VACUUM the worst tables now.",
+				Impact:      impact(model.DimStorage, 45, fmt.Sprintf("%d tables past the vacuum trigger", len(starved)), "dead_tuples vs threshold + scale × n_live_tup"),
+				Confidence:  0.6,
+			})
+		}
+	}
+
+	// autovacuum_saturated — point-in-time worker count vs the cap (a single glance,
+	// so a caveat and modest confidence; the ASH-window version is a refinement).
+	if c.Activity != nil && c.Activity.AutovacuumWorkers > 0 {
+		if maxW, err := strconv.Atoi(settingParam(c, "autovacuum_max_workers")); err == nil && maxW > 0 && c.Activity.AutovacuumWorkers >= maxW {
+			add(model.Finding{
+				ID: "autovacuum_saturated", Severity: model.SeverityWarn,
+				Title:       fmt.Sprintf("autovacuum workers saturated (%d/%d in use)", c.Activity.AutovacuumWorkers, maxW),
+				Detail:      "Every autovacuum worker is busy. If this is sustained, vacuum falls behind on the tables waiting in line — dead tuples and bloat grow while workers are tied up elsewhere.",
+				Remediation: "Raise autovacuum_max_workers, or reduce per-worker throttling (cost_delay/cost_limit) so each finishes faster.",
+				Caveats:     []string{"this is a single-moment count, not sustained saturation — confirm it holds across several runs before acting"},
+				Impact:      impact(model.DimThroughput, 35, fmt.Sprintf("%d/%d workers", c.Activity.AutovacuumWorkers, maxW), "point-in-time autovacuum worker count vs autovacuum_max_workers"),
+				Confidence:  0.5,
+			})
+		}
+		if c.Activity.AutovacuumMaxAgeSec >= autovacuumLongRunSec {
+			add(model.Finding{
+				ID: "autovacuum_long_running", Severity: model.SeverityInfo,
+				Title:       fmt.Sprintf("an autovacuum worker has run for %.0fs", c.Activity.AutovacuumMaxAgeSec),
+				Detail:      "A long-running autovacuum is usually a large table catching up, not a problem — but it ties up a worker. See pg_stat_progress_vacuum (progress) for its phase and how far along it is before considering a cancel.",
+				Remediation: "Let it finish if it's making progress; only cancel a stuck one. Consider per-table cost settings for very large tables.",
+				Impact:      impact(model.DimThroughput, 15, fmt.Sprintf("%.0fs", c.Activity.AutovacuumMaxAgeSec), "longest autovacuum worker xact age"),
+				Confidence:  0.7,
+			})
+		}
+	}
 }
 
 // staleStatistics flags tables whose planner statistics are far behind the data

@@ -210,16 +210,18 @@ type Health struct {
 // Activity is a point-in-time read of pg_stat_activity.
 type Activity struct {
 	Section
-	Total             int            `json:"total"`
-	Active            int            `json:"active"`
-	Idle              int            `json:"idle"`
-	IdleInTransaction int            `json:"idle_in_transaction"`
-	Waiting           int            `json:"waiting"`
-	ByState           map[string]int `json:"by_state"`
-	WaitEvents        map[string]int `json:"wait_events,omitempty"`
-	LongestXactSec    float64        `json:"longest_xact_sec"`
-	LongestActiveSec  float64        `json:"longest_active_sec"`
-	Connections       []ConnGroup    `json:"connections,omitempty"` // top contributors by app/user/state (A13)
+	Total               int            `json:"total"`
+	Active              int            `json:"active"`
+	Idle                int            `json:"idle"`
+	IdleInTransaction   int            `json:"idle_in_transaction"`
+	Waiting             int            `json:"waiting"`
+	ByState             map[string]int `json:"by_state"`
+	WaitEvents          map[string]int `json:"wait_events,omitempty"`
+	LongestXactSec      float64        `json:"longest_xact_sec"`
+	LongestActiveSec    float64        `json:"longest_active_sec"`
+	Connections         []ConnGroup    `json:"connections,omitempty"`            // top contributors by app/user/state (A13)
+	AutovacuumWorkers   int            `json:"autovacuum_workers,omitempty"`     // running autovacuum workers (A19)
+	AutovacuumMaxAgeSec float64        `json:"autovacuum_max_age_sec,omitempty"` // longest-running autovacuum worker
 }
 
 // ConnGroup is a group of connections by application, role, and state — the
@@ -304,9 +306,13 @@ type TableStat struct {
 	HotUpdates       int64      `json:"hot_updates,omitempty"`
 	LastAnalyze      *time.Time `json:"last_analyze,omitempty"`
 	LastAutoanalyze  *time.Time `json:"last_autoanalyze,omitempty"`
-	// Per-table reloption overrides of the global analyze knobs (nil = use global).
+	// Per-table reloption overrides of the global analyze/vacuum knobs (nil = global).
 	AnalyzeScaleOverride     *float64   `json:"analyze_scale_override,omitempty"`
 	AnalyzeThresholdOverride *float64   `json:"analyze_threshold_override,omitempty"`
+	AutovacuumCount          int64      `json:"autovacuum_count,omitempty"`
+	AutovacuumDisabled       bool       `json:"autovacuum_disabled,omitempty"` // autovacuum_enabled=false in reloptions (A19)
+	VacuumScaleOverride      *float64   `json:"vacuum_scale_override,omitempty"`
+	VacuumThresholdOverride  *float64   `json:"vacuum_threshold_override,omitempty"`
 	LastVacuum               *time.Time `json:"last_vacuum,omitempty"`
 	LastAutovac              *time.Time `json:"last_autovacuum,omitempty"`
 }

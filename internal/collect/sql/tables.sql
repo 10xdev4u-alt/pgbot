@@ -20,7 +20,17 @@ SELECT s.schemaname                       AS schema,
        (SELECT option_value FROM pg_options_to_table(c.reloptions)
           WHERE option_name = 'autovacuum_analyze_scale_factor')::float8 AS rel_analyze_scale,
        (SELECT option_value FROM pg_options_to_table(c.reloptions)
-          WHERE option_name = 'autovacuum_analyze_threshold')::float8    AS rel_analyze_threshold
+          WHERE option_name = 'autovacuum_analyze_threshold')::float8    AS rel_analyze_threshold,
+       s.autovacuum_count                 AS autovacuum_count,
+       -- autovacuum_enabled=false in reloptions is a critical, invisible-in-every-
+       -- global-setting condition (A19). Vacuum threshold/scale reloptions feed the
+       -- starved check.
+       (SELECT option_value FROM pg_options_to_table(c.reloptions)
+          WHERE option_name = 'autovacuum_enabled')                       AS rel_autovacuum_enabled,
+       (SELECT option_value FROM pg_options_to_table(c.reloptions)
+          WHERE option_name = 'autovacuum_vacuum_scale_factor')::float8   AS rel_vacuum_scale,
+       (SELECT option_value FROM pg_options_to_table(c.reloptions)
+          WHERE option_name = 'autovacuum_vacuum_threshold')::float8      AS rel_vacuum_threshold
 FROM pg_stat_user_tables s
 JOIN pg_class c ON c.oid = s.relid
 ORDER BY total_bytes DESC
