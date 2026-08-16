@@ -75,7 +75,11 @@ jobs:
         run: |
           docker run -d --name pg -p 5432:5432 -e POSTGRES_PASSWORD=pw \
             postgres:${{ matrix.pg }} -c shared_preload_libraries=pg_stat_statements
-          for i in $(seq 1 30); do docker exec pg pg_isready -U postgres && break; sleep 1; done
+          # TCP check (-h 127.0.0.1), not the default socket: the postgres image's
+          # initdb-phase server is socket-only, so a socket pg_isready can report
+          # ready during init and then the real-server start briefly closes it.
+          # TCP only answers once the real server is up — no shutdown-window race.
+          for i in $(seq 1 60); do docker exec pg pg_isready -U postgres -h 127.0.0.1 -q && break; sleep 1; done
           docker exec pg psql -U postgres -q \
             -c "CREATE EXTENSION pg_stat_statements;" \
             -c "CREATE TABLE people(id serial primary key, email text);" \
@@ -94,7 +98,7 @@ jobs:
         run: |
           docker rm -f pg
           docker run -d --name pg2 -p 5433:5432 -e POSTGRES_PASSWORD=pw postgres:${{ matrix.pg }}
-          for i in $(seq 1 30); do docker exec pg2 pg_isready -U postgres && break; sleep 1; done
+          for i in $(seq 1 60); do docker exec pg2 pg_isready -U postgres -h 127.0.0.1 -q && break; sleep 1; done
           docker exec pg2 psql -U postgres -q -c "CREATE TABLE t(id serial primary key);"
           CGO_ENABLED=0 go build -o pgbot ./cmd/pgbot
           # a no-pgss run must exit on findings (not error) and mark Queries unavailable
@@ -115,7 +119,11 @@ jobs:
           docker network create n
           docker run -d --name pg --network n -e POSTGRES_PASSWORD=pw \
             postgres:17 -c shared_preload_libraries=pg_stat_statements
-          for i in $(seq 1 30); do docker exec pg pg_isready -U postgres && break; sleep 1; done
+          # TCP check (-h 127.0.0.1), not the default socket: the postgres image's
+          # initdb-phase server is socket-only, so a socket pg_isready can report
+          # ready during init and then the real-server start briefly closes it.
+          # TCP only answers once the real server is up — no shutdown-window race.
+          for i in $(seq 1 60); do docker exec pg pg_isready -U postgres -h 127.0.0.1 -q && break; sleep 1; done
           docker exec pg psql -U postgres -q -c "CREATE TABLE t(id serial primary key, note text);"
           # publish on 6543 so the known-endpoint detection also fires
           docker run -d --name pgb --network n -p 6543:5432 \
