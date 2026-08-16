@@ -46,7 +46,15 @@ func renderGrouped(b *strings.Builder, st styler, c *model.Context, width int) {
 	fmt.Fprintf(b, "%s %s\n\n", st.dim("Database health:"), paintScore(fmt.Sprintf("%d/100", score)))
 
 	var crit, warn, note []model.Finding
+	hidden := 0 // suppressed non-criticals: counted in the footer, not listed
 	for _, f := range c.Findings {
+		// A suppressed CRITICAL still renders (visibly marked) — a config must never
+		// be able to make checksum_failures vanish from the screen (B2-2). Lesser
+		// suppressed findings drop to the footer / --full.
+		if f.Suppressed && f.Severity != model.SeverityCritical {
+			hidden++
+			continue
+		}
 		switch f.Severity {
 		case model.SeverityCritical:
 			crit = append(crit, f)
@@ -74,12 +82,20 @@ func renderGrouped(b *strings.Builder, st styler, c *model.Context, width int) {
 			for _, l := range lines[1:] {
 				fmt.Fprintf(b, "  %s\n", l)
 			}
+			if f.Suppressed { // a rendered-but-suppressed critical
+				fmt.Fprintf(b, "  %s\n", st.dim("suppressed by config: "+suppReason(f)))
+			}
 		}
 		fmt.Fprintln(b)
 	}
 	emit("CRITICAL", st.crit, crit)
 	emit("WARNING", st.warn, warn)
 	emit("NOTE", st.info, note)
+
+	if hidden > 0 {
+		fmt.Fprintln(b, st.dim(fmt.Sprintf("%d finding(s) suppressed by config (see --full)", hidden)))
+		fmt.Fprintln(b)
+	}
 
 	if good := buildGood(c); len(good) > 0 {
 		fmt.Fprintln(b, st.good("GOOD"))
@@ -95,9 +111,20 @@ func renderGrouped(b *strings.Builder, st styler, c *model.Context, width int) {
 
 // computeHealthScore is a coarse 0–100 grade: full marks minus a penalty per
 // finding by severity. It's an at-a-glance indicator, not a precise metric.
+// suppReason renders an ignore rule's reason, or a stand-in when none was given.
+func suppReason(f model.Finding) string {
+	if f.SuppressionReason != "" {
+		return f.SuppressionReason
+	}
+	return "no reason given"
+}
+
 func computeHealthScore(c *model.Context) int {
 	penalty := 0
 	for _, f := range c.Findings {
+		if f.Suppressed {
+			continue // a muted finding shouldn't drag the grade (B2-2)
+		}
 		switch f.Severity {
 		case model.SeverityCritical:
 			penalty += 10

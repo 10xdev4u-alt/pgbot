@@ -10,7 +10,6 @@ import (
 	"github.com/pgrundev/pgbot/internal/ai"
 	"github.com/pgrundev/pgbot/internal/collect"
 	"github.com/pgrundev/pgbot/internal/conn"
-	"github.com/pgrundev/pgbot/internal/findings"
 	"github.com/pgrundev/pgbot/internal/render"
 	"github.com/pgrundev/pgbot/internal/store"
 	"github.com/spf13/cobra"
@@ -48,6 +47,8 @@ func newExplainCmd() *cobra.Command {
 	fl.IntVar(&f.ashHz, "ash-hz", 10, "active-session sampling rate in Hz (0 disables the wait-event profile)")
 	fl.DurationVar(&f.window, "window", 5*time.Second, "active-session sampling window")
 	fl.BoolVar(&yes, "yes", false, "skip the 'this sends data to the AI provider' confirmation prompt")
+	fl.StringVar(&f.config, "config", "", "path to .pgbot.toml (default: discover from cwd upward)")
+	fl.StringArrayVar(&f.ignore, "ignore", nil, "suppress a finding for this run: finding[:object] (repeatable)")
 	return cmd
 }
 
@@ -107,7 +108,9 @@ func runExplain(cmd *cobra.Command, args []string, f inspectFlags, yes bool) err
 	if !f.noStore {
 		trends, baselinePath = withStore(f.storePath, c)
 	}
-	c.Findings = findings.Compute(c)
+	if err := computeFindings(c, f.config, f.ignore); err != nil {
+		return err
+	}
 
 	// 1. The deterministic report — the truth, printed exactly as `inspect` would.
 	color := useColor(f.noColor)

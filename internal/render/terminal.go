@@ -85,6 +85,16 @@ func Terminal(w io.Writer, c *model.Context, opts Options) error {
 		fmt.Fprintln(&b)
 	}
 
+	// Config warnings up top, not buried: a typo'd rule that silently doesn't
+	// apply is the exact failure the config exists to prevent (B2-1).
+	if len(c.ConfigWarnings) > 0 {
+		fmt.Fprintln(&b, st.warn(fmt.Sprintf("! %d config warning(s) in .pgbot.toml:", len(c.ConfigWarnings))))
+		for _, w := range c.ConfigWarnings {
+			fmt.Fprintf(&b, "  %s\n", st.dim(w))
+		}
+		fmt.Fprintln(&b)
+	}
+
 	// Cold-window / reset surfacing — front and center, not buried.
 	if c.Window.ColdWindow() {
 		age := int64(0)
@@ -138,8 +148,18 @@ func renderFindings(b *strings.Builder, st styler, fs []model.Finding, width int
 		fmt.Fprintln(b)
 		return
 	}
-	crit, warn := 0, 0
+	// Partition off findings hidden by config (suppressed non-criticals). A
+	// suppressed critical stays in the main list, visibly marked (B2-2).
+	var visible, suppressed []model.Finding
 	for _, f := range fs {
+		if f.Suppressed && f.Severity != model.SeverityCritical {
+			suppressed = append(suppressed, f)
+		} else {
+			visible = append(visible, f)
+		}
+	}
+	crit, warn := 0, 0
+	for _, f := range visible {
 		switch f.Severity {
 		case model.SeverityCritical:
 			crit++
@@ -147,15 +167,18 @@ func renderFindings(b *strings.Builder, st styler, fs []model.Finding, width int
 			warn++
 		}
 	}
-	summary := fmt.Sprintf("%d finding(s)", len(fs))
+	summary := fmt.Sprintf("%d finding(s)", len(visible))
 	if crit > 0 {
 		summary += fmt.Sprintf(" · %d critical", crit)
 	}
 	if warn > 0 {
 		summary += fmt.Sprintf(" · %d warning", warn)
 	}
+	if len(suppressed) > 0 {
+		summary += fmt.Sprintf(" · %d suppressed", len(suppressed))
+	}
 	fmt.Fprintln(b, st.head(summary))
-	for _, f := range fs {
+	for _, f := range visible {
 		icon, color := "·", st.info
 		switch f.Severity {
 		case model.SeverityCritical:
@@ -169,6 +192,9 @@ func renderFindings(b *strings.Builder, st styler, fs []model.Finding, width int
 			title += st.dim(" (possible)")
 		}
 		fmt.Fprintf(b, "  %s %s\n", color(icon), color(title))
+		if f.Suppressed { // a suppressed critical that still renders
+			fmt.Fprintf(b, "     %s\n", st.dim("suppressed by config ("+f.SuppressionRule+"): "+suppReason(f)))
+		}
 		for _, line := range wrapText(f.Detail, width-5) {
 			fmt.Fprintf(b, "     %s\n", st.dim(line))
 		}
@@ -196,6 +222,21 @@ func renderFindings(b *strings.Builder, st styler, fs []model.Finding, width int
 				}
 				fmt.Fprintf(b, "     %s\n", st.dim(prefix+line))
 			}
+		}
+	}
+
+	// Suppressed section: dimmed, collapsed, reason inline (B2-2). Kept visible in
+	// --full so a muted finding is auditable, never silently gone.
+	if len(suppressed) > 0 {
+		fmt.Fprintln(b)
+		fmt.Fprintln(b, st.dim(fmt.Sprintf("SUPPRESSED (%d) — hidden by .pgbot.toml", len(suppressed))))
+		for _, f := range suppressed {
+			obj := f.Object
+			if obj == "" {
+				obj = "(cluster)"
+			}
+			fmt.Fprintf(b, "  %s\n", st.dim(fmt.Sprintf("· [%s] %s — %s", f.Severity, f.Title, suppReason(f))))
+			fmt.Fprintf(b, "    %s\n", st.dim(fmt.Sprintf("%s · rule: %s", obj, f.SuppressionRule)))
 		}
 	}
 	fmt.Fprintln(b)

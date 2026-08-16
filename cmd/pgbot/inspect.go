@@ -10,7 +10,6 @@ import (
 	"github.com/pgrundev/pgbot/internal/conn"
 	"github.com/pgrundev/pgbot/internal/diff"
 	"github.com/pgrundev/pgbot/internal/events"
-	"github.com/pgrundev/pgbot/internal/findings"
 	"github.com/pgrundev/pgbot/internal/model"
 	"github.com/pgrundev/pgbot/internal/render"
 	"github.com/pgrundev/pgbot/internal/store"
@@ -37,6 +36,8 @@ type inspectFlags struct {
 	window       time.Duration
 	full         bool
 	timeout      time.Duration
+	config       string // explicit .pgbot.toml path ("" = discover)
+	ignore       []string // one-off --ignore finding[:object] rules (B2-4)
 }
 
 func newInspectCmd() *cobra.Command {
@@ -65,6 +66,8 @@ func newInspectCmd() *cobra.Command {
 	fl.DurationVar(&f.window, "window", 5*time.Second, "active-session sampling window (how long to profile where time goes)")
 	fl.BoolVar(&f.full, "full", false, "print the full section tables; default is the sentences-first summary")
 	fl.DurationVar(&f.timeout, "timeout", 30*time.Second, "total wall-clock budget for the whole run (raise it for slow or remote databases)")
+	fl.StringVar(&f.config, "config", "", "path to .pgbot.toml (default: discover from cwd upward, then $XDG_CONFIG_HOME)")
+	fl.StringArrayVar(&f.ignore, "ignore", nil, "suppress a finding for this run: finding[:object] (repeatable)")
 	return cmd
 }
 
@@ -122,8 +125,12 @@ func runInspect(cmd *cobra.Command, args []string, f inspectFlags) error {
 		trends, baselinePath = withStore(f.storePath, c)
 	}
 
-	// Deterministic findings — computed in Go, never by a model.
-	c.Findings = findings.Compute(c)
+	// Deterministic findings — computed in Go, never by a model. Under the active
+	// .pgbot.toml: threshold overrides feed the compute, severity/ignore rules are
+	// applied, suppressed findings are kept (marked) for the renderer.
+	if err := computeFindings(c, f.config, f.ignore); err != nil {
+		return err
+	}
 
 	if f.json {
 		if err := render.JSON(os.Stdout, c); err != nil {
@@ -215,10 +222,15 @@ func settingsOf(c *model.Context) map[string]string {
 	return c.Settings.Overrides
 }
 
-// exitCode maps the worst finding severity to the CI contract.
+// exitCode maps the worst finding severity to the CI contract. Suppressed
+// findings (B2) never contribute — that is the entire point of an exit-code
+// suppression: a muted checksums_disabled must not keep failing CI.
 func exitCode(fs []model.Finding) int {
 	worst := exitClean
 	for _, f := range fs {
+		if f.Suppressed {
+			continue
+		}
 		switch f.Severity {
 		case model.SeverityCritical:
 			return exitCritical

@@ -7,7 +7,6 @@ import (
 
 	"github.com/pgrundev/pgbot/internal/collect"
 	"github.com/pgrundev/pgbot/internal/conn"
-	"github.com/pgrundev/pgbot/internal/findings"
 	"github.com/pgrundev/pgbot/internal/model"
 	"github.com/pgrundev/pgbot/internal/store"
 )
@@ -42,6 +41,8 @@ func gather(ctx context.Context, connString string, f inspectFlags) (*model.Cont
 	if !f.noStore {
 		withStore(f.storePath, c)
 	}
-	c.Findings = findings.Compute(c)
+	if err := computeFindings(c, f.config, f.ignore); err != nil {
+		return nil, "", err
+	}
 	return c, host, nil
 }
