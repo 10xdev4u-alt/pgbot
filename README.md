@@ -319,6 +319,23 @@ available to the agent.
 never write. Drop it in `~/.claude/skills/` (see [`skills/`](skills/)) and your
 agent asks the right pgbot command and reads the results the way pgbot intends.
 
+### Claude Code plugin
+
+[Claude Code](https://claude.com/claude-code) users can install the tools, the
+skill, and the commands in one shot — the repo is its own plugin marketplace:
+
+```bash
+claude plugin marketplace add pgrundev/pgbot
+claude plugin install pgbot@pgbot
+```
+
+That registers the pgbot **MCP tools**, the **`postgres-diagnostics` skill**, and
+three slash commands — **`/pg-health`**, **`/pg-slow`**, **`/pg-indexes`** — each
+of which carries the pgbot judgment (caveats intact, impact-first, never writes).
+The plugin drives the `pgbot` binary, so install that first (`curl -fsSL
+https://pgbot.dev/install | sh`); set `DATABASE_URL` or pass a connection string
+per call, then ask *"is my Postgres healthy?"*
+
 ### `explain` — optional AI layer
 
 `pgbot explain` runs the exact same read-only inspection, prints the
