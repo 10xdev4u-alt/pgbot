@@ -428,6 +428,31 @@ Neon's scale-to-zero discards stats, which pgbot handles as a cold window. Full
 per-provider notes and the live-verification checklist are in
 [`docs/providers.md`](docs/providers.md).
 
+## Configuration & suppression
+
+An optional `.pgbot.toml` (committed to your repo) overrides thresholds, remaps a
+finding's severity, and suppresses specific findings so noise never trains people
+to ignore the severity column:
+
+```toml
+schema = 1
+[severity]
+checksums_disabled = "info"        # can't change it on this managed provider
+[[ignore]]
+finding = "unused_indexes"
+object  = "public.idx_legacy_*"    # glob; omit to mute the whole finding
+reason  = "backs the quarterly export"
+expires = "2026-12-31"
+```
+
+Suppression is always **visible** — suppressed findings stay in `--json` (with
+`suppressed`/`suppression_reason`), never affect the exit code, and a suppressed
+**critical still renders** (a config must not hide `checksum_failures`). pgbot
+refuses to read any credential-shaped key from the file, flags rules that have
+gone stale, and ships `pgbot config check` / `explain` / `init`. Full contract —
+including the per-finding object-identity table — in
+[`docs/configuration.md`](docs/configuration.md).
+
 ## Serverless Postgres (Neon, scale-to-zero)
 
 Scale-to-zero databases (Neon, Databricks Lakebase, and similar) **discard
