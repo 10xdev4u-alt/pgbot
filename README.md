@@ -127,13 +127,24 @@ carried into the advice, not lost.
 
 | Method | Command |
 |---|---|
-| Script (verifies checksum) | `curl -fsSL https://pgbot.dev/install \| sh` |
+| Script (cosign signature + checksum) | `curl -fsSL https://pgbot.dev/install \| sh` |
 | Go | `go install github.com/pgrundev/pgbot/cmd/pgbot@latest` |
 | Docker | `docker run --rm ghcr.io/pgrundev/pgbot inspect "$DATABASE_URL"` |
 | Homebrew | `brew install pgrundev/tap/pgbot` |
 
 Some security teams won't pipe `curl` to `sh` — every alternative above installs
-the same verified binary. Releases ship SHA256 checksums signed with cosign.
+the same verified binary. Releases ship SHA256 checksums signed with **cosign**
+(keyless, via GitHub Actions OIDC). The install script verifies that signature
+when `cosign` is on your `PATH` — and always verifies the checksum. Set
+`PGBOT_REQUIRE_SIGNATURE=1` to make signature verification mandatory (it then
+hard-fails if `cosign` is missing or the check doesn't pass). To verify a release
+by hand:
+
+```bash
+cosign verify-blob --certificate checksums.txt.pem --signature checksums.txt.sig \
+  --certificate-identity-regexp '^https://github.com/pgrundev/pgbot/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt
+```
 
 ## Setup — a read-only role with `pg_monitor`
 
