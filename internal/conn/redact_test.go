@@ -71,10 +71,28 @@ func FuzzScrubQueryText(f *testing.F) {
 		if m := reUUID.FindString(out); m != "" {
 			t.Errorf("uuid-shaped substring survived: %q -> %q (%q)", in, out, m)
 		}
-		if m := reNumber.FindString(out); m != "" {
-			t.Errorf("standalone number survived: %q -> %q (%q)", in, out, m)
+		for _, loc := range reNumber.FindAllStringIndex(out, -1) {
+			if loc[0] > 0 && out[loc[0]-1] == '$' {
+				continue // a $N pg_stat_statements placeholder is allowed
+			}
+			t.Errorf("standalone number survived: %q -> %q (at %d)", in, out, loc[0])
+			break
 		}
 	})
+}
+
+// P0/PII: pgss normalizes DML to $N (which must survive scrubbing) but stores
+// UTILITY statements (DO blocks) verbatim (which can carry real literals and must
+// be scrubbed). ScrubQueryText now runs over pgss text, so both must hold.
+func TestScrubQueryText_placeholdersAndUtilityLiterals(t *testing.T) {
+	dml := ScrubQueryText("SELECT * FROM t WHERE id = $1 AND created_at > $2")
+	if !strings.Contains(dml, "$1") || !strings.Contains(dml, "$2") {
+		t.Errorf("normalized $N placeholders must be preserved, got %q", dml)
+	}
+	util := ScrubQueryText("DO $$ BEGIN INSERT INTO people(email) VALUES('alice@example.com'); END $$")
+	if strings.Contains(util, "@example.com") || strings.Contains(util, "alice") {
+		t.Errorf("DO-block literal leaked through pgss text: %q", util)
+	}
 }
 
 func TestScrubQueryText_keepsShape(t *testing.T) {

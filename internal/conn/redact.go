@@ -20,6 +20,13 @@ var (
 	reEmail        = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`)
 	reUUID         = regexp.MustCompile(`\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b`)
 	reNumber       = regexp.MustCompile(`\b\d+(?:\.\d+)?\b`)
+	// A $N placeholder (from pg_stat_statements normalization) OR a bare numeric
+	// literal. The alternation matches $N first, so the replace func sees it whole
+	// and preserves it — we scrub bare literals but must keep normalized
+	// placeholders intact, because ScrubQueryText now also runs over pgss text
+	// (utility statements like DO blocks are stored VERBATIM by pgss, not
+	// normalized, so they can carry real literals).
+	reNumberOrPlaceholder = regexp.MustCompile(`\$\d+|\b\d+(?:\.\d+)?\b`)
 )
 
 // ScrubQueryText removes literal values from raw SQL so no customer data can
@@ -40,7 +47,12 @@ func ScrubQueryText(sql string) string {
 	s = reSingleQuoted.ReplaceAllLiteralString(s, "'?'")
 	s = reEmail.ReplaceAllLiteralString(s, "?")
 	s = reUUID.ReplaceAllLiteralString(s, "?")
-	s = reNumber.ReplaceAllLiteralString(s, "?")
+	s = reNumberOrPlaceholder.ReplaceAllStringFunc(s, func(m string) string {
+		if m[0] == '$' { // keep $N pg_stat_statements placeholders
+			return m
+		}
+		return "?"
+	})
 	return s
 }
 

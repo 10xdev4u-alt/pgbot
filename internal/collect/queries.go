@@ -66,7 +66,10 @@ func (queriesCollector) Assemble(c *model.Context, caps conn.Capabilities, s sam
 	}
 	for _, r := range rows {
 		item := model.QueryStat{
-			QueryID: r.QueryID, Query: r.Query, Calls: r.Calls,
+			// pgss normalizes DML to $N, but stores UTILITY statements (DO blocks,
+			// etc.) verbatim — so the text can still carry real literals (PII).
+			// Scrub defensively; placeholder-aware scrubbing keeps $N intact.
+			QueryID: r.QueryID, Query: conn.ScrubQueryText(r.Query), Calls: r.Calls,
 			TotalMS: round2(r.TotalMS), MeanMS: round4(r.MeanMS), MaxMS: round2(r.MaxMS),
 			Rows: r.Rows, WALBytes: r.WalBytes,
 		}
