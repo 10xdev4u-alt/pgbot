@@ -313,6 +313,12 @@ prioritized diagnosis" workflow) and a **`pgbot://baselines` resource** (the
 databases pgbot has local history for) — so tools, prompts, and resources are all
 available to the agent.
 
+**Pair it with the skill.** MCP gives the agent the *tools*; the
+[`postgres-diagnostics` skill](skills/postgres-diagnostics/SKILL.md) gives it the
+*playbook* — respect caveats, never `EXPLAIN ANALYZE`, prioritize by impact,
+never write. Drop it in `~/.claude/skills/` (see [`skills/`](skills/)) and your
+agent asks the right pgbot command and reads the results the way pgbot intends.
+
 ### `explain` — optional AI layer
 
 `pgbot explain` runs the exact same read-only inspection, prints the
