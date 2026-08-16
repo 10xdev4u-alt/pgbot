@@ -78,6 +78,7 @@ var TuningIDs = map[string]bool{
 	"work_mem_low":                true,
 	"checkpoints_forced":          true,
 	"connections_overprovisioned": true,
+	"io_timing_off":               true,
 }
 
 // Compute returns findings sorted most-severe first. Order among equal
@@ -105,6 +106,7 @@ func Compute(c *model.Context) []model.Finding {
 	workMemLow(c, add)
 	checkpointsForced(c, add)
 	connectionsOverprovisioned(c, add)
+	ioTimingOff(c, add)
 	waitFindings(c, add)
 	highRollbacks(c, add)
 	missingPgss(c, add)
@@ -932,6 +934,24 @@ func connectionsOverprovisioned(c *model.Context, add func(model.Finding)) {
 		Impact: impact(model.DimCost, 20,
 			fmt.Sprintf("%d/%d slots used", c.Limits.ConnectionsUsed, c.Limits.ConnectionsMax), "max_connections vs observed usage"),
 		Confidence: 0.6,
+	})
+}
+
+// ioTimingOff flags track_io_timing=off. With it off, blk_read_time/blk_write_time
+// are zero, so pgbot can't tell an IO-bound query from a CPU-bound one — which
+// degrades query analysis and the wait profile. Measured overhead is negligible
+// on modern hardware. Info severity.
+func ioTimingOff(c *model.Context, add func(model.Finding)) {
+	if settingParam(c, "track_io_timing") != "off" {
+		return
+	}
+	add(model.Finding{
+		ID: "io_timing_off", Severity: model.SeverityInfo,
+		Title:       "track_io_timing is off — no per-query IO time",
+		Detail:      "With track_io_timing off, block read/write times are zero, so pgbot (and pg_stat_statements) can't separate IO-bound queries from CPU-bound ones. That weakens query analysis and the wait profile.",
+		Remediation: "Set track_io_timing = on (a reload, no restart). Overhead is negligible on modern hardware — verify with pg_test_timing if unsure.",
+		Impact:      impact(model.DimThroughput, 15, "no IO timing", "track_io_timing setting"),
+		Confidence:  1.0,
 	})
 }
 
