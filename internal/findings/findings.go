@@ -28,6 +28,7 @@ const (
 	rollbackMinTxns       = 20    // below this many transactions in the window the ratio is noise
 	staleStatsWarnDays    = 30    // rates computed over a very old window are near-meaningless
 	seqScanTableMinRows   = 50000 // only flag seq-scan-heavy on tables big enough to matter
+	partitionSeqScanMin   = 1000  // aggregate seq scans across a partitioned table's partitions
 
 	// Wait-profile (ASH) thresholds. All gated on model.WaitMinSamples — below
 	// that the shares are noise and no wait finding fires.
@@ -104,6 +105,7 @@ func Compute(c *model.Context) []model.Finding {
 	redundantIndexes(c, add)
 	unindexedForeignKeys(c, add)
 	seqScanHeavy(c, add)
+	partitionSeqScanHeavy(c, add)
 	bloatedTables(c, add)
 	lowCacheHit(c, add)
 	idleInTransaction(c, add)
@@ -447,6 +449,39 @@ func unindexedForeignKeys(c *model.Context, add func(model.Finding)) {
 		Remediation: "Add an index on the child's FK columns: CREATE INDEX CONCURRENTLY ON child (fk_columns).",
 		Impact:      impact(model.DimLatency, sizeScore(worst), "largest child "+humanBytes(worst), fmt.Sprintf("%d FKs with no leading-column index", len(ev))),
 		Confidence:  0.85,
+	})
+}
+
+// partitionSeqScanHeavy catches a partitioned table scanned end-to-end: across
+// all partitions the aggregate seq scans dominate index scans, even though each
+// partition's own count looks harmless (so seqScanHeavy, which is per-relation,
+// misses it). Usually a missing index or a query that can't prune partitions.
+func partitionSeqScanHeavy(c *model.Context, add func(model.Finding)) {
+	if c.Tables == nil || c.Window.ColdWindow() {
+		return
+	}
+	var ev []string
+	for _, p := range c.Tables.Partitioned {
+		if p.LiveTuples < seqScanTableMinRows || p.SeqScans < partitionSeqScanMin {
+			continue
+		}
+		if p.IndexScans > 0 && p.SeqScans < p.IndexScans {
+			continue // index-dominated access → healthy
+		}
+		ev = append(ev, fmt.Sprintf("%s.%s (%d partitions, %s): %s seq vs %s index scans",
+			p.Schema, p.Name, p.Partitions, humanBytes(p.TotalBytes), human(p.SeqScans), human(p.IndexScans)))
+	}
+	if len(ev) == 0 {
+		return
+	}
+	add(model.Finding{
+		ID: "partition_seq_scan_heavy", Severity: model.SeverityWarn,
+		Title:       fmt.Sprintf("%d partitioned table(s) scanned end-to-end", len(ev)),
+		Detail:      "Rolled up across its partitions, this table takes far more sequential than index scans. Each partition's own count looks harmless, so a per-relation view misses it — the parent is being read end to end, usually a missing index or a query that can't prune partitions.",
+		Evidence:    cap10(ev),
+		Remediation: "Add an index matching the predicate (create it on the parent; it propagates to partitions), and confirm queries include the partition key so the planner can prune.",
+		Impact:      impact(model.DimLatency, 55, "partitioned end-to-end scan", "rolled-up seq vs index scans across partitions"),
+		Confidence:  0.7,
 	})
 }
 

@@ -258,8 +258,21 @@ type QueryStat struct {
 // Tables is pg_stat_user_tables (cumulative counters + gauges).
 type Tables struct {
 	Section
-	DBSizeBytes int64       `json:"db_size_bytes"`
-	Top         []TableStat `json:"top,omitempty"` // by total size
+	DBSizeBytes int64             `json:"db_size_bytes"`
+	Top         []TableStat       `json:"top,omitempty"`         // by total size
+	Partitioned []PartitionRollup `json:"partitioned,omitempty"` // leaf partitions rolled up to their root (A10)
+}
+
+// PartitionRollup aggregates all leaf partitions of one partitioned table — so a
+// parent scanned end-to-end is visible even when each partition looks harmless.
+type PartitionRollup struct {
+	Schema     string `json:"schema"`
+	Name       string `json:"table"`
+	Partitions int    `json:"partitions"`
+	TotalBytes int64  `json:"total_bytes"`
+	LiveTuples int64  `json:"live_tuples"`
+	SeqScans   int64  `json:"seq_scans"`
+	IndexScans int64  `json:"index_scans"`
 }
 
 type TableStat struct {

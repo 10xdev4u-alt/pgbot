@@ -12,6 +12,9 @@ import (
 //go:embed sql/tables.sql
 var sqlTables string
 
+//go:embed sql/partitions.sql
+var sqlPartitions string
+
 // tables = pg_stat_user_tables plus the total database size.
 type tablesCollector struct{}
 
@@ -28,9 +31,20 @@ type tableRow struct {
 	LastAutovacuum   *time.Time `db:"last_autovacuum"`
 }
 
+type partitionRow struct {
+	Schema     string `db:"schema"`
+	Table      string `db:"table"`
+	Partitions int    `db:"partitions"`
+	TotalBytes int64  `db:"total_bytes"`
+	LiveTuples int64  `db:"live_tuples"`
+	SeqScans   int64  `db:"seq_scans"`
+	IndexScans int64  `db:"index_scans"`
+}
+
 type tablesSample struct {
-	Rows   []tableRow
-	DBSize int64
+	Rows       []tableRow
+	DBSize     int64
+	Partitions []partitionRow
 }
 
 func (tablesCollector) Name() string                     { return "tables" }
@@ -46,7 +60,10 @@ func (tablesCollector) Sample(ctx context.Context, t *conn.Target, _ conn.Capabi
 	if err != nil {
 		return nil, err
 	}
-	return tablesSample{Rows: rows, DBSize: size}, nil
+	out := tablesSample{Rows: rows, DBSize: size}
+	// Partition rollup is a pure catalog read; a failure must not sink the section.
+	out.Partitions, _ = queryMany[partitionRow](ctx, t, sqlPartitions)
+	return out, nil
 }
 
 func (tablesCollector) Assemble(c *model.Context, _ conn.Capabilities, s sampled, _ time.Duration, _ Options) {
@@ -66,6 +83,12 @@ func (tablesCollector) Assemble(c *model.Context, _ conn.Capabilities, s sampled
 			LiveTuples: r.LiveTuples, DeadTuples: r.DeadTuples, DeadRatio: round4(dead),
 			SeqScans: r.SeqScans, IndexScans: r.IndexScans, ModsSinceAnalyze: r.ModsSinceAnalyze,
 			LastVacuum: r.LastVacuum, LastAutovac: r.LastAutovacuum,
+		})
+	}
+	for _, p := range ts.Partitions {
+		tbl.Partitioned = append(tbl.Partitioned, model.PartitionRollup{
+			Schema: p.Schema, Name: p.Table, Partitions: p.Partitions, TotalBytes: p.TotalBytes,
+			LiveTuples: p.LiveTuples, SeqScans: p.SeqScans, IndexScans: p.IndexScans,
 		})
 	}
 	c.Tables = tbl
