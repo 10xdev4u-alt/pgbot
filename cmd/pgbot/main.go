@@ -30,6 +30,7 @@ func main() {
 	root.AddCommand(newIndexesCmd())
 	root.AddCommand(newQueriesCmd())
 	root.AddCommand(newVacuumCmd())
+	root.AddCommand(newTablesCmd())
 	root.AddCommand(newTuneCmd())
 	root.AddCommand(newMCPCmd())
 

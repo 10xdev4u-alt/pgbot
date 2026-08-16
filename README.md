@@ -103,6 +103,19 @@ $ pgbot vacuum "$DATABASE_URL"
   public.churny       5.0k   10.0k  66.7%  never            yes
 ```
 
+**`pgbot tables`** — the largest tables by total size (heap + indexes + TOAST),
+each with row count, dead-tuple ratio, and sequential-vs-index scan counts. It's
+storage accounting *and* a missing-index radar: a large table with heavy `seq
+scans` and few `idx scans` is a likely index candidate.
+
+```
+$ pgbot tables "$DATABASE_URL"
+  size      rows   dead%  seq scans  idx scans  table
+  38.7 GiB  19.7M  8.3%   1.5k       112.3M     public.performance_events
+  20.0 GiB  1.3M   10.8%  2.5M       121.6M     public.events        ← 2.5M seq scans
+  7.1 GiB   5.6M   0.0%   5.0k       46.6M      public.log_entries
+```
+
 **`pgbot ask "why is it slow?"`** — a plain-language reading of the *same*
 deterministic findings. It leads with the lock contention and refuses to
 recommend dropping the indexes because replication is active — the caveat is
@@ -256,6 +269,7 @@ pgbot baselines export <fingerprint># dump stored snapshots as JSON
 
 pgbot indexes <connection-string>   # zero-scan indexes + what NOT to drop
 pgbot queries <connection-string>   # top pg_stat_statements by total time (--by-calls to re-rank)
+pgbot tables  <connection-string>   # largest tables + row counts + seq-vs-index scan pattern
 pgbot vacuum <connection-string>    # autovacuum health per table — dead tuples + whether it's due
 pgbot tune <connection-string>      # config-tuning recommendations from the workload
 pgbot explain <connection-string>   # inspect, then have an AI explain the findings
