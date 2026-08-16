@@ -236,17 +236,43 @@ func invalidIndexes(c *model.Context, add func(model.Finding)) {
 	if len(ev) == 0 {
 		return
 	}
+	// A CREATE INDEX CONCURRENTLY still RUNNING shows an invalid index too — but
+	// it's building, not failed. If pg_stat_progress_create_index has a row, don't
+	// cry wolf: caveat it and drop confidence rather than telling the user to drop
+	// an index that's about to become valid.
+	var caveats []string
+	conf := 1.0
+	sev := model.SeverityCritical
+	if createIndexInProgress(c) {
+		caveats = append(caveats, "a CREATE INDEX CONCURRENTLY is currently running (see progress) — an index invalid because it's still building is normal; only a build that has stopped needs the drop-and-rebuild")
+		conf = 0.5
+		sev = model.SeverityWarn
+	}
 	add(model.Finding{
-		ID: "index_invalid", Severity: model.SeverityCritical,
+		ID: "index_invalid", Severity: sev,
 		Title:       fmt.Sprintf("%d invalid index(es) — failed CREATE INDEX CONCURRENTLY", len(ev)),
 		Detail:      "An invalid index is never used to serve reads but is still maintained on every write. It's the leftover of a CREATE INDEX CONCURRENTLY that failed partway.",
 		Evidence:    cap10(ev),
-		Remediation: "Drop and recreate it: DROP INDEX CONCURRENTLY <name>; then rebuild.",
+		Remediation: "If no build is running, drop and recreate it: DROP INDEX CONCURRENTLY <name>; then rebuild.",
 		Impact: impact(model.DimRisk, 85,
 			fmt.Sprintf("%d invalid index(es)", len(ev)),
 			"pg_index.indisvalid = false"),
-		Confidence: 1.0, // a catalog fact
+		Confidence: conf,
+		Caveats:    caveats,
 	})
+}
+
+// createIndexInProgress reports whether a CREATE INDEX [CONCURRENTLY] is running.
+func createIndexInProgress(c *model.Context) bool {
+	if c.Progress == nil {
+		return false
+	}
+	for _, op := range c.Progress.Operations {
+		if op.Operation == "create_index" {
+			return true
+		}
+	}
+	return false
 }
 
 // unusedIndex represents one flagged index with its per-index score, so the

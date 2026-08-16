@@ -49,6 +49,7 @@ type Context struct {
 	Limits        *Limits        `json:"limits,omitempty"`
 	Horizon       *VacuumHorizon `json:"horizon,omitempty"`   // what pins the xmin/vacuum horizon (A1)
 	Sequences     *Sequences     `json:"sequences,omitempty"` // sequence exhaustion headroom (A8)
+	Progress      *Progress      `json:"progress,omitempty"`  // in-flight pg_stat_progress_* operations (A11)
 	Deltas        *Deltas        `json:"deltas,omitempty"`    // vs baseline; nil on first run
 	// Set (with Deltas nil) when a stats reset / restart between runs makes any
 	// comparison fiction — e.g. serverless scale-to-zero. See T2.
@@ -355,6 +356,21 @@ type Replication struct {
 	ReceiverLagSec *float64          `json:"receiver_lag_sec,omitempty"`
 	Slots          []ReplicationSlot `json:"slots,omitempty"`
 	Subscriptions  []Subscription    `json:"subscriptions,omitempty"`
+}
+
+// Progress lists in-flight maintenance operations from the pg_stat_progress_*
+// views — live truth (a vacuum 60% through heap-scan), not inference.
+type Progress struct {
+	Section
+	Operations []ProgressOp `json:"operations,omitempty"`
+}
+
+type ProgressOp struct {
+	PID       int      `json:"pid"`
+	Operation string   `json:"operation"` // vacuum | analyze | create_index | cluster | basebackup | copy
+	Relation  string   `json:"relation,omitempty"`
+	Phase     string   `json:"phase,omitempty"`
+	Pct       *float64 `json:"pct,omitempty"` // 0..100 where the view exposes a total
 }
 
 // Sequences reports how close each sequence is to exhausting its effective
