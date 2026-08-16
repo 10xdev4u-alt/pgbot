@@ -33,8 +33,11 @@ jobs:
       # statement — it must not appear anywhere in the tree.
       - name: forbid EXPLAIN ANALYZE
         run: |
+          # Exclude the guard test itself — it names the banned phrase in its own
+          # doc/error strings, exactly as the in-tree Go guard (TestNoExplainAnalyze)
+          # skips its own file.
           if grep -rniE 'explain[[:space:]]*(\(|[[:space:]])[^)]*analyze' \
-             --include='*.go' --include='*.sql' . ; then
+             --include='*.go' --include='*.sql' --exclude='no_explain_analyze_test.go' . ; then
             echo "::error::EXPLAIN ANALYZE found — pgbot must never execute inspected queries"
             exit 1
           fi
