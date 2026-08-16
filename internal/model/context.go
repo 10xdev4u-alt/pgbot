@@ -147,7 +147,8 @@ type Limits struct {
 	Section
 	ConnectionsUsed int   `json:"connections_used"`
 	ConnectionsMax  int   `json:"connections_max"`
-	MaxXIDAge       int64 `json:"max_xid_age"` // max age(datfrozenxid) across databases; ~2.1e9 is the wraparound wall
+	MaxXIDAge       int64 `json:"max_xid_age"`            // max age(datfrozenxid) across databases; ~2.1e9 is the wraparound wall
+	MaxMXIDAge      int64 `json:"max_mxid_age,omitempty"` // max mxid_age(datminmxid); multixact wraparound, same wall
 }
 
 // ServerInfo is what we learned at connect time.

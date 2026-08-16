@@ -18,9 +18,10 @@ var sqlLimits string
 type limitsCollector struct{}
 
 type limitsRow struct {
-	ConnUsed  int   `db:"conn_used"`
-	ConnMax   int   `db:"conn_max"`
-	MaxXIDAge int64 `db:"max_xid_age"`
+	ConnUsed   int   `db:"conn_used"`
+	ConnMax    int   `db:"conn_max"`
+	MaxXIDAge  int64 `db:"max_xid_age"`
+	MaxMXIDAge int64 `db:"max_mxid_age"`
 }
 
 func (limitsCollector) Name() string                     { return "limits" }
@@ -42,5 +43,6 @@ func (limitsCollector) Assemble(c *model.Context, _ conn.Capabilities, s sampled
 		ConnectionsUsed: row.ConnUsed,
 		ConnectionsMax:  row.ConnMax,
 		MaxXIDAge:       row.MaxXIDAge,
+		MaxMXIDAge:      row.MaxMXIDAge,
 	}
 }

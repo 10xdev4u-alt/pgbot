@@ -94,6 +94,7 @@ func Compute(c *model.Context) []model.Finding {
 	longRunningXact(c, add)
 	connectionSaturation(c, add)
 	txidWraparound(c, add)
+	mxidWraparound(c, add)
 	replicationSlotRisk(c, add)
 	subscriptionDown(c, add)
 	vacuumHorizonBlocked(c, add)
@@ -590,6 +591,32 @@ func txidWraparound(c *model.Context, add func(model.Finding)) {
 		Impact: impact(model.DimRisk, pct,
 			fmt.Sprintf("age %s / 2.1B", human(age)),
 			"max(age(datfrozenxid)) across databases"),
+		Confidence: 1.0,
+	})
+}
+
+// mxidWraparound mirrors txid_wraparound for MULTIXACT ids. Multixacts are
+// consumed by SELECT ... FOR SHARE/FOR UPDATE and foreign-key checks and exhaust
+// toward the same ~2.1B wall; they wrap independently of regular transaction ids,
+// so a workload heavy in shared row locks can hit this while datfrozenxid is fine.
+func mxidWraparound(c *model.Context, add func(model.Finding)) {
+	if c.Limits == nil || c.Limits.MaxMXIDAge < xidWraparoundWarn {
+		return
+	}
+	age := c.Limits.MaxMXIDAge
+	sev := model.SeverityWarn
+	if age >= xidWraparoundCrit {
+		sev = model.SeverityCritical
+	}
+	pct := float64(age) / float64(xidWraparoundWall) * 100
+	add(model.Finding{
+		ID: "mxid_wraparound", Severity: sev,
+		Title:       fmt.Sprintf("Multixact-ID age %s — %.0f%% toward wraparound", human(age), pct),
+		Detail:      "The oldest unfrozen multixact id is approaching the 2.1-billion wraparound limit, past which Postgres refuses writes. Multixacts come from shared row locks (SELECT … FOR SHARE/UPDATE) and FK checks; a workload heavy in those can wrap this while transaction-id age looks fine.",
+		Remediation: "Clear what blocks vacuum (long transactions, replication slots, disabled autovacuum), then VACUUM (FREEZE) the oldest tables to advance datminmxid.",
+		Impact: impact(model.DimRisk, pct,
+			fmt.Sprintf("mxid age %s / 2.1B", human(age)),
+			"max(mxid_age(datminmxid)) across databases"),
 		Confidence: 1.0,
 	})
 }
