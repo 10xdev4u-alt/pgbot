@@ -13,6 +13,7 @@ WHERE name IN (
   'shared_buffers', 'effective_cache_size', 'autovacuum_max_workers',
   'autovacuum_vacuum_scale_factor', 'random_page_cost', 'track_io_timing',
   'fsync', 'full_page_writes', 'autovacuum', 'statement_timeout',
-  'archive_mode', 'archive_timeout', 'wal_level'
+  'archive_mode', 'archive_timeout', 'wal_level',
+  'data_checksums', 'ignore_checksum_failure'
 )
 ORDER BY 1;

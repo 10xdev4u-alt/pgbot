@@ -124,6 +124,7 @@ func Compute(c *model.Context) []model.Finding {
 	mxidWraparound(c, add)
 	sequenceExhaustion(c, add)
 	walArchiving(c, add)
+	checksumFindings(c, add)
 	replicationSlotRisk(c, add)
 	subscriptionDown(c, add)
 	vacuumHorizonBlocked(c, add)
@@ -938,6 +939,50 @@ func horizonRemediation(source string) string {
 		return "An abandoned prepared (2PC) transaction blocks vacuum forever. COMMIT PREPARED / ROLLBACK PREPARED the gid once you confirm its transaction manager is done."
 	default:
 		return "Identify and release the holder of the oldest xmin."
+	}
+}
+
+// checksumFindings covers data-integrity: actual checksum failures (corruption),
+// corruption detection being silenced, and checksums being off entirely.
+func checksumFindings(c *model.Context, add func(model.Finding)) {
+	if c.Checksums != nil && len(c.Checksums.Failures) > 0 {
+		var ev []string
+		var total int64
+		for _, f := range c.Checksums.Failures {
+			total += f.Count
+			ev = append(ev, fmt.Sprintf("%s: %d failure(s), last %s", f.Database, f.Count, tsOr(f.LastFailure)))
+		}
+		add(model.Finding{
+			ID: "checksum_failures", Severity: model.SeverityCritical,
+			Title:       fmt.Sprintf("%d data-checksum failure(s) — likely corruption", total),
+			Detail:      "Postgres read one or more pages whose checksum did not match what was written: storage corruption, bad memory, or a filesystem that acknowledged a write it didn't persist. It does not heal itself, and reads of the affected pages return wrong data.",
+			Evidence:    cap10(ev),
+			Remediation: "Identify the affected relation and take it out of write service; investigate storage and hardware; restore the affected data from a known-good backup.",
+			// Load-bearing: the instinct is to VACUUM FULL / REINDEX, which is the wrong move.
+			Caveats:    []string{"Do NOT VACUUM FULL or REINDEX the affected relation — rewriting the pages destroys the evidence and can propagate the damage. Preserve state, then restore from backup."},
+			Impact:     impact(model.DimRisk, 96, fmt.Sprintf("%d checksum failures", total), "pg_stat_database.checksum_failures > 0"),
+			Confidence: 1.0,
+		})
+	}
+	if settingParam(c, "ignore_checksum_failure") == "on" {
+		add(model.Finding{
+			ID: "ignore_checksum_failure_on", Severity: model.SeverityCritical,
+			Title:       "ignore_checksum_failure is ON — corruption is being silenced",
+			Detail:      "With ignore_checksum_failure on, Postgres reads past a failed page checksum instead of erroring, so corruption is treated as valid data and can spread into query results and backups.",
+			Remediation: "Set ignore_checksum_failure = off (a per-session GUC — check for a global default) unless you are mid-recovery deliberately extracting data from a damaged page.",
+			Impact:      impact(model.DimRisk, 90, "corruption detection disabled", "ignore_checksum_failure=on"),
+			Confidence:  1.0,
+		})
+	}
+	if settingParam(c, "data_checksums") == "off" {
+		add(model.Finding{
+			ID: "checksums_disabled", Severity: model.SeverityInfo,
+			Title:       "data checksums are off",
+			Detail:      "Without data checksums, silent page corruption is undetectable — a bad read returns wrong data with no error. Most managed providers enable checksums by default.",
+			Remediation: "Enabling checksums needs pg_checksums offline or a re-initdb, so it can't be flipped on a running system — note it for the next maintenance window or rebuild.",
+			Impact:      impact(model.DimRisk, 15, "no checksum protection", "data_checksums=off"),
+			Confidence:  1.0,
+		})
 	}
 }
 

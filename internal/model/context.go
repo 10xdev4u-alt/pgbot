@@ -51,6 +51,7 @@ type Context struct {
 	Sequences     *Sequences     `json:"sequences,omitempty"` // sequence exhaustion headroom (A8)
 	Progress      *Progress      `json:"progress,omitempty"`  // in-flight pg_stat_progress_* operations (A11)
 	Archiver      *Archiver      `json:"archiver,omitempty"`  // WAL archiving health (A15)
+	Checksums     *Checksums     `json:"checksums,omitempty"` // data-checksum failures cluster-wide (A16)
 	Deltas        *Deltas        `json:"deltas,omitempty"`    // vs baseline; nil on first run
 	// Set (with Deltas nil) when a stats reset / restart between runs makes any
 	// comparison fiction — e.g. serverless scale-to-zero. See T2.
@@ -372,6 +373,19 @@ type Replication struct {
 	ReceiverLagSec *float64          `json:"receiver_lag_sec,omitempty"`
 	Slots          []ReplicationSlot `json:"slots,omitempty"`
 	Subscriptions  []Subscription    `json:"subscriptions,omitempty"`
+}
+
+// Checksums lists data-checksum failures per database (cluster-wide). Any entry
+// means Postgres read a page whose checksum didn't match — likely corruption.
+type Checksums struct {
+	Section
+	Failures []ChecksumFailure `json:"failures,omitempty"`
+}
+
+type ChecksumFailure struct {
+	Database    string     `json:"database"`
+	Count       int64      `json:"count"`
+	LastFailure *time.Time `json:"last_failure,omitempty"`
 }
 
 // Archiver is WAL archiving health from pg_stat_archiver. HasArchiveCommand is
