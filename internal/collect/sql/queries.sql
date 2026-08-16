@@ -2,7 +2,8 @@
 -- reset — the temporal view comes from the baseline diff, not a short sample.
 -- %s is the version-appropriate total-time column (total_exec_time / total_time),
 -- substituted from a fixed allowlist in Go (never user input). query text is
--- normalized ($1) by pg_stat_statements and is safe to keep verbatim.
+-- normalized ($1) for DML — but pgss stores UTILITY statements verbatim (with
+-- literals), so the collector runs it through conn.ScrubQueryText, not verbatim.
 SELECT queryid,
        left(query, 4000)   AS query,
        calls,

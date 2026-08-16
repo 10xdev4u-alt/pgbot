@@ -256,7 +256,7 @@ type Queries struct {
 
 type QueryStat struct {
 	QueryID  int64    `json:"queryid"`
-	Query    string   `json:"query"` // normalized ($1 placeholders) — safe
+	Query    string   `json:"query"` // normalized DML ($1); utility statements are stored verbatim by pgss, so the collector scrubs this
 	Calls    int64    `json:"calls"`
 	TotalMS  float64  `json:"total_ms"`
 	MeanMS   float64  `json:"mean_ms"`

