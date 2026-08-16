@@ -38,10 +38,10 @@ The default report is a **graded read**: a health score, findings bucketed
 CRITICAL / WARNING / NOTE, then a GOOD list naming the healthy subsystems with
 their values (a tool that names what it verified reads like a colleague who
 looked, not an alarm). `pgbot inspect --full` adds a subsystem status board plus
-the section tables and per-finding caveats; `pgbot indexes` drills into zero-scan
-indexes; `pgbot ask "…"` and `pgbot explain` put a plain-language AI reading on
-top of the same findings. `--json` is the complete, versioned contract for agents
-and scripts.
+the section tables and per-finding caveats; focused commands (`indexes`,
+`queries`, `tables`, `vacuum`) each drill into one signal; `pgbot ask "…"` and
+`pgbot explain` put a plain-language AI reading on top of the same findings.
+`--json` is the complete, versioned contract for agents and scripts.
 
 ```
 $ pgbot ask "what's wrong?"
@@ -430,10 +430,10 @@ Slice 1 is honest about its edges:
 
 ## Privacy
 
-Nothing leaves the machine unless you ask for it: `inspect` and its `--json` are
-entirely local. The one command that makes an outbound call is `pgbot explain`,
-which sends the same PII-free Context to your configured model (and says so, with
-a confirmation prompt).
+Nothing leaves the machine unless you ask for it: every command except the AI
+layer is entirely local. The only commands that make an outbound call are `pgbot
+explain` and `pgbot ask`, which send the same PII-free Context to your configured
+model — OpenAI or Gemini (and say so, with a confirmation prompt).
 
 That Context is PII-free by construction: `pg_stat_statements` text is normalized
 (`$1` placeholders), and the one raw-SQL source (`pg_stat_activity` for blocking
