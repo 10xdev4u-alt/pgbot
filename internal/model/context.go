@@ -519,7 +519,13 @@ type Settings struct {
 // Finding is deterministic, rule-based analysis computed in Go — never by the
 // LLM. The model layer explains and prioritises Findings; it does not create them.
 type Finding struct {
-	ID          string   `json:"id"` // stable slug, e.g. "unused_indexes"
+	ID string `json:"id"` // stable slug, e.g. "unused_indexes"
+	// Object is a STABLE, human-writable identity for suppression keying (B2-0):
+	// "public.issues" (relation/index), "q:<queryid>", "slot:<name>",
+	// "sub:<name>", "setting:<name>", "db:<name>", or "" for cluster-scoped.
+	// NEVER an ephemeral id (pid, LSN, lock address) — that would silence a
+	// different session tomorrow, so PID-scoped findings are cluster-scoped.
+	Object      string   `json:"object,omitempty"`
 	Severity    string   `json:"severity"`
 	Title       string   `json:"title"`
 	Detail      string   `json:"detail"`

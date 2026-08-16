@@ -172,6 +172,32 @@ func Compute(c *model.Context) []model.Finding {
 
 func isRisk(f model.Finding) bool { return f.Impact.Dimension == model.DimRisk }
 
+// StableObject reports whether s is a suppression-safe object identity (B2-0):
+// empty (cluster-scoped), a typed identifier (setting:/slot:/sub:/q:/db:), or a
+// schema-qualified relation ("schema.name"). It REJECTS a bare all-digit string,
+// which would be an ephemeral pid/oid/LSN — a suppression rule keyed on one of
+// those matches a different session tomorrow and silences the wrong thing.
+func StableObject(s string) bool {
+	if s == "" {
+		return true
+	}
+	for _, p := range []string{"setting:", "slot:", "sub:", "q:", "db:"} {
+		if strings.HasPrefix(s, p) {
+			return len(s) > len(p)
+		}
+	}
+	// Relation form: must contain a dot and not be all digits/dots.
+	if !strings.Contains(s, ".") {
+		return false
+	}
+	for _, r := range s {
+		if r != '.' && (r < '0' || r > '9') {
+			return true // has a non-digit → a real relation name, not a PID
+		}
+	}
+	return false
+}
+
 // impact builds a scored Impact. score is clamped to [0,100].
 func impact(dim string, score float64, estimate, basis string) model.Impact {
 	if score < 0 {
@@ -1297,7 +1323,7 @@ func checksumFindings(c *model.Context, add func(model.Finding)) {
 	}
 	if settingParam(c, "ignore_checksum_failure") == "on" {
 		add(model.Finding{
-			ID: "ignore_checksum_failure_on", Severity: model.SeverityCritical,
+			ID: "ignore_checksum_failure_on", Object: "setting:ignore_checksum_failure", Severity: model.SeverityCritical,
 			Title:       "ignore_checksum_failure is ON — corruption is being silenced",
 			Detail:      "With ignore_checksum_failure on, Postgres reads past a failed page checksum instead of erroring, so corruption is treated as valid data and can spread into query results and backups.",
 			Remediation: "Set ignore_checksum_failure = off (a per-session GUC — check for a global default) unless you are mid-recovery deliberately extracting data from a damaged page.",
@@ -1307,7 +1333,7 @@ func checksumFindings(c *model.Context, add func(model.Finding)) {
 	}
 	if settingParam(c, "data_checksums") == "off" {
 		add(model.Finding{
-			ID: "checksums_disabled", Severity: model.SeverityInfo,
+			ID: "checksums_disabled", Object: "setting:data_checksums", Severity: model.SeverityInfo,
 			Title:       "data checksums are off",
 			Detail:      "Without data checksums, silent page corruption is undetectable — a bad read returns wrong data with no error. Most managed providers enable checksums by default.",
 			Remediation: "Enabling checksums needs pg_checksums offline or a re-initdb, so it can't be flipped on a running system — note it for the next maintenance window or rebuild.",
@@ -1505,7 +1531,7 @@ func replicationSlotRisk(c *model.Context, add func(model.Finding)) {
 			ev = append(ev, "pg_wal directory now "+humanBytes(*c.WAL.DirBytes))
 		}
 		add(model.Finding{
-			ID: "replication_slot_inactive", Severity: sev,
+			ID: "replication_slot_inactive", Object: "slot:" + s.Name, Severity: sev,
 			Title:       fmt.Sprintf("Inactive replication slot %q pinning %s of WAL", s.Name, humanBytes(s.RetainedBytes)),
 			Detail:      "An inactive replication slot holds back WAL removal from its restart point. The retained WAL grows until the slot's consumer reconnects or the slot is dropped — a classic way to fill the data disk and take the primary down.",
 			Evidence:    ev,
@@ -1527,7 +1553,7 @@ func subscriptionDown(c *model.Context, add func(model.Finding)) {
 			continue
 		}
 		add(model.Finding{
-			ID: "subscription_worker_down", Severity: model.SeverityWarn,
+			ID: "subscription_worker_down", Object: "sub:" + s.Name, Severity: model.SeverityWarn,
 			Title:       fmt.Sprintf("Logical subscription %q has no running apply worker", s.Name),
 			Detail:      "The subscription exists but its apply worker isn't running, so changes from the publisher aren't being replicated. Data on this subscriber is drifting from the source.",
 			Evidence:    []string{fmt.Sprintf("subscription %q: apply worker not running", s.Name)},
@@ -1636,7 +1662,7 @@ func workMemLow(c *model.Context, add func(model.Finding)) {
 	rate := int64(*c.Health.TempBytesPerSec)
 	cur := settingParam(c, "work_mem")
 	add(model.Finding{
-		ID: "work_mem_low", Severity: model.SeverityWarn,
+		ID: "work_mem_low", Object: "setting:work_mem", Severity: model.SeverityWarn,
 		Title:       fmt.Sprintf("Queries spilling to disk — work_mem is %s", orUnknownSetting(cur)),
 		Detail:      fmt.Sprintf("Sorts and hashes are writing %s/s of temporary files because they don't fit in work_mem, forcing slower on-disk operations.", humanBytes(rate)),
 		Remediation: "Raise work_mem — but it's per-operation, so budget total ≈ work_mem × active connections; or add an index so the sort/hash is avoided.",
@@ -1662,7 +1688,7 @@ func checkpointsForced(c *model.Context, add func(model.Finding)) {
 	}
 	cur := settingParam(c, "max_wal_size")
 	add(model.Finding{
-		ID: "checkpoints_forced", Severity: model.SeverityWarn,
+		ID: "checkpoints_forced", Object: "setting:max_wal_size", Severity: model.SeverityWarn,
 		Title:       fmt.Sprintf("%.0f%% of checkpoints forced by WAL pressure (%d of %d)", frac*100, c.IO.CheckpointsReq, total),
 		Detail:      "Checkpoints are triggered by max_wal_size filling rather than the timed interval — WAL is written faster than the checkpoint spacing expects, causing IO spikes and extra full-page writes.",
 		Remediation: fmt.Sprintf("Raise max_wal_size (currently %s) so checkpoints are paced by time, not WAL volume.", orUnknownSetting(cur)),
@@ -1702,7 +1728,7 @@ func configSanity(c *model.Context, add func(model.Finding)) {
 	}
 	if settingParam(c, "fsync") == "off" {
 		add(model.Finding{
-			ID: "fsync_off", Severity: model.SeverityCritical,
+			ID: "fsync_off", Object: "setting:fsync", Severity: model.SeverityCritical,
 			Title:       "fsync is OFF — a crash can corrupt the database",
 			Detail:      "With fsync off, Postgres doesn't flush writes to durable storage. An OS crash or power loss can leave the database irrecoverably corrupt — not just losing recent transactions.",
 			Remediation: "Set fsync = on unless this is a throwaway instance you can rebuild from scratch.",
@@ -1712,7 +1738,7 @@ func configSanity(c *model.Context, add func(model.Finding)) {
 	}
 	if settingParam(c, "full_page_writes") == "off" {
 		add(model.Finding{
-			ID: "full_page_writes_off", Severity: model.SeverityCritical,
+			ID: "full_page_writes_off", Object: "setting:full_page_writes", Severity: model.SeverityCritical,
 			Title:       "full_page_writes is OFF — torn pages can corrupt on crash",
 			Detail:      "With full_page_writes off, a crash during a page write can leave a torn (half-written) page that recovery can't repair. Safe only on storage that guarantees atomic page writes.",
 			Remediation: "Set full_page_writes = on unless your storage guarantees atomic 8 KB writes.",
@@ -1722,7 +1748,7 @@ func configSanity(c *model.Context, add func(model.Finding)) {
 	}
 	if settingParam(c, "autovacuum") == "off" {
 		add(model.Finding{
-			ID: "autovacuum_off", Severity: model.SeverityCritical,
+			ID: "autovacuum_off", Object: "setting:autovacuum", Severity: model.SeverityCritical,
 			Title:       "autovacuum is OFF — bloat and wraparound will follow",
 			Detail:      "With autovacuum off, dead tuples are never reclaimed and transaction-id/multixact age climbs unchecked toward wraparound, which eventually forces the database read-only.",
 			Remediation: "Set autovacuum = on. If it was disabled to control load, tune the cost limits instead of turning it off.",
@@ -1734,7 +1760,7 @@ func configSanity(c *model.Context, add func(model.Finding)) {
 	// providers the planner then systematically under-uses index scans.
 	if rpc, err := strconv.ParseFloat(settingParam(c, "random_page_cost"), 64); err == nil && rpc >= 4 && cloudProvider(c) {
 		add(model.Finding{
-			ID: "random_page_cost_high", Severity: model.SeverityWarn,
+			ID: "random_page_cost_high", Object: "setting:random_page_cost", Severity: model.SeverityWarn,
 			Title:       fmt.Sprintf("random_page_cost=%g on %s (SSD) — planner under-uses indexes", rpc, orUnknownSetting(c.Server.Provider)),
 			Detail:      "random_page_cost=4 assumes a rotational disk. On SSD-backed storage (all managed cloud providers), random reads are far cheaper, so the planner over-weights sequential scans and skips index scans it should use.",
 			Remediation: "Lower random_page_cost toward 1.1 (a reload). Re-check plans afterward.",
@@ -1751,7 +1777,7 @@ func configSanity(c *model.Context, add func(model.Finding)) {
 				worst := wm * int64(mc)
 				if worst > ecs {
 					add(model.Finding{
-						ID: "work_mem_overcommit", Severity: model.SeverityWarn,
+						ID: "work_mem_overcommit", Object: "setting:work_mem", Severity: model.SeverityWarn,
 						Title:       fmt.Sprintf("work_mem × max_connections (%s) exceeds effective_cache_size (%s)", humanBytes(worst), humanBytes(ecs)),
 						Detail:      "work_mem is allocated per sort/hash operation, so worst-case memory under load is roughly work_mem × max_connections. When that exceeds the memory you've told the planner exists, a burst of concurrent sorts can push the host into OOM.",
 						Remediation: "Lower work_mem, cap concurrency with a pooler, or raise host memory. work_mem can also be raised per-session for the few queries that need it.",
@@ -1764,7 +1790,7 @@ func configSanity(c *model.Context, add func(model.Finding)) {
 	}
 	if settingParam(c, "statement_timeout") == "0" {
 		add(model.Finding{
-			ID: "statement_timeout_unset", Severity: model.SeverityInfo,
+			ID: "statement_timeout_unset", Object: "setting:statement_timeout", Severity: model.SeverityInfo,
 			Title:       "statement_timeout is unset cluster-wide",
 			Detail:      "With no statement_timeout, a runaway query can run indefinitely, holding locks and the xmin horizon. A cluster-wide cap is a cheap safety net (set a generous one and override per-session where needed).",
 			Remediation: "Consider a generous cluster default, e.g. statement_timeout = '60s', with longer per-session values for known long jobs.",
@@ -1818,7 +1844,7 @@ func ioTimingOff(c *model.Context, add func(model.Finding)) {
 		return
 	}
 	add(model.Finding{
-		ID: "io_timing_off", Severity: model.SeverityInfo,
+		ID: "io_timing_off", Object: "setting:track_io_timing", Severity: model.SeverityInfo,
 		Title:       "track_io_timing is off — no per-query IO time",
 		Detail:      "With track_io_timing off, block read/write times are zero, so pgbot (and pg_stat_statements) can't separate IO-bound queries from CPU-bound ones. That weakens query analysis and the wait profile.",
 		Remediation: "Set track_io_timing = on (a reload, no restart). Overhead is negligible on modern hardware — verify with pg_test_timing if unsure.",
