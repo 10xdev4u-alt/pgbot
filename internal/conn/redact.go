@@ -30,11 +30,17 @@ func ScrubQueryText(sql string) string {
 	if sql == "" {
 		return sql
 	}
-	s := reDollarQuoted.ReplaceAllString(sql, "$REDACTED$")
-	s = reSingleQuoted.ReplaceAllString(s, "'?'")
-	s = reEmail.ReplaceAllString(s, "?")
-	s = reUUID.ReplaceAllString(s, "?")
-	s = reNumber.ReplaceAllString(s, "?")
+	// Literal replacement, NOT ReplaceAllString: the latter applies Expand
+	// semantics, so "$REDACTED$" would be parsed as a reference to a (nonexistent)
+	// capture group named "REDACTED" plus a trailing "$", both expanding to empty
+	// — deleting the marker entirely (over-redacts safely, but a reader sees
+	// "DO ;" with no signal that content was removed). Use literal replacement
+	// everywhere so a "$" in any replacement is never re-interpreted.
+	s := reDollarQuoted.ReplaceAllLiteralString(sql, "$REDACTED$")
+	s = reSingleQuoted.ReplaceAllLiteralString(s, "'?'")
+	s = reEmail.ReplaceAllLiteralString(s, "?")
+	s = reUUID.ReplaceAllLiteralString(s, "?")
+	s = reNumber.ReplaceAllLiteralString(s, "?")
 	return s
 }
 

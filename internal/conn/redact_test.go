@@ -32,6 +32,51 @@ func TestScrubQueryText_stripsPII(t *testing.T) {
 	}
 }
 
+// P0-2: the dollar-quoted region must be replaced with the LITERAL marker, not
+// silently deleted by Expand semantics — a reader needs the signal that content
+// was removed.
+func TestScrubQueryText_dollarQuotedShowsMarker(t *testing.T) {
+	out := ScrubQueryText("DO $body$ BEGIN PERFORM secret_thing(42); END $body$")
+	if !strings.Contains(out, "$REDACTED$") {
+		t.Errorf("dollar-quoted region must show the literal $REDACTED$ marker, got %q", out)
+	}
+	if strings.Contains(out, "secret_thing") || strings.Contains(out, "42") {
+		t.Errorf("dollar-quoted body content leaked: %q", out)
+	}
+}
+
+// FuzzScrubQueryText asserts the invariants that actually matter: for ANY input,
+// no email-, uuid-, or standalone-number-shaped substring survives. (A bare '@'
+// operator or a digit inside an identifier like col1 is not PII and may remain,
+// which is why we re-run the shape regexes rather than a naive "no '@'" check.)
+// The seed corpus runs under plain `go test`; CI also runs it under -fuzz.
+func FuzzScrubQueryText(f *testing.F) {
+	for _, s := range []string{
+		"SELECT * FROM users WHERE email = 'alice@example.com'",
+		"SELECT * FROM t WHERE id = '550e8400-e29b-41d4-a716-446655440000'",
+		"UPDATE accounts SET balance = 4200 WHERE id = 17",
+		"DO $body$ BEGIN PERFORM x(); END $body$",
+		"SELECT a @@ b",              // bare full-text operator — not an email
+		"SELECT col1, t2.c3 FROM t2", // digits inside identifiers — not literals
+		"SELECT 'O''Brien'",
+		"", "$$", "'unterminated", "a@b.co1", "1@1.11",
+	} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, in string) {
+		out := ScrubQueryText(in)
+		if m := reEmail.FindString(out); m != "" {
+			t.Errorf("email-shaped substring survived: %q -> %q (%q)", in, out, m)
+		}
+		if m := reUUID.FindString(out); m != "" {
+			t.Errorf("uuid-shaped substring survived: %q -> %q (%q)", in, out, m)
+		}
+		if m := reNumber.FindString(out); m != "" {
+			t.Errorf("standalone number survived: %q -> %q (%q)", in, out, m)
+		}
+	})
+}
+
 func TestScrubQueryText_keepsShape(t *testing.T) {
 	out := ScrubQueryText("SELECT id, name FROM orders WHERE customer_id = 99 AND status = 'paid'")
 	for _, want := range []string{"SELECT", "orders", "customer_id", "status"} {

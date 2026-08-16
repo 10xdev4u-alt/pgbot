@@ -19,6 +19,10 @@ jobs:
           go-version: "1.25"
       - run: go vet ./...
       - run: go test ./... # DB-dependent tests self-skip without PGBOT_TEST_DSN
+      # The query scrubber is a privacy boundary — fuzz it briefly so a regression
+      # that leaks an email/uuid/number shape fails CI, not a customer.
+      - name: fuzz the query scrubber
+        run: go test ./internal/conn/ -run '^$' -fuzz 'FuzzScrubQueryText' -fuzztime 30s
 
   static-check:
     name: no EXPLAIN ANALYZE
