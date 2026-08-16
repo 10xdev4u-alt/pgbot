@@ -31,20 +31,20 @@ type Section struct {
 
 // Context is the whole picture of one database at one moment.
 type Context struct {
-	SchemaVersion string       `json:"schema_version"`
-	CollectedAt   time.Time    `json:"collected_at"`
-	Fingerprint   string       `json:"fingerprint"` // stable per target database (see store)
-	Server        ServerInfo   `json:"server"`
-	Window        Window       `json:"window"`
-	Health        *Health      `json:"health,omitempty"`
-	Activity      *Activity    `json:"activity,omitempty"`
-	Locks         *Locks       `json:"locks,omitempty"`
-	Queries       *Queries     `json:"queries,omitempty"`
-	Tables        *Tables      `json:"tables,omitempty"`
-	Indexes       *Indexes     `json:"indexes,omitempty"`
-	WAL           *WAL         `json:"wal,omitempty"`
-	IO            *IO          `json:"io,omitempty"`
-	Replication   *Replication `json:"replication,omitempty"`
+	SchemaVersion string         `json:"schema_version"`
+	CollectedAt   time.Time      `json:"collected_at"`
+	Fingerprint   string         `json:"fingerprint"` // stable per target database (see store)
+	Server        ServerInfo     `json:"server"`
+	Window        Window         `json:"window"`
+	Health        *Health        `json:"health,omitempty"`
+	Activity      *Activity      `json:"activity,omitempty"`
+	Locks         *Locks         `json:"locks,omitempty"`
+	Queries       *Queries       `json:"queries,omitempty"`
+	Tables        *Tables        `json:"tables,omitempty"`
+	Indexes       *Indexes       `json:"indexes,omitempty"`
+	WAL           *WAL           `json:"wal,omitempty"`
+	IO            *IO            `json:"io,omitempty"`
+	Replication   *Replication   `json:"replication,omitempty"`
 	Settings      *Settings      `json:"settings,omitempty"`
 	Limits        *Limits        `json:"limits,omitempty"`
 	Horizon       *VacuumHorizon `json:"horizon,omitempty"` // what pins the xmin/vacuum horizon (A1)
@@ -277,9 +277,20 @@ type TableStat struct {
 // Indexes is pg_stat_user_indexes.
 type Indexes struct {
 	Section
-	Total   int         `json:"total"`
-	Unused  []IndexStat `json:"unused,omitempty"`
-	Largest []IndexStat `json:"largest,omitempty"`
+	Total     int              `json:"total"`
+	Unused    []IndexStat      `json:"unused,omitempty"`
+	Largest   []IndexStat      `json:"largest,omitempty"`
+	Redundant []RedundantIndex `json:"redundant,omitempty"`
+}
+
+// RedundantIndex is an index whose columns are a leading prefix of (or identical
+// to) CoveredBy on the same table — usually safe to drop.
+type RedundantIndex struct {
+	Schema    string `json:"schema"`
+	Table     string `json:"table"`
+	Name      string `json:"index"`
+	CoveredBy string `json:"covered_by"`
+	Bytes     int64  `json:"bytes"`
 }
 
 type IndexStat struct {

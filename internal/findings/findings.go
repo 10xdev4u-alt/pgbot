@@ -90,6 +90,7 @@ func Compute(c *model.Context) []model.Finding {
 	blockingChains(c, add)
 	invalidIndexes(c, add)
 	unusedIndexes(c, add)
+	redundantIndexes(c, add)
 	seqScanHeavy(c, add)
 	bloatedTables(c, add)
 	lowCacheHit(c, add)
@@ -377,6 +378,38 @@ func bloatedTables(c *model.Context, add func(model.Finding)) {
 
 // seqScanHeavy flags a large table doing far more sequential scans than index
 // scans — often a query that lost (or never had) an index path.
+// redundantIndexes flags an index whose leading columns are a prefix of (or
+// identical to) another index on the same table — the wider one already serves
+// the same lookups, so the narrower one is pure write/storage cost. Detected
+// structurally (indkey/indclass containment) in the collector, with the same
+// constraint exclusions the unused-index rule uses; carries the same per-node
+// replica caveat, since a replica's access paths can differ.
+func redundantIndexes(c *model.Context, add func(model.Finding)) {
+	if c.Indexes == nil || len(c.Indexes.Redundant) == 0 {
+		return
+	}
+	var ev []string
+	var total int64
+	for _, r := range c.Indexes.Redundant {
+		ev = append(ev, fmt.Sprintf("%s.%s (%s) — prefix of %s", r.Table, r.Name, humanBytes(r.Bytes), r.CoveredBy))
+		total += r.Bytes
+	}
+	var caveats []string
+	if replicationInUse(c) {
+		caveats = append(caveats, "index usage is per-node — confirm the covering index serves the same queries on any replicas before dropping")
+	}
+	add(model.Finding{
+		ID: "redundant_indexes", Severity: model.SeverityInfo,
+		Title:       fmt.Sprintf("%d redundant index(es) · %s", len(ev), humanBytes(total)),
+		Detail:      "Each of these has leading columns that are a prefix of a wider index on the same table, so that index already serves the same lookups. The narrower one costs writes and storage for no extra read benefit.",
+		Evidence:    cap10(ev),
+		Remediation: fmt.Sprintf("After confirming the covering index serves its queries, DROP INDEX CONCURRENTLY the redundant one. Reclaims ≈%s.", humanBytes(total)),
+		Impact:      impact(model.DimStorage, sizeScore(total), "≈"+humanBytes(total)+" reclaimable", fmt.Sprintf("%d prefix-redundant indexes (indkey/indclass containment)", len(ev))),
+		Confidence:  0.75,
+		Caveats:     caveats,
+	})
+}
+
 func seqScanHeavy(c *model.Context, add func(model.Finding)) {
 	if c.Tables == nil || c.Window.ColdWindow() { // scan counts are cold-window-sensitive
 		return

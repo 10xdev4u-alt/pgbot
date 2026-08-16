@@ -12,6 +12,9 @@ import (
 //go:embed sql/indexes.sql
 var sqlIndexes string
 
+//go:embed sql/redundant_indexes.sql
+var sqlRedundantIndexes string
+
 // indexes = pg_stat_user_indexes. Zero-scan, non-trivial indexes that don't
 // back a primary key or unique constraint become the unused-index finding.
 type indexesCollector struct{}
@@ -35,17 +38,44 @@ func (indexesCollector) Name() string                     { return "indexes" }
 func (indexesCollector) Kind() Kind                       { return KindGauge }
 func (indexesCollector) Available(conn.Capabilities) bool { return true }
 
+type redundantRow struct {
+	Schema    string `db:"schema"`
+	Table     string `db:"table"`
+	Redundant string `db:"redundant_index"`
+	Covering  string `db:"covering_index"`
+	Bytes     int64  `db:"redundant_bytes"`
+}
+
+type indexesSample struct {
+	Rows      []indexRow
+	Redundant []redundantRow
+}
+
 func (indexesCollector) Sample(ctx context.Context, t *conn.Target, _ conn.Capabilities) (any, error) {
-	return queryMany[indexRow](ctx, t, sqlIndexes)
+	rows, err := queryMany[indexRow](ctx, t, sqlIndexes)
+	if err != nil {
+		return nil, err
+	}
+	out := indexesSample{Rows: rows}
+	// Redundant-index detection is a pure catalog read; a failure here must not
+	// sink the whole indexes section (it degrades to no redundant list).
+	out.Redundant, _ = queryMany[redundantRow](ctx, t, sqlRedundantIndexes)
+	return out, nil
 }
 
 func (indexesCollector) Assemble(c *model.Context, _ conn.Capabilities, s sampled, _ time.Duration, _ Options) {
-	rows, ok := s.A.([]indexRow)
+	sm, ok := s.A.(indexesSample)
 	if s.Err != nil || !ok {
 		c.Indexes = &model.Indexes{Section: unavail(s.Err, "pg_stat_user_indexes unavailable")}
 		return
 	}
+	rows := sm.Rows
 	idx := &model.Indexes{Section: model.Section{Exactness: model.ExactnessScraped}, Total: len(rows)}
+	for _, r := range sm.Redundant {
+		idx.Redundant = append(idx.Redundant, model.RedundantIndex{
+			Schema: r.Schema, Table: r.Table, Name: r.Redundant, CoveredBy: r.Covering, Bytes: r.Bytes,
+		})
+	}
 	for _, r := range rows {
 		st := model.IndexStat{
 			Schema: r.Schema, Table: r.Table, Name: r.Index, Scans: r.Scans, Bytes: r.Bytes,

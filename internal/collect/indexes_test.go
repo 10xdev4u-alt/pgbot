@@ -19,7 +19,7 @@ func TestIndexes_constraintBackedNeverUnused(t *testing.T) {
 		{Schema: "public", Table: "t", Index: "t_plain_idx", Scans: 0, Bytes: 4 << 20},                     // the only genuinely droppable one
 	}
 	c := &model.Context{}
-	indexesCollector{}.Assemble(c, conn.Capabilities{}, sampled{A: rows}, 0, Options{})
+	indexesCollector{}.Assemble(c, conn.Capabilities{}, sampled{A: indexesSample{Rows: rows}}, 0, Options{})
 
 	if c.Indexes == nil {
 		t.Fatal("indexes section missing")
@@ -38,7 +38,7 @@ func TestIndexes_partialExpressionFlagsCarried(t *testing.T) {
 		{Schema: "public", Table: "t", Index: "e", Scans: 0, Bytes: 4 << 20, IsExpression: true},
 	}
 	c := &model.Context{}
-	indexesCollector{}.Assemble(c, conn.Capabilities{}, sampled{A: rows}, 0, Options{})
+	indexesCollector{}.Assemble(c, conn.Capabilities{}, sampled{A: indexesSample{Rows: rows}}, 0, Options{})
 	if len(c.Indexes.Unused) != 2 {
 		t.Fatalf("both should be unused, got %d", len(c.Indexes.Unused))
 	}
