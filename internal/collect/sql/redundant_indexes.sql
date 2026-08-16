@@ -25,6 +25,10 @@ WHERE ia.relam = ib.relam
       )
   AND NOT a.indisprimary AND NOT a.indisunique AND NOT a.indisexclusion
   AND a.indpred IS NULL AND a.indexprs IS NULL
+  -- the COVERING index b must also be non-partial and non-expression: a partial b
+  -- only indexes a subset of rows (so it can't serve all of a's lookups), and an
+  -- expression b has 0-valued indkey entries that would match a prefix spuriously.
+  AND b.indpred IS NULL AND b.indexprs IS NULL
   AND NOT EXISTS (SELECT 1 FROM pg_constraint co WHERE co.conindid = a.indexrelid)
   AND n.nspname NOT IN ('pg_catalog', 'information_schema')
 ORDER BY redundant_bytes DESC
