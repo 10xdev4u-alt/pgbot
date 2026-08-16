@@ -5,8 +5,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/spf13/cobra"
 )
@@ -15,6 +18,12 @@ import (
 var version = "dev"
 
 func main() {
+	// A SIGINT/SIGTERM cancels the run's context instead of killing the process
+	// mid-flight: collectors abort at the next round trip, the pgx pool closes,
+	// and the store finishes its write. cmd.Context() in every handler is this ctx.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	root := &cobra.Command{
 		Use:           "pgbot",
 		Short:         "In-database observability for PostgreSQL",
@@ -34,7 +43,7 @@ func main() {
 	root.AddCommand(newTuneCmd())
 	root.AddCommand(newMCPCmd())
 
-	if err := root.Execute(); err != nil {
+	if err := root.ExecuteContext(ctx); err != nil {
 		// Exit-code contract: connection/exec failure is 3. Command handlers that
 		// need the finding-based codes (1 warn, 2 critical) call os.Exit directly.
 		fmt.Fprintln(os.Stderr, "pgbot: "+err.Error())

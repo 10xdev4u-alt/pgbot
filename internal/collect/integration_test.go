@@ -3,7 +3,9 @@ package collect_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +15,51 @@ import (
 	"github.com/pgrundev/pgbot/internal/findings"
 	"github.com/pgrundev/pgbot/internal/render"
 )
+
+// P0-3: a cancellation mid-collection must return ctx.Err() promptly and leave
+// no sampler goroutine running behind it.
+func TestIntegration_cancelMidRun(t *testing.T) {
+	target, err := conn.Connect(context.Background(), dsn(t))
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer target.Close()
+
+	// Warm the pool with one full run first, so the goroutine baseline reflects
+	// steady state (pgx pool goroutines up, that run's sampler already drained) —
+	// otherwise we'd be measuring pool warm-up, not a sampler leak.
+	if _, err := collect.Run(context.Background(), target,
+		collect.Options{Interval: 200 * time.Millisecond, ASHHz: 10, ASHWindow: 200 * time.Millisecond}); err != nil {
+		t.Fatalf("warmup: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	before := runtime.NumGoroutine()
+
+	// A 2s interval + 2s ASH window means Run is still mid-flight at 50ms.
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(50 * time.Millisecond); cancel() }()
+
+	start := time.Now()
+	_, err = collect.Run(ctx, target, collect.Options{Interval: 2 * time.Second, ASHHz: 10, ASHWindow: 2 * time.Second})
+	elapsed := time.Since(start)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled mid-run must return context.Canceled, got %v", err)
+	}
+	if elapsed > 700*time.Millisecond {
+		t.Fatalf("cancellation must return promptly, took %v", elapsed)
+	}
+
+	// Run's deferred drain guarantees the sampler exited before Run returned;
+	// poll briefly (no goleak dependency) for the count to settle back.
+	for i := 0; i < 50; i++ {
+		if runtime.NumGoroutine() <= before {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Errorf("goroutine leak after cancellation: before=%d after=%d", before, runtime.NumGoroutine())
+}
 
 // These run only when PGBOT_TEST_DSN points at a live PostgreSQL — CI sets it
 // against the docker-compose matrix; a plain `go test ./...` skips them.

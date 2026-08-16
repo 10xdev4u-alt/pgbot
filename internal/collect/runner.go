@@ -52,6 +52,17 @@ func Run(ctx context.Context, t *conn.Target, opts Options) (*model.Context, err
 			ash = sampleWaits(ctx, t, caps, opts.ashHz(), opts.ashWindow())
 		}()
 	}
+	// Guarantee the sampler goroutine has fully exited before Run returns — on
+	// EVERY path, including the mid-run cancellation returns below. sampleWaits
+	// watches ctx.Done(), so cancel first (idempotent with the deferred cancel
+	// above), then wait. Runs before the deferred cancel() (LIFO), so it is the
+	// one that actually unblocks the sampler on an early return.
+	defer func() {
+		if ashDone != nil {
+			cancel()
+			<-ashDone
+		}
+	}()
 
 	// Phase 1: sample A for every available collector (counters and gauges),
 	// concurrently and bounded to the pool.
