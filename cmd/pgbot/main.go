@@ -42,6 +42,7 @@ func main() {
 	root.AddCommand(newTablesCmd())
 	root.AddCommand(newTuneCmd())
 	root.AddCommand(newMCPCmd())
+	root.AddCommand(newConfigCmd())
 
 	if err := root.ExecuteContext(ctx); err != nil {
 		// Exit-code contract: connection/exec failure is 3. Command handlers that

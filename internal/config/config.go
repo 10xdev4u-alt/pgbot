@@ -64,20 +64,22 @@ type raw struct {
 
 // Config is the validated, ready-to-apply configuration.
 type Config struct {
-	Schema   int
-	Tunables findings.Tunables // thresholds, with overrides applied over defaults
-	Severity map[string]string // finding id → remapped severity
-	Ignore   []IgnoreRule
-	Source   string   // path loaded from; "" means built-in defaults
-	Warnings []string // non-fatal problems → Context.ConfigWarnings
+	Schema             int
+	Tunables           findings.Tunables  // thresholds, with overrides applied over defaults
+	ThresholdOverrides map[string]float64 // config-key → value, only those the file set
+	Severity           map[string]string  // finding id → remapped severity
+	Ignore             []IgnoreRule
+	Source             string   // path loaded from; "" means built-in defaults
+	Warnings           []string // non-fatal problems → Context.ConfigWarnings
 }
 
 // Default is the zero-config: every default threshold, no overrides.
 func Default() *Config {
 	return &Config{
-		Schema:   CurrentSchema,
-		Tunables: findings.DefaultTunables(),
-		Severity: map[string]string{},
+		Schema:             CurrentSchema,
+		Tunables:           findings.DefaultTunables(),
+		ThresholdOverrides: map[string]float64{},
+		Severity:           map[string]string{},
 	}
 }
 
@@ -123,6 +125,8 @@ func Load(explicit string) (*Config, error) {
 	for k, v := range r.Thresholds {
 		if err := applyThreshold(&cfg.Tunables, k, v); err != nil {
 			cfg.Warnings = append(cfg.Warnings, fmt.Sprintf("[thresholds] %s: %v", k, err))
+		} else if fv, ok := toFloat(v); ok {
+			cfg.ThresholdOverrides[k] = fv
 		}
 	}
 
