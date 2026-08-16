@@ -3,6 +3,7 @@ module github.com/pgrundev/pgbot
 go 1.25.0
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/jackc/pgx/v5 v5.7.5
 	github.com/spf13/cobra v1.10.2

@@ -60,6 +60,11 @@ type Context struct {
 	Events                []Event      `json:"events,omitempty"`       // what changed since the last run (T7)
 	WaitProfile           *WaitProfile `json:"wait_profile,omitempty"` // where time went, from ASH sampling (T8)
 	Findings              []Finding    `json:"findings"`
+	// ConfigWarnings are non-fatal problems in the loaded .pgbot.toml — an unknown
+	// finding ID, an unknown threshold key, a malformed glob (B2-1). A typo'd rule
+	// silently not applying is the exact failure suppression exists to prevent, so
+	// warnings surface in --json, at the top of the report, and fail `config check`.
+	ConfigWarnings []string `json:"config_warnings,omitempty"`
 
 	// Schema is the current schema fingerprint — used to derive events and stored
 	// separately; it is NOT part of the JSON contract (too large, and it can echo
@@ -538,6 +543,17 @@ type Finding struct {
 	Confidence float64  `json:"confidence"` // 0.0–1.0; below 0.5 renders as "possible", not an assertion
 	Caveats    []string `json:"caveats,omitempty"`
 	Related    []string `json:"related,omitempty"` // ids of findings that travel with this one (rendered adjacently)
+	// Suppression state, set by a matching [[ignore]] rule (B2-2). A suppressed
+	// finding is never DELETED — it stays in --json (so an agent can explain why
+	// it isn't reporting it) and does not affect the exit code. A suppressed
+	// CRITICAL still renders in the report (visibly marked); lesser severities
+	// drop to a footer/--full section.
+	Suppressed        bool   `json:"suppressed,omitempty"`
+	SuppressionReason string `json:"suppression_reason,omitempty"`
+	SuppressionRule   string `json:"suppression_rule,omitempty"` // which rule matched, e.g. `checksums_disabled object=*`
+	// SeverityRemapped, when non-empty, is the original severity before a
+	// [severity] override changed it — so the change is auditable in --json.
+	SeverityRemapped string `json:"severity_remapped,omitempty"`
 }
 
 // Impact is why a finding matters and how much, in ONE dimension. Two findings

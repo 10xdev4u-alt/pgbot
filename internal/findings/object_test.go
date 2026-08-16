@@ -74,6 +74,11 @@ func TestCompute_everyFindingHasStableObject(t *testing.T) {
 			if !StableObject(f.Object) {
 				t.Errorf("finding %q emitted unstable Object %q", f.ID, f.Object)
 			}
+			// Every emitted ID must be in the knownIDs whitelist the config layer
+			// validates against — otherwise a real finding can't be suppressed.
+			if !KnownID(f.ID) {
+				t.Errorf("finding %q emitted but missing from knownIDs (add it, or config can't reference it)", f.ID)
+			}
 		}
 	}
 	if seen == 0 {

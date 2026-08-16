@@ -106,20 +106,79 @@ var TuningIDs = map[string]bool{
 	"work_mem_overcommit":         true,
 }
 
-// Compute returns findings sorted most-severe first. Order among equal
-// severities is stable by ID for deterministic output.
+// knownIDs is every finding ID Compute can emit. It is the whitelist the config
+// layer validates [severity]/[[ignore]] rules against — an ID not here is a typo
+// (loud warning, never a hard error, so a config for a newer pgbot still loads).
+// TestKnownIDs_matchesCompute guards it against drift as findings are added.
+var knownIDs = map[string]bool{
+	"blocking_chains": true, "index_invalid": true, "unused_indexes": true,
+	"table_bloat": true, "redundant_indexes": true, "fk_unindexed": true,
+	"partition_seq_scan_heavy": true, "seq_scan_heavy": true,
+	"autovacuum_disabled_on_table": true, "table_never_vacuumed": true,
+	"autovacuum_starved": true, "autovacuum_saturated": true,
+	"autovacuum_long_running": true, "stale_statistics": true, "never_analyzed": true,
+	"low_hot_update_ratio": true, "low_cache_hit": true, "idle_in_transaction": true,
+	"long_running_transaction": true, "wait_lock_contention": true,
+	"wait_io_bound": true, "wait_lwlock_pressure": true, "connection_saturation": true,
+	"txid_wraparound": true, "sequence_exhaustion": true, "mxid_wraparound": true,
+	"vacuum_horizon_blocked": true, "prepared_xact_abandoned": true,
+	"sync_rep_degraded": true, "replica_lag_time": true, "recovery_conflicts": true,
+	"replica_disconnected": true, "checksum_failures": true,
+	"ignore_checksum_failure_on": true, "checksums_disabled": true,
+	"archiving_failing": true, "archiving_stalled": true, "archiving_disabled": true,
+	"replication_slot_inactive": true, "subscription_worker_down": true,
+	"query_slowdown": true, "pgss_entries_evicted": true, "work_mem_low": true,
+	"checkpoints_forced": true, "connections_overprovisioned": true, "fsync_off": true,
+	"full_page_writes_off": true, "autovacuum_off": true, "random_page_cost_high": true,
+	"work_mem_overcommit": true, "statement_timeout_unset": true, "io_timing_off": true,
+	"high_rollback_ratio": true, "pg_stat_statements_missing": true,
+	"stale_stats_window": true,
+	// B2 meta-findings (the suppression system reporting on itself).
+	"suppression_expired": true, "suppression_unused": true,
+}
+
+// KnownID reports whether id is a finding pgbot can emit (config validation).
+func KnownID(id string) bool { return knownIDs[id] }
+
+// Tunables are the thresholds a user config may override ([thresholds] in
+// .pgbot.toml). Only these keys are wired — everything else stays a compiled-in
+// const (an unknown key in a config is a loud warning, not a silent no-op).
+// Applied BEFORE the finding is produced, so a raised threshold means the
+// finding is never generated at all (B2-2 precedence rule 1).
+type Tunables struct {
+	UnusedIndexMinBytes int64   // unused_index_min_size_mb × 1MiB
+	DeadRatioWarn       float64 // dead_ratio_warn
+	ReplicaLagWarnSec   float64 // replica_lag_warn_seconds
+}
+
+// DefaultTunables returns the compiled-in thresholds.
+func DefaultTunables() Tunables {
+	return Tunables{
+		UnusedIndexMinBytes: unusedIndexMinBytes,
+		DeadRatioWarn:       deadRatioWarn,
+		ReplicaLagWarnSec:   replicaLagWarnSec,
+	}
+}
+
+// Compute returns findings sorted most-severe first, using the default
+// thresholds. Order among equal severities is stable by ID.
 func Compute(c *model.Context) []model.Finding {
+	return ComputeWithTunables(c, DefaultTunables())
+}
+
+// ComputeWithTunables is Compute with caller-supplied threshold overrides.
+func ComputeWithTunables(c *model.Context, tun Tunables) []model.Finding {
 	var f []model.Finding
 	add := func(x model.Finding) { f = append(f, x) }
 
 	blockingChains(c, add)
 	invalidIndexes(c, add)
-	unusedIndexes(c, add)
+	unusedIndexes(c, add, tun)
 	redundantIndexes(c, add)
 	unindexedForeignKeys(c, add)
 	seqScanHeavy(c, add)
 	partitionSeqScanHeavy(c, add)
-	bloatedTables(c, add)
+	bloatedTables(c, add, tun)
 	staleStatistics(c, add)
 	autovacuumHealth(c, add)
 	lowHotUpdateRatio(c, add)
@@ -132,7 +191,7 @@ func Compute(c *model.Context) []model.Finding {
 	sequenceExhaustion(c, add)
 	walArchiving(c, add)
 	checksumFindings(c, add)
-	failoverReadiness(c, add)
+	failoverReadiness(c, add, tun)
 	replicationSlotRisk(c, add)
 	subscriptionDown(c, add)
 	vacuumHorizonBlocked(c, add)
@@ -328,7 +387,7 @@ type unusedIndex struct {
 	score     float64
 }
 
-func unusedIndexes(c *model.Context, add func(model.Finding)) {
+func unusedIndexes(c *model.Context, add func(model.Finding), tun Tunables) {
 	if c.Indexes == nil {
 		return
 	}
@@ -344,7 +403,7 @@ func unusedIndexes(c *model.Context, add func(model.Finding)) {
 	var total int64
 	anyWriteHeavy := false
 	for _, ix := range c.Indexes.Unused {
-		if ix.Bytes < unusedIndexMinBytes {
+		if ix.Bytes < tun.UnusedIndexMinBytes {
 			continue // below the floor: not worth a recommendation (the 8 KB case)
 		}
 		wh := writeTables[ix.Schema+"."+ix.Table]
@@ -421,7 +480,7 @@ func unusedIndexes(c *model.Context, add func(model.Finding)) {
 	})
 }
 
-func bloatedTables(c *model.Context, add func(model.Finding)) {
+func bloatedTables(c *model.Context, add func(model.Finding), tun Tunables) {
 	if c.Tables == nil {
 		return
 	}
@@ -429,7 +488,7 @@ func bloatedTables(c *model.Context, add func(model.Finding)) {
 	var worstDeadBytes float64
 	autovacKeepingPace := true
 	for _, t := range c.Tables.Top {
-		if t.DeadRatio >= deadRatioWarn && t.LiveTuples+t.DeadTuples >= deadRatioTableMinRows {
+		if t.DeadRatio >= tun.DeadRatioWarn && t.LiveTuples+t.DeadTuples >= deadRatioTableMinRows {
 			ev = append(ev, fmt.Sprintf("%s.%s %.0f%% dead (%d rows)", t.Schema, t.Name, t.DeadRatio*100, t.DeadTuples))
 			if db := t.DeadRatio * float64(t.TotalBytes); db > worstDeadBytes {
 				worstDeadBytes = db
@@ -1161,7 +1220,7 @@ func horizonRemediation(source string) string {
 // failoverReadiness answers "if I promote right now, what do I lose, and will
 // writes hang?" — sync-standby consistency, time-based replay lag, a vanished
 // standby, and standby recovery conflicts.
-func failoverReadiness(c *model.Context, add func(model.Finding)) {
+func failoverReadiness(c *model.Context, add func(model.Finding), tun Tunables) {
 	// sync_rep_degraded — the important one. Not visible in any latency graph.
 	sc := settingParam(c, "synchronous_commit")
 	required := requiredSyncStandbys(settingParam(c, "synchronous_standby_names"))
@@ -1193,7 +1252,7 @@ func failoverReadiness(c *model.Context, add func(model.Finding)) {
 		var ev []string
 		worst, crit := 0.0, false
 		for _, r := range c.Replication.Replicas {
-			if r.ReplayLagSec == nil || *r.ReplayLagSec < replicaLagWarnSec {
+			if r.ReplayLagSec == nil || *r.ReplayLagSec < tun.ReplicaLagWarnSec {
 				continue
 			}
 			if *r.ReplayLagSec > worst {
