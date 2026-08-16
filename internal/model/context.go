@@ -47,8 +47,9 @@ type Context struct {
 	Replication   *Replication   `json:"replication,omitempty"`
 	Settings      *Settings      `json:"settings,omitempty"`
 	Limits        *Limits        `json:"limits,omitempty"`
-	Horizon       *VacuumHorizon `json:"horizon,omitempty"` // what pins the xmin/vacuum horizon (A1)
-	Deltas        *Deltas        `json:"deltas,omitempty"`  // vs baseline; nil on first run
+	Horizon       *VacuumHorizon `json:"horizon,omitempty"`   // what pins the xmin/vacuum horizon (A1)
+	Sequences     *Sequences     `json:"sequences,omitempty"` // sequence exhaustion headroom (A8)
+	Deltas        *Deltas        `json:"deltas,omitempty"`    // vs baseline; nil on first run
 	// Set (with Deltas nil) when a stats reset / restart between runs makes any
 	// comparison fiction — e.g. serverless scale-to-zero. See T2.
 	DeltaSuppressedReason string       `json:"delta_suppressed_reason,omitempty"`
@@ -340,6 +341,22 @@ type Replication struct {
 	ReceiverLagSec *float64          `json:"receiver_lag_sec,omitempty"`
 	Slots          []ReplicationSlot `json:"slots,omitempty"`
 	Subscriptions  []Subscription    `json:"subscriptions,omitempty"`
+}
+
+// Sequences reports how close each sequence is to exhausting its effective
+// ceiling (the lesser of its max_value and the owning column's integer range).
+type Sequences struct {
+	Section
+	Items []SequenceUsage `json:"items,omitempty"`
+}
+
+type SequenceUsage struct {
+	Schema    string  `json:"schema"`
+	Name      string  `json:"sequence"`
+	LastValue int64   `json:"last_value"`
+	Ceiling   int64   `json:"ceiling"`
+	PctUsed   float64 `json:"pct_used"`
+	OwnedBy   string  `json:"owned_by,omitempty"`
 }
 
 // VacuumHorizon lists what pins the xmin horizon — the reason dead tuples aren't

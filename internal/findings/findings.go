@@ -53,6 +53,10 @@ const (
 	// is a real block on dead-tuple reclamation (not a momentary query).
 	vacuumHorizonWarnXIDs = 1_000_000
 
+	// Sequence exhaustion (last_value / effective ceiling).
+	seqExhaustionWarn = 0.80
+	seqExhaustionCrit = 0.90
+
 	// Query slowdown vs the baseline (the "what changed" finding).
 	querySlowdownFactor = 2.0  // at least 2× slower
 	querySlowdownMinMs  = 10.0 // and the new mean ≥ 10ms, so micro-queries aren't noise
@@ -100,6 +104,7 @@ func Compute(c *model.Context) []model.Finding {
 	connectionSaturation(c, add)
 	txidWraparound(c, add)
 	mxidWraparound(c, add)
+	sequenceExhaustion(c, add)
 	replicationSlotRisk(c, add)
 	subscriptionDown(c, add)
 	vacuumHorizonBlocked(c, add)
@@ -658,6 +663,47 @@ func txidWraparound(c *model.Context, add func(model.Finding)) {
 			fmt.Sprintf("age %s / 2.1B", human(age)),
 			"max(age(datfrozenxid)) across databases"),
 		Confidence: 1.0,
+	})
+}
+
+// sequenceExhaustion flags a sequence approaching its effective ceiling — the
+// lesser of its max_value and the owning column's integer range. At the ceiling
+// the next nextval() errors: a full write outage. An int4 identity/serial column
+// wraps at 2.1B even if the sequence's own max reads 2^63. DimRisk (top of report).
+func sequenceExhaustion(c *model.Context, add func(model.Finding)) {
+	if c.Sequences == nil || len(c.Sequences.Items) == 0 {
+		return
+	}
+	var ev []string
+	var worst float64
+	for _, s := range c.Sequences.Items {
+		if s.PctUsed < seqExhaustionWarn {
+			continue
+		}
+		if s.PctUsed > worst {
+			worst = s.PctUsed
+		}
+		owned := ""
+		if s.OwnedBy != "" {
+			owned = " (" + s.OwnedBy + ")"
+		}
+		ev = append(ev, fmt.Sprintf("%s.%s%s: %.0f%% used (%s / %s)", s.Schema, s.Name, owned, s.PctUsed*100, human(s.LastValue), human(s.Ceiling)))
+	}
+	if len(ev) == 0 {
+		return
+	}
+	sev := model.SeverityWarn
+	if worst >= seqExhaustionCrit {
+		sev = model.SeverityCritical
+	}
+	add(model.Finding{
+		ID: "sequence_exhaustion", Severity: sev,
+		Title:       fmt.Sprintf("%d sequence(s) near exhaustion (worst %.0f%%)", len(ev), worst*100),
+		Detail:      "A sequence at its ceiling raises an error on the next nextval() — a write outage for anything that inserts. An int4 identity/serial column wraps at 2.1 billion even when the sequence's own max_value is higher.",
+		Evidence:    cap10(ev),
+		Remediation: "Migrate the owning column to bigint (ALTER TABLE … ALTER COLUMN … TYPE bigint — plan for the table rewrite). If the column is already bigint, exhaustion is astronomically far off.",
+		Impact:      impact(model.DimRisk, worst*100, fmt.Sprintf("%.0f%% of range used", worst*100), "last_value / min(max_value, column type max)"),
+		Confidence:  0.9,
 	})
 }
 
