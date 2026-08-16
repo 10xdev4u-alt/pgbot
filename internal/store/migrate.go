@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"embed"
 	"sort"
 )
@@ -30,7 +31,52 @@ func (s *Store) migrate() error {
 			return err
 		}
 	}
+	return s.migrateFingerprintScheme()
+}
+
+// migrateFingerprintScheme records the fingerprint key version. v2 is
+// per-database within a cluster; v1 keyed on the cluster-wide system identifier
+// alone and collided across databases (the P0-1 bug). Old snapshots cannot be
+// recomputed — the system identifier is not stored in a snapshot — so v1 series
+// are left in place (baselines list still shows them by database name) but will
+// not match new per-database runs. We flag the transition once, and only when
+// there is pre-upgrade history, so the CLI can tell the user their series reset.
+func (s *Store) migrateFingerprintScheme() error {
+	var scheme string
+	err := s.db.QueryRow(`SELECT value FROM meta WHERE key = 'fingerprint_scheme'`).Scan(&scheme)
+	if err == nil {
+		return nil // already recorded — nothing to do
+	}
+	if err != sql.ErrNoRows {
+		return err
+	}
+	var existing int
+	if err := s.db.QueryRow(`SELECT count(*) FROM snapshots`).Scan(&existing); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`INSERT INTO meta(key, value) VALUES ('fingerprint_scheme', '2')`); err != nil {
+		return err
+	}
+	if existing > 0 {
+		if _, err := s.db.Exec(`INSERT INTO meta(key, value) VALUES ('fingerprint_notice', '1')`); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// UpgradeNotice returns a one-time, human-facing message (and clears it) when
+// this store carried pre-upgrade history across the v1→v2 fingerprint fix.
+// Returns "" otherwise. Callers print it once on a normal run.
+func (s *Store) UpgradeNotice() string {
+	var v string
+	if err := s.db.QueryRow(`SELECT value FROM meta WHERE key = 'fingerprint_notice'`).Scan(&v); err != nil {
+		return ""
+	}
+	_, _ = s.db.Exec(`DELETE FROM meta WHERE key = 'fingerprint_notice'`)
+	return "baseline fingerprints are now per-database within a cluster (a bug fix). " +
+		"Snapshots taken before this upgrade used a cluster-wide key and won't match new runs; " +
+		"clear the old ones with `pgbot baselines prune <fingerprint>` if you don't need them."
 }
 
 // allowedScalar guards the one place a column name is interpolated into SQL

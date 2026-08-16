@@ -56,11 +56,64 @@ func TestFingerprint_prefersSystemIdentifier(t *testing.T) {
 	a := Fingerprint("h1", "5432", "db", "sysid-42")
 	b := Fingerprint("DIFFERENT-HOST", "6000", "db", "sysid-42")
 	if a != b {
-		t.Error("same system identifier must yield the same fingerprint regardless of host")
+		t.Error("same system identifier + same database must yield the same fingerprint regardless of host")
 	}
 	c := Fingerprint("h1", "5432", "db", "")
 	if c == a {
 		t.Error("fallback fingerprint should differ from the system-identifier one")
+	}
+}
+
+// P0-1: two databases on the SAME cluster (same system identifier) must not
+// collide, or their snapshots interleave into one fictional baseline series.
+func TestFingerprint_perDatabaseWithinCluster(t *testing.T) {
+	appProd := Fingerprint("h1", "5432", "app_prod", "sysid-42")
+	analytics := Fingerprint("h1", "5432", "analytics", "sysid-42")
+	if appProd == analytics {
+		t.Error("same system identifier but different database must yield different fingerprints")
+	}
+	// Fallback path already includes dbname; confirm it too stays per-database.
+	if Fingerprint("h1", "5432", "app_prod", "") == Fingerprint("h1", "5432", "analytics", "") {
+		t.Error("fallback fingerprints must also differ per database")
+	}
+}
+
+// P0-1 migration: a store written before per-database fingerprints must open
+// cleanly after upgrade and surface a one-time notice (only when history exists).
+func TestFingerprintScheme_migrationNoticeOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a pre-v2 store: it has history but no scheme marker.
+	if _, err := st.Save(ctxAt("oldfp", time.Now().UTC(), 100)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.db.Exec(`DELETE FROM meta WHERE key = 'fingerprint_scheme'`); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+
+	// Reopen — Open runs migrate, which must succeed and flag the transition.
+	st2, err := Open(path)
+	if err != nil {
+		t.Fatalf("old-scheme store must open without error after upgrade: %v", err)
+	}
+	t.Cleanup(func() { st2.Close() })
+	if got := st2.UpgradeNotice(); got == "" {
+		t.Error("expected a one-time upgrade notice after crossing the fingerprint scheme change with history")
+	}
+	if got := st2.UpgradeNotice(); got != "" {
+		t.Error("upgrade notice must fire only once")
+	}
+}
+
+// A fresh store (no prior history) upgrades silently — no notice.
+func TestFingerprintScheme_freshStoreNoNotice(t *testing.T) {
+	st := tempStore(t)
+	if got := st.UpgradeNotice(); got != "" {
+		t.Errorf("a fresh store must not emit an upgrade notice, got %q", got)
 	}
 }
 

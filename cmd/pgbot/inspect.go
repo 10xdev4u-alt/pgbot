@@ -152,6 +152,10 @@ func withStore(path string, c *model.Context) (map[string][]float64, string) {
 	}
 	defer st.Close()
 
+	if notice := st.UpgradeNotice(); notice != "" {
+		fmt.Fprintln(os.Stderr, "pgbot: "+notice)
+	}
+
 	now := c.CollectedAt
 	// The immediately-previous run drives events + reset detection.
 	last, _ := st.Previous(c.Fingerprint, now, 0)

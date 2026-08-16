@@ -74,10 +74,15 @@ func defaultPath() (string, error) {
 // Fingerprint is a stable key for a target database. Preferring the system
 // identifier means a restored/renamed replica is recognised as the same
 // database; host+port+db is the fallback when the identifier isn't readable.
+//
+// The system identifier is CLUSTER-wide, so it must be combined with the
+// database name — otherwise two databases on one cluster (app_prod, analytics)
+// share a fingerprint and their snapshots interleave into one fictional series,
+// corrupting every delta. host+port+db already includes the database name.
 func Fingerprint(host, port, dbname, systemIdentifier string) string {
-	seed := systemIdentifier
-	if seed == "" {
-		seed = host + "|" + port + "|" + dbname
+	seed := host + "|" + port + "|" + dbname
+	if systemIdentifier != "" {
+		seed = systemIdentifier + "|" + dbname
 	}
 	sum := sha256.Sum256([]byte(seed))
 	return fmt.Sprintf("%x", sum[:8])
