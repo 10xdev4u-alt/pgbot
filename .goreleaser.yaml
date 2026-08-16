@@ -67,6 +67,26 @@ dockers:
     build_flag_templates:
       - "--platform=linux/amd64"
     goarch: amd64
+  - image_templates:
+      - "ghcr.io/pgrundev/pgbot:{{ .Version }}-arm64"
+    dockerfile: Dockerfile
+    use: buildx
+    build_flag_templates:
+      - "--platform=linux/arm64"
+    goarch: arm64
+
+# Publish multi-arch manifests so `docker run ghcr.io/pgrundev/pgbot` (i.e.
+# :latest) works on Apple Silicon / Graviton, not just amd64. The README lists
+# Docker as a first-class install method and uses the bare (:latest) tag.
+docker_manifests:
+  - name_template: "ghcr.io/pgrundev/pgbot:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/pgrundev/pgbot:{{ .Version }}-amd64"
+      - "ghcr.io/pgrundev/pgbot:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/pgrundev/pgbot:latest"
+    image_templates:
+      - "ghcr.io/pgrundev/pgbot:{{ .Version }}-amd64"
+      - "ghcr.io/pgrundev/pgbot:{{ .Version }}-arm64"
 
 # Homebrew formula, pushed to the pgrundev/homebrew-tap repo so
 # `brew install pgrundev/tap/pgbot` works. skip_upload is templated on the token:
