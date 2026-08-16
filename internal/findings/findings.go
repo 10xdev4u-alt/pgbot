@@ -29,6 +29,8 @@ const (
 	staleStatsWarnDays    = 30    // rates computed over a very old window are near-meaningless
 	seqScanTableMinRows   = 50000 // only flag seq-scan-heavy on tables big enough to matter
 	partitionSeqScanMin   = 1000  // aggregate seq scans across a partitioned table's partitions
+	hotUpdateRatioWarn    = 0.50  // below half of updates being HOT points at fillfactor / an indexed hot column
+	hotUpdateMinVolume    = 10000 // enough update volume to judge the ratio (not a cold table)
 
 	// Wait-profile (ASH) thresholds. All gated on model.WaitMinSamples — below
 	// that the shares are noise and no wait finding fires.
@@ -107,6 +109,7 @@ func Compute(c *model.Context) []model.Finding {
 	seqScanHeavy(c, add)
 	partitionSeqScanHeavy(c, add)
 	bloatedTables(c, add)
+	lowHotUpdateRatio(c, add)
 	lowCacheHit(c, add)
 	idleInTransaction(c, add)
 	longRunningXact(c, add)
@@ -540,6 +543,43 @@ func seqScanHeavy(c *model.Context, add func(model.Finding)) {
 			fmt.Sprintf("%d table(s) scanning full", len(ev)),
 			"seq_scans ≫ index_scans on tables ≥ 50k rows"),
 		Confidence: 0.6,
+	})
+}
+
+// lowHotUpdateRatio flags a heavily-updated table where few updates are HOT
+// (heap-only). A non-HOT update rewrites every index, so a low ratio means extra
+// WAL, index bloat, and vacuum work — usually fillfactor 100 (no page free space)
+// or an index on a frequently-updated column. Gated on update volume.
+func lowHotUpdateRatio(c *model.Context, add func(model.Finding)) {
+	if c.Tables == nil {
+		return
+	}
+	var ev []string
+	worst := 1.0
+	for _, t := range c.Tables.Top {
+		if t.Updates < hotUpdateMinVolume {
+			continue
+		}
+		ratio := float64(t.HotUpdates) / float64(t.Updates)
+		if ratio >= hotUpdateRatioWarn {
+			continue
+		}
+		if ratio < worst {
+			worst = ratio
+		}
+		ev = append(ev, fmt.Sprintf("%s.%s: %.0f%% HOT (%s updates)", t.Schema, t.Name, ratio*100, human(t.Updates)))
+	}
+	if len(ev) == 0 {
+		return
+	}
+	add(model.Finding{
+		ID: "low_hot_update_ratio", Severity: model.SeverityWarn,
+		Title:       fmt.Sprintf("%d table(s) with low HOT-update ratio (worst %.0f%%)", len(ev), worst*100),
+		Detail:      "A HOT (heap-only tuple) update avoids rewriting every index. A low ratio means most updates either touch an indexed column or land on a page with no free space (fillfactor 100), so each update writes to every index — extra WAL, index bloat, and vacuum work.",
+		Evidence:    cap10(ev),
+		Remediation: "Lower the table's fillfactor (e.g. 90) to leave room for HOT updates, and avoid indexing columns that are updated frequently.",
+		Impact:      impact(model.DimThroughput, 40, fmt.Sprintf("%.0f%% HOT on the worst table", worst*100), "n_tup_hot_upd / n_tup_upd"),
+		Confidence:  0.7,
 	})
 }
 

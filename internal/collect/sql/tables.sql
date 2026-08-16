@@ -8,6 +8,8 @@ SELECT s.schemaname                       AS schema,
        s.seq_scan                         AS seq_scans,
        coalesce(s.idx_scan, 0)            AS index_scans,
        s.n_mod_since_analyze              AS mods_since_analyze,
+       s.n_tup_upd                        AS updates,
+       s.n_tup_hot_upd                    AS hot_updates,
        s.last_vacuum,
        s.last_autovacuum
 FROM pg_stat_user_tables s

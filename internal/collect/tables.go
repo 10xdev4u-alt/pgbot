@@ -27,6 +27,8 @@ type tableRow struct {
 	SeqScans         int64      `db:"seq_scans"`
 	IndexScans       int64      `db:"index_scans"`
 	ModsSinceAnalyze int64      `db:"mods_since_analyze"`
+	Updates          int64      `db:"updates"`
+	HotUpdates       int64      `db:"hot_updates"`
 	LastVacuum       *time.Time `db:"last_vacuum"`
 	LastAutovacuum   *time.Time `db:"last_autovacuum"`
 }
@@ -82,6 +84,7 @@ func (tablesCollector) Assemble(c *model.Context, _ conn.Capabilities, s sampled
 			Schema: r.Schema, Name: r.Table, TotalBytes: r.TotalBytes,
 			LiveTuples: r.LiveTuples, DeadTuples: r.DeadTuples, DeadRatio: round4(dead),
 			SeqScans: r.SeqScans, IndexScans: r.IndexScans, ModsSinceAnalyze: r.ModsSinceAnalyze,
+			Updates: r.Updates, HotUpdates: r.HotUpdates,
 			LastVacuum: r.LastVacuum, LastAutovac: r.LastAutovacuum,
 		})
 	}

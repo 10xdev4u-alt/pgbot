@@ -286,6 +286,8 @@ type TableStat struct {
 	SeqScans         int64      `json:"seq_scans"`
 	IndexScans       int64      `json:"index_scans"`
 	ModsSinceAnalyze int64      `json:"mods_since_analyze"`
+	Updates          int64      `json:"updates,omitempty"`
+	HotUpdates       int64      `json:"hot_updates,omitempty"`
 	LastVacuum       *time.Time `json:"last_vacuum,omitempty"`
 	LastAutovac      *time.Time `json:"last_autovacuum,omitempty"`
 }
