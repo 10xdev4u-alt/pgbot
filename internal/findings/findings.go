@@ -972,6 +972,11 @@ func replicationSlotRisk(c *model.Context, add func(model.Finding)) {
 		if s.WALStatus != "" && !lost {
 			ev = append(ev, "wal_status="+s.WALStatus)
 		}
+		// Pair with the pg_wal directory size (A14): retention plus the actual
+		// on-disk total is a far stronger disk-fill signal than either alone.
+		if c.WAL != nil && c.WAL.DirBytes != nil {
+			ev = append(ev, "pg_wal directory now "+humanBytes(*c.WAL.DirBytes))
+		}
 		add(model.Finding{
 			ID: "replication_slot_inactive", Severity: sev,
 			Title:       fmt.Sprintf("Inactive replication slot %q pinning %s of WAL", s.Name, humanBytes(s.RetainedBytes)),

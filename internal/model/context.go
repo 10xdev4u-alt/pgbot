@@ -349,6 +349,8 @@ type WAL struct {
 	BytesPerSec   *float64 `json:"bytes_per_sec,omitempty"`
 	RecordsPerSec *float64 `json:"records_per_sec,omitempty"`
 	BuffersFull   int64    `json:"buffers_full"`
+	DirBytes      *int64   `json:"dir_bytes,omitempty"` // pg_ls_waldir() total; nil if the call was denied (A14)
+	DirFiles      int64    `json:"dir_files,omitempty"`
 }
 
 // IO summarizes pg_stat_io (PG16+) or the bgwriter/checkpointer fallback.
