@@ -76,12 +76,19 @@ func adviseRun(ctx context.Context, connString string, top int, minImpr float64)
 	if err != nil {
 		return adviseResult{}, fmt.Errorf("read pg_stat_statements: %s", conn.RedactConnString(err.Error()))
 	}
+	// A cost estimate is only as good as the stats behind it, and a new index taxes
+	// every write — so gather which tables have stale stats (refuse) and which are
+	// write-heavy (caveat). Best-effort: an error just means no extra guards.
+	stale, writeHeavy := relationStats(ctx, target)
+
 	// One READ ONLY transaction for the whole loop: hypopg state is per-connection,
 	// so the hypothetical indexes and their reset must share a single connection.
 	err = target.ReadOnlyTx(ctx, func(tx pgx.Tx) error {
 		p := pgxPlanner{tx: tx}
 		defer p.ResetHypo(context.Background()) //nolint:errcheck // belt-and-braces cleanup
-		res.Recs, res.Stats = advisor.Advise(ctx, p, inputs, advisor.Options{MinImprovement: minImpr})
+		res.Recs, res.Stats = advisor.Advise(ctx, p, inputs, advisor.Options{
+			MinImprovement: minImpr, StaleRelations: stale, WriteHeavy: writeHeavy,
+		})
 		return nil
 	})
 	if err != nil {
@@ -114,11 +121,13 @@ func runAdvise(cmd *cobra.Command, args []string, f adviseFlags) error {
 			"considered":      stats.QueriesConsidered,
 			"planned":         stats.QueriesPlanned,
 			"candidates":      stats.CandidatesTested,
+			"skipped_stale":   stats.SkippedStaleStats,
 		})
 	}
 	render.AdvisorReport(os.Stdout, render.AdvisorInput{
 		Color: useColor(f.noColor), Database: res.Database, VersionNum: res.VersionNum,
-		Recommendations: recs, Considered: stats.QueriesConsidered, Planned: stats.QueriesPlanned, Candidates: stats.CandidatesTested,
+		Recommendations: recs, Considered: stats.QueriesConsidered, Planned: stats.QueriesPlanned,
+		Candidates: stats.CandidatesTested, SkippedStale: stats.SkippedStaleStats,
 	})
 	return nil
 }
@@ -142,6 +151,7 @@ func suggestIndexesTool(ctx context.Context, args json.RawMessage) (string, erro
 		"considered":      res.Stats.QueriesConsidered,
 		"planned":         res.Stats.QueriesPlanned,
 		"candidates":      res.Stats.CandidatesTested,
+		"skipped_stale":   res.Stats.SkippedStaleStats,
 		"note":            "hypothetical validation with hypopg — nothing was built; recommend, don't act",
 	}
 	if res.Reason != "" {
@@ -210,6 +220,38 @@ func topSlowSelects(ctx context.Context, t *conn.Target, top int) ([]advisor.Que
 	return out, rows.Err()
 }
 
+// relationStats returns, from pg_stat_user_tables, the tables whose planner
+// statistics are stale or missing (advise refuses them — a cost estimate over bad
+// stats is meaningless) and those that are write-heavy (advise caveats them — a
+// new index is maintained on every write). Both keyed "schema.table".
+func relationStats(ctx context.Context, t *conn.Target) (stale, writeHeavy map[string]bool) {
+	stale, writeHeavy = map[string]bool{}, map[string]bool{}
+	rows, err := t.Pool.Query(ctx, `
+		SELECT schemaname || '.' || relname AS rel,
+		       (last_analyze IS NULL AND last_autoanalyze IS NULL)
+		         OR n_mod_since_analyze > 0.2 * n_live_tup + 50           AS stale,
+		       (n_tup_ins + n_tup_upd + n_tup_del) > 100000               AS write_heavy
+		FROM pg_stat_user_tables`)
+	if err != nil {
+		return stale, writeHeavy
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var rel string
+		var isStale, isWrite bool
+		if rows.Scan(&rel, &isStale, &isWrite) != nil {
+			continue
+		}
+		if isStale {
+			stale[rel] = true
+		}
+		if isWrite {
+			writeHeavy[rel] = true
+		}
+	}
+	return stale, writeHeavy
+}
+
 // pgxPlanner implements advisor.Planner over a READ ONLY pgx transaction. Every
 // statement is plan-only or hypothetical — none executes the inspected query.
 //
@@ -245,14 +287,20 @@ func (p pgxPlanner) GenericPlan(ctx context.Context, query string) ([]byte, erro
 	return js, err
 }
 
-func (p pgxPlanner) CreateHypoIndex(ctx context.Context, ddl string) (string, error) {
+func (p pgxPlanner) CreateHypoIndex(ctx context.Context, ddl string) (string, int64, error) {
 	var oid uint32
 	var name string
+	var estBytes int64
 	err := p.inSavepoint(ctx, func() error {
 		// The DDL is passed as a bind parameter to hypopg_create_index — not spliced.
-		return p.tx.QueryRow(ctx, "SELECT indexrelid, indexname FROM hypopg_create_index($1)", ddl).Scan(&oid, &name)
+		if err := p.tx.QueryRow(ctx, "SELECT indexrelid, indexname FROM hypopg_create_index($1)", ddl).Scan(&oid, &name); err != nil {
+			return err
+		}
+		// hypopg's size estimate for the index that would be built (best-effort).
+		_ = p.tx.QueryRow(ctx, "SELECT hypopg_relation_size($1)", oid).Scan(&estBytes)
+		return nil
 	})
-	return name, err
+	return name, estBytes, err
 }
 
 func (p pgxPlanner) ResetHypo(ctx context.Context) error {

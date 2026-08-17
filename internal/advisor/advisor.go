@@ -55,6 +55,12 @@ type Recommendation struct {
 	SharePct   float64   `json:"db_time_pct"`
 	CostBefore float64   `json:"cost_before"`
 	CostAfter  float64   `json:"cost_after"`
+	// EstimatedBytes is hypopg's size estimate for the index that would be built.
+	EstimatedBytes int64 `json:"estimated_bytes"`
+	// Confidence is capped: a recommendation is a planner ESTIMATE over cost, not a
+	// measurement, so it never asserts. Caveats carry the load-bearing "but…".
+	Confidence float64  `json:"confidence"`
+	Caveats    []string `json:"caveats,omitempty"`
 }
 
 // ImprovementPct is the estimated total-cost reduction, 0..100.

@@ -14,8 +14,9 @@ type Planner interface {
 	// GENERIC_PLAN (PG16+) plans a normalized $N query without values or execution.
 	GenericPlan(ctx context.Context, query string) ([]byte, error)
 	// CreateHypoIndex creates a hypothetical index from a CREATE INDEX statement
-	// and returns its planner-visible name (hypopg_create_index). Nothing is built.
-	CreateHypoIndex(ctx context.Context, ddl string) (name string, err error)
+	// and returns its planner-visible name (hypopg_create_index) plus hypopg's
+	// estimated on-disk size in bytes. Nothing is built.
+	CreateHypoIndex(ctx context.Context, ddl string) (name string, estBytes int64, err error)
 	// ResetHypo drops every hypothetical index in this session (hypopg_reset).
 	ResetHypo(ctx context.Context) error
 }
@@ -32,6 +33,11 @@ type QueryInput struct {
 // Options tunes the advisor.
 type Options struct {
 	MinImprovement float64 // required fractional cost drop, e.g. 0.5 = 50%
+	// StaleRelations (schema.table) have stale or missing planner statistics, so a
+	// cost estimate over them is untrustworthy — the advisor refuses to advise on
+	// them and says why. WriteHeavy relations get a write-amplification caveat.
+	StaleRelations map[string]bool
+	WriteHeavy     map[string]bool
 }
 
 // Stats reports what the advisor examined, for an honest "nothing found" message.
@@ -39,7 +45,12 @@ type Stats struct {
 	QueriesConsidered int
 	QueriesPlanned    int // successfully planned (GENERIC_PLAN worked)
 	CandidatesTested  int
+	SkippedStaleStats int // candidates skipped because the table's stats are stale
 }
+
+// advisorConfidence is the ceiling on any recommendation's confidence: it is a
+// planner cost ESTIMATE for a hypothetical index, never a measured speedup.
+const advisorConfidence = 0.6
 
 // Advise runs the deterministic-candidate → hypopg-validation loop over the given
 // queries and returns only planner-confirmed recommendations. The caller is
@@ -73,8 +84,15 @@ func Advise(ctx context.Context, p Planner, queries []QueryInput, opts Options) 
 			continue
 		}
 		for _, cand := range candidatesFromPlan(base) {
+			// Refuse to advise on a table whose statistics are stale: the planner's
+			// cost estimate — and therefore the whole recommendation — is only as good
+			// as the stats it's computed from.
+			if opts.StaleRelations[cand.Schema+"."+cand.Table] {
+				st.SkippedStaleStats++
+				continue
+			}
 			st.CandidatesTested++
-			if rec, ok := validate(ctx, p, q, cand, clean, costBefore, opts.MinImprovement); ok {
+			if rec, ok := validate(ctx, p, q, cand, clean, costBefore, opts); ok {
 				recs = append(recs, rec)
 			}
 		}
@@ -85,8 +103,8 @@ func Advise(ctx context.Context, p Planner, queries []QueryInput, opts Options) 
 // validate creates one hypothetical index, re-plans, and confirms the planner
 // switches to it with a real cost drop. It always resets hypopg afterward so the
 // next candidate is tested in isolation.
-func validate(ctx context.Context, p Planner, q QueryInput, cand Candidate, query string, costBefore, minImpr float64) (Recommendation, bool) {
-	name, err := p.CreateHypoIndex(ctx, cand.DDL())
+func validate(ctx context.Context, p Planner, q QueryInput, cand Candidate, query string, costBefore float64, opts Options) (Recommendation, bool) {
+	name, estBytes, err := p.CreateHypoIndex(ctx, cand.DDL())
 	if err != nil || name == "" {
 		return Recommendation{}, false // bad DDL / nonexistent column — hypopg rejected it
 	}
@@ -105,15 +123,25 @@ func validate(ctx context.Context, p Planner, q QueryInput, cand Candidate, quer
 	// Two independent gates: the planner must actually PICK the hypothetical index
 	// (name match), AND the estimated total cost must fall by the threshold. Either
 	// alone is too weak — cost can wobble, and an unused index proves nothing.
-	if !usesIndex(after, name) || costAfter >= costBefore*(1-minImpr) {
+	if !usesIndex(after, name) || costAfter >= costBefore*(1-opts.MinImprovement) {
 		return Recommendation{}, false
 	}
-	return Recommendation{
+	rec := Recommendation{
 		Candidate: cand, IndexDDL: cand.DDL(),
 		Schema: cand.Schema, Table: cand.Table, Columns: cand.Columns,
 		QueryID: q.QueryID, QueryText: q.Scrubbed, Calls: q.Calls, SharePct: q.SharePct,
-		CostBefore: costBefore, CostAfter: costAfter,
-	}, true
+		CostBefore: costBefore, CostAfter: costAfter, EstimatedBytes: estBytes,
+		Confidence: advisorConfidence,
+	}
+	// The load-bearing caveats every recommendation carries.
+	rec.Caveats = append(rec.Caveats,
+		"planner estimate, not a measured speedup — verify on a copy before building",
+		"build with CREATE INDEX CONCURRENTLY off-peak; a plain CREATE INDEX locks the table against writes")
+	if opts.WriteHeavy[cand.Schema+"."+cand.Table] {
+		rec.Caveats = append(rec.Caveats,
+			"this table is write-heavy — the index is maintained on every INSERT/UPDATE; weigh the read gain against the added write cost (cf. low_hot_update_ratio)")
+	}
+	return rec, true
 }
 
 // sanitizeQuery trims a single normalized statement for EXPLAIN: it drops a

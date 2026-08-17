@@ -96,10 +96,10 @@ func (m *mockPlanner) GenericPlan(_ context.Context, _ string) ([]byte, error) {
 	// hypo index active → cheap Index Scan using it
 	return []byte(`[{"Plan":{"Node Type":"Index Scan","Index Name":"` + m.hypoName + `","Relation Name":"orders","Total Cost":52.0}}]`), nil
 }
-func (m *mockPlanner) CreateHypoIndex(_ context.Context, _ string) (string, error) {
+func (m *mockPlanner) CreateHypoIndex(_ context.Context, _ string) (string, int64, error) {
 	m.created++
 	m.hypoName = "<13337>btree_orders_customer_id"
-	return m.hypoName, nil
+	return m.hypoName, 1 << 20, nil
 }
 func (m *mockPlanner) ResetHypo(_ context.Context) error {
 	m.resetN++
@@ -147,7 +147,7 @@ type staticPlanner struct{ plan string }
 func (s *staticPlanner) GenericPlan(context.Context, string) ([]byte, error) {
 	return []byte(s.plan), nil
 }
-func (s *staticPlanner) CreateHypoIndex(context.Context, string) (string, error) {
-	return "<1>btree_orders", nil
+func (s *staticPlanner) CreateHypoIndex(context.Context, string) (string, int64, error) {
+	return "<1>btree_orders", 0, nil
 }
 func (s *staticPlanner) ResetHypo(context.Context) error { return nil }

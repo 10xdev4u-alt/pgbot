@@ -17,6 +17,7 @@ type AdvisorInput struct {
 	Considered      int
 	Planned         int
 	Candidates      int
+	SkippedStale    int
 }
 
 // AdvisorReport renders validated index recommendations. Every line makes the
@@ -43,7 +44,11 @@ func AdvisorReport(w io.Writer, in AdvisorInput) {
 	fmt.Fprintln(&b, st.head(fmt.Sprintf("%d validated recommendation(s):", len(in.Recommendations))))
 	fmt.Fprintln(&b)
 	for _, r := range in.Recommendations {
-		fmt.Fprintf(&b, "%s %s.%s\n", st.warn("⚑"), r.Schema, r.Table)
+		size := ""
+		if r.EstimatedBytes > 0 {
+			size = st.dim(fmt.Sprintf("  (~%s)", humanBytes(r.EstimatedBytes)))
+		}
+		fmt.Fprintf(&b, "%s %s.%s%s\n", st.warn("⚑"), r.Schema, r.Table, size)
 		fmt.Fprintf(&b, "  %s;\n", st.head(r.IndexDDL))
 		// The query it helps (scrubbed, normalized) and its weight.
 		q := oneLineTrunc(r.QueryText, 96)
@@ -52,11 +57,24 @@ func AdvisorReport(w io.Writer, in AdvisorInput) {
 		// The planner's own verdict — the evidence.
 		fmt.Fprintf(&b, "  %s %s\n", st.dim("planner confirmed:"),
 			st.good(fmt.Sprintf("cost %s → %s (−%.1f%%)", trimCost(r.CostBefore), trimCost(r.CostAfter), r.ImprovementPct())))
-		fmt.Fprintf(&b, "  %s\n\n", st.dim("↳ nothing was created. Review, then build off-peak: add CONCURRENTLY."))
+		// Load-bearing caveats render inline, never a footnote.
+		for _, cav := range r.Caveats {
+			for i, line := range wrapText(cav, 88) {
+				prefix := "⚠ but "
+				if i > 0 {
+					prefix = "      "
+				}
+				fmt.Fprintf(&b, "  %s\n", st.warn(prefix)+st.dim(line))
+			}
+		}
+		fmt.Fprintf(&b, "  %s\n\n", st.dim("↳ nothing was created."))
 	}
-	fmt.Fprintln(&b, st.dim(fmt.Sprintf(
-		"Validated %d candidate(s) across %d planned quer(y/ies); only planner-confirmed wins are shown.",
-		in.Candidates, in.Planned)))
+	tail := fmt.Sprintf("Validated %d candidate(s) across %d planned quer(y/ies); only planner-confirmed wins are shown.",
+		in.Candidates, in.Planned)
+	if in.SkippedStale > 0 {
+		tail += fmt.Sprintf(" %d candidate(s) skipped: table statistics too stale to trust the estimate (ANALYZE first).", in.SkippedStale)
+	}
+	fmt.Fprintln(&b, st.dim(tail))
 	_, _ = io.WriteString(w, b.String())
 }
 
