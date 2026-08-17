@@ -41,8 +41,8 @@ func (c Capabilities) ManagedProvider() bool {
 	return false
 }
 
-// Version-derived feature flags. Kept as methods so the thresholds live in one
-// place and read like the docs.
+// HasStatWAL and the flags below are version-derived feature gates, kept as
+// methods so the thresholds live in one place and read like the docs.
 func (c Capabilities) HasStatWAL() bool               { return c.VersionNum >= 140000 } // pg_stat_wal
 func (c Capabilities) HasStatIO() bool                { return c.VersionNum >= 160000 } // pg_stat_io
 func (c Capabilities) HasStatCheckpointer() bool      { return c.VersionNum >= 170000 } // pg_stat_checkpointer

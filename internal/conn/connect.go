@@ -1,3 +1,6 @@
+// Package conn opens the read-only, timeout-pinned connection pool to the target
+// database, probes its version/extensions/provider capabilities, and provides the
+// short READ ONLY transactions every collector and the advisor run inside.
 package conn
 
 import (

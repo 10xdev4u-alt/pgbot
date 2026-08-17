@@ -1,3 +1,6 @@
+// Package render turns a model.Context into the human-facing surfaces: the
+// terminal report (grouped summary and --full section tables), the diff and
+// advisor reports, and the --json contract writer.
 package render
 
 import (
@@ -254,53 +257,6 @@ func renderFindings(b *strings.Builder, st styler, fs []model.Finding, width int
 		}
 	}
 	fmt.Fprintln(b)
-}
-
-// check names one thing pgbot examines, its finding id (empty for scrape-only
-// domains that have no failure finding), and whether it was applicable this run.
-type check struct {
-	label      string
-	id         string
-	applicable bool
-}
-
-// passedChecks returns the labels of checks that were evaluated and came back
-// clean — the finding did not fire (or, for scrape-only domains, the section was
-// present). Only names things actually checked, so the ✓ line is never a lie.
-func passedChecks(c *model.Context) []string {
-	fired := map[string]bool{}
-	for _, f := range c.Findings {
-		fired[f.ID] = true
-	}
-	waitUsable := c.WaitProfile != nil && c.WaitProfile.Available && !c.WaitProfile.Thin()
-	checks := []check{
-		{"locks", "blocking_chains", c.Locks != nil},
-		{"invalid indexes", "index_invalid", c.Schema != nil},
-		{"unused indexes", "unused_indexes", c.Indexes != nil && !c.Window.ColdWindow()},
-		{"table bloat", "table_bloat", c.Tables != nil},
-		{"sequential scans", "seq_scan_heavy", c.Tables != nil && !c.Window.ColdWindow()},
-		{"cache hit", "low_cache_hit", c.Health != nil && c.Health.CacheHitRatio != nil && !c.Window.ColdWindow()},
-		{"idle transactions", "idle_in_transaction", c.Activity != nil},
-		{"long transactions", "long_running_transaction", c.Activity != nil},
-		{"rollbacks", "high_rollback_ratio", c.Health != nil && c.Health.RollbackRatio != nil},
-		{"lock waits", "wait_lock_contention", waitUsable},
-		{"IO load", "wait_io_bound", waitUsable},
-		{"query stats", "pg_stat_statements_missing", c.Queries != nil},
-		{"stats freshness", "stale_stats_window", c.Window.StatsWindowDays != nil},
-		// Scrape-only domains: no failure finding, so present ⇒ examined-and-clean.
-		{"replication", "", c.Replication != nil},
-		{"WAL", "", c.WAL != nil},
-		{"checkpoints", "", c.IO != nil},
-		{"connections", "", c.Health != nil},
-		{"settings", "", c.Settings != nil},
-	}
-	var out []string
-	for _, ck := range checks {
-		if ck.applicable && !fired[ck.id] {
-			out = append(out, ck.label)
-		}
-	}
-	return out
 }
 
 // windowLabel renders the stats-window age like "4h12m" / "3d4h" / "45m".
@@ -642,22 +598,5 @@ func truncate(s string, n int) string {
 }
 
 func humanBytes2(v float64) string { return humanBytes(int64(v)) }
-
-func pgVersion(num int) string {
-	if num == 0 {
-		return "PostgreSQL"
-	}
-	major := num / 10000
-	minor := num % 100
-	return fmt.Sprintf("PostgreSQL %d.%d", major, minor)
-}
-
-// pgShort is the compact header form, e.g. "PG 17.10".
-func pgShort(num int) string {
-	if num == 0 {
-		return "PG"
-	}
-	return fmt.Sprintf("PG %d.%d", num/10000, num%100)
-}
 
 var _ = time.Now // keep time imported for future use

@@ -1,0 +1,34 @@
+version: "2"
+
+# The default linter set (errcheck, govet, ineffassign, staticcheck, unused) is
+# on. We only tune the noise: unchecked deferred Close/Flush and writes to an
+# in-memory builder or already-flushed stdout are conventional in Go and carry no
+# real error to handle, and errcheck adds nothing in test files.
+linters:
+  settings:
+    errcheck:
+      exclude-functions:
+        - (io.Closer).Close
+        - (*database/sql.Rows).Close
+        - (*database/sql.Stmt).Close
+        - (*github.com/jackc/pgx/v5.Conn).Close
+        - (*github.com/pgrundev/pgbot/internal/store.Store).Close
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - fmt.Fscanln
+        - (*text/tabwriter.Writer).Flush
+    staticcheck:
+      # QF1001/QF1002 are stylistic quickfix opinions (De Morgan, tagged switch),
+      # not correctness — keep everything else staticcheck flags.
+      checks:
+        - all
+        - -QF1001
+        - -QF1002
+  exclusions:
+    rules:
+      # A defer Close / best-effort write in a test carries no error worth
+      # handling; keep errcheck for non-test code where it matters.
+      - path: _test\.go
+        linters:
+          - errcheck
