@@ -447,7 +447,16 @@ Collectors degrade rather than fail when a capability is absent:
 | `stats_fetch_consistency` | PG 15 | separate per-sample transactions |
 | `pg_stat_statements` | extension | queries section unavailable + install hint |
 
-Tested against PostgreSQL 13–18.
+### Supported versions
+
+| Tier | Versions | In CI |
+|---|---|---|
+| **Supported** | PostgreSQL 16, 17, 18 | every PR + push |
+| **Best-effort** | PostgreSQL 14, 15 | every PR + push |
+| Unsupported | PostgreSQL 13 and older | — (13 is [end-of-life](https://www.postgresql.org/support/versioning/)) |
+
+New features may target 16+ without a backward path. Everything degrades rather
+than errors on an older or capability-limited server (see the table above).
 
 ### Managed providers
 

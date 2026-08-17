@@ -1,0 +1,10 @@
+name: Feature request
+description: Something pgbot should do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to diagnose or automate that pgbot can't yet?
+    validations: { required: true }

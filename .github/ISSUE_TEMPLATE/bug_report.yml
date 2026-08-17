@@ -1,0 +1,22 @@
+name: Bug report
+description: Something pgbot did wrong
+labels: [bug]
+body:
+  - type: input
+    id: pgversion
+    attributes:
+      label: PostgreSQL version
+      placeholder: "e.g. 17.2 (managed: RDS/Aurora/Cloud SQL/Azure/Supabase/Neon, or self-hosted)"
+    validations: { required: true }
+  - type: input
+    id: pgbotversion
+    attributes:
+      label: pgbot version
+      placeholder: "pgbot --version"
+    validations: { required: true }
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What did you run, what did you expect, what did you get? Paste `--json` if relevant (it is PII-free).
+    validations: { required: true }
