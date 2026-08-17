@@ -235,6 +235,8 @@ func renderFindings(b *strings.Builder, st styler, fs []model.Finding, width int
 				fmt.Fprintf(b, "     %s\n", st.dim(prefix+line))
 			}
 		}
+		// Every finding references its catalogue page — offline via the subcommand.
+		fmt.Fprintf(b, "     %s\n", st.dim("docs: pgbot explain-finding "+f.ID))
 	}
 
 	// Suppressed section: dimmed, collapsed, reason inline (B2-2). Kept visible in

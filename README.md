@@ -484,6 +484,21 @@ gone stale, and ships `pgbot config check` / `explain` / `init`. Full contract �
 including the per-finding object-identity table — in
 [`docs/configuration.md`](docs/configuration.md).
 
+## The findings catalogue
+
+Every finding pgbot emits has a reference page — what it observed, why it matters,
+a **read-only query to verify it yourself**, how to fix it, when to ignore it (with
+a pasteable `[[ignore]]` block), and what pgbot cannot see. Browse them by symptom
+in [`docs/findings/`](docs/findings/README.md), or read one offline straight from
+the binary:
+
+```
+pgbot explain-finding low_hot_update_ratio
+```
+
+Every line of a report tells you its id, so `pgbot explain-finding <id>` always
+has the page.
+
 ## Serverless Postgres (Neon, scale-to-zero)
 
 Scale-to-zero databases (Neon, Databricks Lakebase, and similar) **discard

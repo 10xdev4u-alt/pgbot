@@ -44,6 +44,7 @@ func main() {
 	root.AddCommand(newMCPCmd())
 	root.AddCommand(newConfigCmd())
 	root.AddCommand(newAdviseCmd())
+	root.AddCommand(newExplainFindingCmd())
 
 	if err := root.ExecuteContext(ctx); err != nil {
 		// Exit-code contract: connection/exec failure is 3. Command handlers that
