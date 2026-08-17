@@ -144,6 +144,12 @@ func validate(ctx context.Context, p Planner, q QueryInput, cand Candidate, quer
 	return rec, true
 }
 
+// SanitizeSelect is the exported guard for any surface that EXPLAINs
+// agent-supplied SQL (the MCP explain_plan tool): it returns the trimmed query if
+// it is a single plain SELECT safe to plan, or "" to refuse. Same rules as the
+// advisor's own path — SELECT-only, no interior semicolon.
+func SanitizeSelect(s string) string { return sanitizeQuery(s) }
+
 // sanitizeQuery trims a single normalized statement for EXPLAIN and refuses
 // anything that could smuggle a second statement or a write past the planner.
 // GenericPlan uses the simple-query protocol (PgConn.Exec), which WOULD run a

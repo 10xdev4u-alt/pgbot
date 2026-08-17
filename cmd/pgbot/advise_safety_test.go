@@ -19,10 +19,11 @@ import (
 // inspected query") true rather than merely likely, and it holds under a
 // transaction-mode pooler because pgbot opens BEGIN READ ONLY per transaction, not
 // a session-level SET the pooler could drop.
-func TestAdviseSafety_readOnlyTxBlocksInjectedWrite(t *testing.T) {
-	d := os.Getenv("PGBOT_TEST_DSN")
+func TestIntegration_adviseSafety_readOnlyTxBlocksInjectedWrite(t *testing.T) {
+	// Needs a superuser DSN — the setup creates a table the read-only role can't.
+	d := os.Getenv("PGBOT_TEST_SUPERUSER_DSN")
 	if d == "" {
-		t.Skip("set PGBOT_TEST_DSN to run integration tests")
+		t.Skip("set PGBOT_TEST_SUPERUSER_DSN to run the advise-safety integration test")
 	}
 	ctx := context.Background()
 

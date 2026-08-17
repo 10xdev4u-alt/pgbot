@@ -104,7 +104,70 @@ func pgbotTools() []mcp.Tool {
 			InputSchema: dsnSchema,
 			Handler:     suggestIndexesTool,
 		},
+		{
+			Name: "explain_plan",
+			Description: "Return the PLANNER'S plan for a SELECT (plain EXPLAIN, FORMAT JSON) — the " +
+				"query is planned, never executed, in a read-only transaction. Only a single plain " +
+				"SELECT is accepted (no writes, no multiple statements). Costs and row counts are " +
+				"planner ESTIMATES, not measurements. The executing form of EXPLAIN is never used.",
+			InputSchema: dsnSchemaWith(map[string]any{
+				"query": map[string]any{"type": "string", "description": "A single plain SELECT to plan. May use $1 placeholders (planned generically on PG16+)."},
+			}, "query"),
+			Handler: explainPlanTool,
+		},
+		{
+			Name: "compare_to_baseline",
+			Description: "Diff a database's latest baseline snapshot against the one nearest `since_seconds` " +
+				"ago, from the local store (no connection). Reports the interval it ACTUALLY compared " +
+				"(actual_seconds) and flags a stats reset (stats_reset_between) or pg_stat_statements " +
+				"eviction (pgss_evicted) that makes specific deltas untrustworthy — carry these caveats.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"fingerprint":   map[string]any{"type": "string", "description": "Which database (fingerprint or unique prefix). Required if the store holds more than one."},
+					"since_seconds": map[string]any{"type": "integer", "description": "How far back to compare, in seconds (default 86400 = 24h)."},
+				},
+			},
+			Handler: compareToBaselineTool,
+		},
+		{
+			Name: "schema_of",
+			Description: "Return a table's structure — columns (name/type/nullability), indexes, constraints, " +
+				"and the planner's row estimate. NO table data is read. This is what an agent needs before " +
+				"reasoning about a query. Read-only.",
+			InputSchema: dsnSchemaWith(map[string]any{
+				"table": map[string]any{"type": "string", "description": "Schema-qualified table name, e.g. public.orders."},
+			}, "table"),
+			Handler: schemaOfTool,
+		},
+		{
+			Name: "explain_finding",
+			Description: "Return pgbot's catalogue page for a finding id (what it observed, why it matters, " +
+				"how to verify, how to fix, when to ignore, what pgbot cannot see) — so you explain a " +
+				"recommendation with pgbot's words instead of inventing them.",
+			InputSchema: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{"id": map[string]any{"type": "string", "description": "A finding id, e.g. unused_indexes."}},
+				"required":   []string{"id"},
+			},
+			Handler: explainFindingTool,
+		},
 	}
+}
+
+// dsnSchemaWith returns the connection_string schema plus extra properties, with
+// the named ones required.
+func dsnSchemaWith(props map[string]any, required ...string) map[string]any {
+	all := map[string]any{
+		"connection_string": map[string]any{
+			"type":        "string",
+			"description": "postgres:// URL or libpq DSN. Optional if $DATABASE_URL is set for the server.",
+		},
+	}
+	for k, v := range props {
+		all[k] = v
+	}
+	return map[string]any{"type": "object", "properties": all, "required": required}
 }
 
 // pgbotPrompts offers one-click workflows an agent can invoke.

@@ -158,6 +158,9 @@ jobs:
           docker exec pg psql -U postgres -q -c \
             "DO \$\$ BEGIN FOR i IN 1..200000 LOOP INSERT INTO people(email) VALUES('l@example.com'); IF i%50=0 THEN COMMIT; END IF; END LOOP; END \$\$;" &
           go test ./internal/collect/ -run Integration -v
+          # cmd/pgbot integration: the advisor's read-only-blocks-a-write proof and
+          # the MCP explain_plan/schema_of tools, against the same server.
+          go test ./cmd/pgbot/ -run Integration -v
       - name: degrade cleanly without pg_stat_statements
         run: |
           docker rm -f pg

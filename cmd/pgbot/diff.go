@@ -20,7 +20,6 @@ type diffFlags struct {
 	storePath   string
 	noColor     bool
 	json        bool
-	force       bool
 }
 
 func newDiffCmd() *cobra.Command {
@@ -44,79 +43,103 @@ func newDiffCmd() *cobra.Command {
 	fl.StringVar(&f.storePath, "store", "", "baseline DB path (default: XDG state dir)")
 	fl.BoolVar(&f.noColor, "no-color", false, "disable ANSI color")
 	fl.BoolVar(&f.json, "json", false, "emit the diff as JSON")
-	fl.BoolVar(&f.force, "force", false, "allow a diff whose snapshots span fingerprints (different databases) — refused by default")
 	return cmd
 }
 
-func runDiff(f diffFlags) error {
-	st, err := store.Open(f.storePath)
+// diffResult is the computed comparison, shared by `pgbot diff` and the MCP
+// compare_to_baseline tool.
+type diffResult struct {
+	Item        store.ListItem
+	Baseline    *store.Snapshot
+	Current     *store.Snapshot
+	Deltas      *model.Deltas
+	ResetReason string
+	PgssEvicted bool
+	Requested   time.Duration
+	Actual      time.Duration
+}
+
+// resolveDiff opens the store, resolves the target database, and computes the
+// comparison of its latest snapshot against the one nearest `since` ago. The
+// interval-honesty and reset/eviction detection live here so every consumer gets
+// them (the agent needs the caveats more than a human does).
+func resolveDiff(storePath, fpSpec string, since time.Duration) (*diffResult, error) {
+	st, err := store.Open(storePath)
 	if err != nil {
-		return fmt.Errorf("open baseline store: %w", err)
+		return nil, fmt.Errorf("open baseline store: %w", err)
 	}
 	defer st.Close()
 
 	items, err := st.List()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(items) == 0 {
-		return fmt.Errorf("no baselines yet — run `pgbot inspect` first")
+		return nil, fmt.Errorf("no baselines yet — run `pgbot inspect` first")
 	}
-
-	item, err := resolveFingerprint(items, f.fingerprint)
+	item, err := resolveFingerprint(items, fpSpec)
 	if err != nil {
-		return err
+		return nil, err
 	}
-
 	current, err := st.Previous(item.Fingerprint, time.Now().UTC(), 0)
 	if err != nil || current == nil {
-		return fmt.Errorf("no snapshot for %s", item.Fingerprint)
+		return nil, fmt.Errorf("no snapshot for %s", item.Fingerprint)
 	}
-	baseline, err := st.Previous(item.Fingerprint, current.CollectedAt, f.since)
+	baseline, err := st.Previous(item.Fingerprint, current.CollectedAt, since)
+	if err != nil {
+		return nil, err
+	}
+	if baseline == nil || baseline.ID == current.ID {
+		return nil, fmt.Errorf("not enough history: no snapshot at least %s before the latest (%s). "+
+			"This database's oldest snapshot is %s back — try a smaller --since",
+			render.HumanDur(since), current.CollectedAt.Format("2006-01-02 15:04"),
+			render.HumanDur(current.CollectedAt.Sub(item.Oldest)))
+	}
+	// Both snapshots come from one resolved fingerprint, so a cross-database diff
+	// (the P0-1 collision) is structurally impossible here.
+	return &diffResult{
+		Item:        item,
+		Baseline:    baseline,
+		Current:     current,
+		Deltas:      diff.Compute(current.Context, &diff.Baseline{CollectedAt: baseline.CollectedAt, Context: baseline.Context}, nil),
+		ResetReason: diff.StatsResetBetween(baseline.Context, current.Context),
+		PgssEvicted: pgssEvictedBetween(baseline.Context, current.Context),
+		Requested:   since,
+		Actual:      current.CollectedAt.Sub(baseline.CollectedAt),
+	}, nil
+}
+
+func runDiff(f diffFlags) error {
+	r, err := resolveDiff(f.storePath, f.fingerprint, f.since)
 	if err != nil {
 		return err
 	}
-	if baseline == nil || baseline.ID == current.ID {
-		return fmt.Errorf("not enough history: no snapshot at least %s before the latest (%s). "+
-			"This database's oldest snapshot is %s back — try a smaller --since",
-			render.HumanDur(f.since), current.CollectedAt.Format("2006-01-02 15:04"),
-			render.HumanDur(current.CollectedAt.Sub(item.Oldest)))
-	}
-
-	// P0-1 was about a fingerprint collision comparing two databases; the command
-	// must not reintroduce it. Both snapshots come from one resolved fingerprint,
-	// so this can't trip in normal use — it's a defensive backstop.
-	if baseline.Fingerprint != current.Fingerprint && !f.force {
-		return fmt.Errorf("refusing to diff across fingerprints (%s vs %s) — different databases; pass --force only if you mean it",
-			baseline.Fingerprint, current.Fingerprint)
-	}
-
-	deltas := diff.Compute(current.Context, &diff.Baseline{CollectedAt: baseline.CollectedAt, Context: baseline.Context}, nil)
-	resetReason := diff.StatsResetBetween(baseline.Context, current.Context)
-	pgssEvicted := pgssEvictedBetween(baseline.Context, current.Context)
-	actual := current.CollectedAt.Sub(baseline.CollectedAt)
-
 	if f.json {
-		return json.NewEncoder(os.Stdout).Encode(map[string]any{
-			"database":            item.Database,
-			"fingerprint":         item.Fingerprint,
-			"baseline_at":         baseline.CollectedAt,
-			"current_at":          current.CollectedAt,
-			"requested_seconds":   int64(f.since.Seconds()),
-			"actual_seconds":      int64(actual.Seconds()),
-			"stats_reset_between": resetReason,
-			"pgss_evicted":        pgssEvicted,
-			"changes":             deltasOrEmpty(deltas),
-		})
+		return json.NewEncoder(os.Stdout).Encode(diffJSON(r))
 	}
-
 	render.DiffReport(os.Stdout, render.DiffInput{
-		Color: useColor(f.noColor), Database: item.Database, Fingerprint: item.Fingerprint,
-		BaselineAt: baseline.CollectedAt, CurrentAt: current.CollectedAt,
-		Requested: f.since, Actual: actual,
-		ResetReason: resetReason, PgssEvicted: pgssEvicted, Deltas: deltas,
+		Color: useColor(f.noColor), Database: r.Item.Database, Fingerprint: r.Item.Fingerprint,
+		BaselineAt: r.Baseline.CollectedAt, CurrentAt: r.Current.CollectedAt,
+		Requested: r.Requested, Actual: r.Actual,
+		ResetReason: r.ResetReason, PgssEvicted: r.PgssEvicted, Deltas: r.Deltas,
 	})
 	return nil
+}
+
+// diffJSON is the machine-readable shape of a diff, shared by --json and the MCP
+// tool — including the interval honesty and the reset/eviction caveats.
+func diffJSON(r *diffResult) map[string]any {
+	return map[string]any{
+		"database":            r.Item.Database,
+		"fingerprint":         r.Item.Fingerprint,
+		"baseline_at":         r.Baseline.CollectedAt,
+		"current_at":          r.Current.CollectedAt,
+		"requested_seconds":   int64(r.Requested.Seconds()),
+		"actual_seconds":      int64(r.Actual.Seconds()),
+		"stats_reset_between": r.ResetReason,
+		"pgss_evicted":        r.PgssEvicted,
+		"changes":             deltasOrEmpty(r.Deltas),
+	}
 }
 
 // resolveFingerprint picks the target database. With one in the store it's
