@@ -71,6 +71,16 @@ type Config struct {
 	Ignore             []IgnoreRule
 	Source             string   // path loaded from; "" means built-in defaults
 	Warnings           []string // non-fatal problems → Context.ConfigWarnings
+	matched            map[string]bool // rules that fired this run (set by Apply, for B2-3 rot)
+}
+
+// MatchedRuleStrings returns the ignore rules that actually fired during the last
+// Apply — whole-finding or row-level. The dead-rule detector (B2-3) uses this.
+func (c *Config) MatchedRuleStrings() map[string]bool {
+	if c.matched == nil {
+		return map[string]bool{}
+	}
+	return c.matched
 }
 
 // Default is the zero-config: every default threshold, no overrides.

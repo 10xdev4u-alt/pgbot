@@ -34,28 +34,23 @@ func computeFindings(c *model.Context, f inspectFlags) error {
 	// Rot: dead-rule detection needs the history store. Best-effort — a broken
 	// local store must never change the health findings.
 	if !f.noStore && len(fileRules) > 0 {
-		if unused := deadRules(f.storePath, c, fileRules); len(unused) > 0 {
+		if unused := deadRules(f.storePath, c, fileRules, cfg.MatchedRuleStrings()); len(unused) > 0 {
 			c.Findings = append(c.Findings, config.UnusedFindings(unused)...)
 		}
 	}
 	return nil
 }
 
-// deadRules records which file ignore rules matched this run and returns those
-// that have matched nothing for several consecutive runs (B2-3).
-func deadRules(storePath string, c *model.Context, fileRules []config.IgnoreRule) []string {
+// deadRules records which file ignore rules matched this run (whole-finding or
+// row-level, as tracked by Apply) and returns those that have matched nothing for
+// several consecutive runs (B2-3).
+func deadRules(storePath string, c *model.Context, fileRules []config.IgnoreRule, matched map[string]bool) []string {
 	st, err := store.Open(storePath)
 	if err != nil {
 		return nil
 	}
 	defer st.Close()
 
-	matched := map[string]bool{}
-	for _, fd := range c.Findings {
-		if fd.Suppressed {
-			matched[fd.SuppressionRule] = true // the exact rule Apply picked
-		}
-	}
 	active := make([]string, 0, len(fileRules))
 	for _, r := range fileRules {
 		active = append(active, r.String())

@@ -3,7 +3,7 @@ id: checksum_failures
 severity: critical
 critical_when: ""
 dimension: risk
-object: cluster
+object: db
 requires: [PG12+, data_checksums=on]
 thresholds: []
 related: [ignore_checksum_failure_on, checksums_disabled]
@@ -11,7 +11,7 @@ related: [ignore_checksum_failure_on, checksums_disabled]
 
 # checksum_failures
 
-**Severity:** critical · **Dimension:** risk · **Object identity:** `cluster` (see [configuration](../configuration.md)) · **Requires:** PostgreSQL 12+, `data_checksums = on`
+**Severity:** critical · **Dimension:** risk · **Object identity:** `db:<database>` (see [configuration](../configuration.md)) · **Requires:** PostgreSQL 12+, `data_checksums = on`
 
 ## What pgbot observed
 
@@ -77,9 +77,11 @@ but it can never make the signal disappear from the report:
 
 ```toml
 # A suppressed critical still shows in the report — this only removes it from the
-# exit code. Never use it to hide a live corruption signal.
+# exit code. Never use it to hide a live corruption signal. Scope it to the one
+# database you've handled; other databases still trip the exit code.
 [[ignore]]
 finding = "checksum_failures"
+object  = "db:app"
 reason  = "incident 2026-08-14: restored via PITR, counter is residual; tracked in OPS-1234"
 expires = "2026-09-14"
 ```

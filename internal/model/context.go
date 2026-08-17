@@ -535,6 +535,13 @@ type Finding struct {
 	Title       string   `json:"title"`
 	Detail      string   `json:"detail"`
 	Evidence    []string `json:"evidence,omitempty"`
+	// Objects is the per-Evidence-row stable object identity for an AGGREGATE
+	// finding (one finding listing many objects), aligned index-for-index with
+	// Evidence. It lets an object-scoped [[ignore]] rule drop just the matching
+	// rows and keep the finding on the rest (B2 per-object suppression for
+	// aggregates). Empty for single-object findings (their top-level Object covers
+	// them) and for aggregates whose rows have no stable name (PIDs, wait events).
+	Objects     []string `json:"objects,omitempty"`
 	Remediation string   `json:"remediation,omitempty"` // the actionable "what to do", human-facing
 	// Impact ranks findings against each other; Confidence says how sure we are;
 	// Caveats are the load-bearing "but…" clauses that render inline, never in a

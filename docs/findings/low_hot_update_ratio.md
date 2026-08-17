@@ -3,7 +3,7 @@ id: low_hot_update_ratio
 severity: warn
 critical_when: ""
 dimension: throughput
-object: cluster
+object: relation
 requires: [track_counts (default on)]
 thresholds: []
 related: [table_bloat, unused_indexes]
@@ -11,7 +11,7 @@ related: [table_bloat, unused_indexes]
 
 # low_hot_update_ratio
 
-**Severity:** warn · **Dimension:** throughput · **Object identity:** `cluster` (see [configuration](../configuration.md)) · **Requires:** `track_counts` (on by default)
+**Severity:** warn · **Dimension:** throughput · **Object identity:** `schema.relation` (see [configuration](../configuration.md)) · **Requires:** `track_counts` (on by default)
 
 ## What pgbot observed
 
@@ -94,11 +94,13 @@ Two independent levers — the example above is the first:
 
 The updated-and-indexed column is genuinely required for a hot read path and the
 write cost is understood and accepted, or the table is append-mostly and the ratio
-is inherent:
+is inherent. Scope the rule to **that table** — muting the finding wholesale would
+blind the metric for every other table forever:
 
 ```toml
 [[ignore]]
 finding = "low_hot_update_ratio"
+object  = "public.issues"
 reason  = "last_seen_at index backs the dashboard's recency sort; write cost accepted"
 expires = "2027-01-01"
 ```

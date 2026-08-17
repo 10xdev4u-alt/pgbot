@@ -79,6 +79,18 @@ func TestCompute_everyFindingHasStableObject(t *testing.T) {
 			if !KnownID(f.ID) {
 				t.Errorf("finding %q emitted but missing from knownIDs (add it, or config can't reference it)", f.ID)
 			}
+			// Aggregate per-row Objects must align with Evidence and each be stable,
+			// or row-level suppression drops the wrong line / can't key on them.
+			if len(f.Objects) > 0 {
+				if len(f.Objects) != len(f.Evidence) {
+					t.Errorf("finding %q: Objects/Evidence misaligned (%d vs %d)", f.ID, len(f.Objects), len(f.Evidence))
+				}
+				for _, o := range f.Objects {
+					if !StableObject(o) {
+						t.Errorf("finding %q emitted unstable row Object %q", f.ID, o)
+					}
+				}
+			}
 		}
 	}
 	if seen == 0 {

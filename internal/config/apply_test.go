@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -53,6 +54,56 @@ func TestApply_ignorePrecedence(t *testing.T) {
 	fs = c.Apply(fs, fixedNow())
 	if f := find(fs, "unused_indexes"); !f.Suppressed || f.SuppressionReason != "all" {
 		t.Errorf("omitted-object rule should catch the rest, got reason=%q", f.SuppressionReason)
+	}
+}
+
+// Aggregate findings suppress per row: an object rule drops only matching entries
+// and the finding survives on the rest, with the leading count corrected.
+func TestApply_aggregatePartialSuppression(t *testing.T) {
+	mk := func() []model.Finding {
+		return []model.Finding{{
+			ID: "sequence_exhaustion", Severity: model.SeverityWarn,
+			Title:    "3 sequence(s) near exhaustion (worst 95%)",
+			Evidence: []string{"public.a: 95%", "public.b: 88%", "public.c: 82%"},
+			Objects:  []string{"public.a", "public.b", "public.c"},
+		}}
+	}
+
+	// Drop just one object → finding survives with 2, count fixed, caveat added.
+	c := &Config{Ignore: []IgnoreRule{{Finding: "sequence_exhaustion", Object: "public.b", Reason: "bigint"}}}
+	f := find(c.Apply(mk(), fixedNow()), "sequence_exhaustion")
+	if f.Suppressed {
+		t.Fatal("dropping one of three rows must not suppress the whole finding")
+	}
+	if len(f.Objects) != 2 || f.Objects[0] != "public.a" || f.Objects[1] != "public.c" {
+		t.Errorf("wrong survivors: %v", f.Objects)
+	}
+	if len(f.Evidence) != 2 {
+		t.Errorf("evidence not filtered in lockstep: %v", f.Evidence)
+	}
+	if !strings.HasPrefix(f.Title, "2 sequence(s)") {
+		t.Errorf("leading count not corrected: %q", f.Title)
+	}
+	var noted bool
+	for _, cav := range f.Caveats {
+		if strings.Contains(cav, "public.b") && strings.Contains(cav, "suppressed") {
+			noted = true
+		}
+	}
+	if !noted {
+		t.Errorf("partial suppression must be noted, caveats=%v", f.Caveats)
+	}
+
+	// A rule with NO object mutes the whole aggregate.
+	c = &Config{Ignore: []IgnoreRule{{Finding: "sequence_exhaustion", Reason: "all"}}}
+	if f := find(c.Apply(mk(), fixedNow()), "sequence_exhaustion"); !f.Suppressed {
+		t.Error("a rule with no object should suppress the whole aggregate")
+	}
+
+	// A glob matching every object suppresses the whole finding too.
+	c = &Config{Ignore: []IgnoreRule{{Finding: "sequence_exhaustion", Object: "public.*"}}}
+	if f := find(c.Apply(mk(), fixedNow()), "sequence_exhaustion"); !f.Suppressed {
+		t.Error("a glob matching all rows should suppress the whole finding")
 	}
 }
 

@@ -142,6 +142,10 @@ func Terminal(w io.Writer, c *model.Context, opts Options) error {
 	return err
 }
 
+// evidenceDisplayCap bounds how many aggregate rows the terminal prints; the
+// full list is always in --json.
+const evidenceDisplayCap = 10
+
 func renderFindings(b *strings.Builder, st styler, fs []model.Finding, width int) {
 	if len(fs) == 0 {
 		fmt.Fprintln(b, st.good("✓ no findings — nothing stood out"))
@@ -199,7 +203,15 @@ func renderFindings(b *strings.Builder, st styler, fs []model.Finding, width int
 			fmt.Fprintf(b, "     %s\n", st.dim(line))
 		}
 		if len(f.Evidence) > 0 {
-			for _, line := range wrapText(strings.Join(f.Evidence, ", "), width-5) {
+			// Aggregate findings now store the full object list (so config can drop
+			// individual rows); cap the DISPLAY here with a "+N more" tail.
+			ev := f.Evidence
+			tail := ""
+			if len(ev) > evidenceDisplayCap {
+				tail = fmt.Sprintf(", … +%d more", len(ev)-evidenceDisplayCap)
+				ev = ev[:evidenceDisplayCap]
+			}
+			for _, line := range wrapText(strings.Join(ev, ", ")+tail, width-5) {
 				fmt.Fprintf(b, "     %s\n", st.dim(line))
 			}
 		}

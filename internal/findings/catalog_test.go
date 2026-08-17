@@ -43,8 +43,8 @@ func TestCatalog_matchesEmitted(t *testing.T) {
 		if f.Impact.Dimension != meta.Dimension {
 			t.Errorf("%s: catalog dimension %q != emitted %q", id, meta.Dimension, f.Impact.Dimension)
 		}
-		if got := ObjectClass(f.Object); got != meta.ObjectClass {
-			t.Errorf("%s: catalog object class %q != emitted %q (object=%q)", id, meta.ObjectClass, got, f.Object)
+		if got := FindingObjectClass(*f); got != meta.ObjectClass {
+			t.Errorf("%s: catalog object class %q != emitted %q (object=%q objects=%v)", id, meta.ObjectClass, got, f.Object, f.Objects)
 		}
 		// Base severity must be reachable; a CriticalWhen escalation means the base
 		// isn't critical, and vice versa.

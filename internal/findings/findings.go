@@ -331,10 +331,11 @@ func invalidIndexes(c *model.Context, add func(model.Finding)) {
 	if c.Schema == nil {
 		return
 	}
-	var ev []string
+	var ev, objs []string
 	for _, o := range c.Schema.Objects {
 		if o.Kind == "index" && o.Invalid {
 			ev = append(ev, o.Identity)
+			objs = append(objs, o.Identity)
 		}
 	}
 	if len(ev) == 0 {
@@ -356,7 +357,8 @@ func invalidIndexes(c *model.Context, add func(model.Finding)) {
 		ID: "index_invalid", Severity: sev,
 		Title:       fmt.Sprintf("%d invalid index(es) — failed CREATE INDEX CONCURRENTLY", len(ev)),
 		Detail:      "An invalid index is never used to serve reads but is still maintained on every write. It's the leftover of a CREATE INDEX CONCURRENTLY that failed partway.",
-		Evidence:    cap10(ev),
+		Evidence:    ev,
+		Objects:    objs,
 		Remediation: "If no build is running, drop and recreate it: DROP INDEX CONCURRENTLY <name>; then rebuild.",
 		Impact: impact(model.DimRisk, 85,
 			fmt.Sprintf("%d invalid index(es)", len(ev)),
@@ -422,7 +424,7 @@ func unusedIndexes(c *model.Context, add func(model.Finding), tun Tunables) {
 	}
 	sort.SliceStable(found, func(i, j int) bool { return found[i].score > found[j].score })
 
-	var ev []string
+	var ev, objs []string
 	partialSeen, exprSeen := false, false
 	for _, u := range found {
 		tag := ""
@@ -437,6 +439,7 @@ func unusedIndexes(c *model.Context, add func(model.Finding), tun Tunables) {
 			wh = " · write-heavy table"
 		}
 		ev = append(ev, fmt.Sprintf("%s.%s (%s%s)%s", u.stat.Table, u.stat.Name, humanBytes(u.stat.Bytes), wh, tag))
+		objs = append(objs, u.stat.Schema+"."+u.stat.Name)
 	}
 
 	// Confidence + caveats from the counter-evidence checks (T9.3).
@@ -472,7 +475,8 @@ func unusedIndexes(c *model.Context, add func(model.Finding), tun Tunables) {
 		ID: "unused_indexes", Severity: model.SeverityWarn,
 		Title:       fmt.Sprintf("%d unused index(es) · %s", len(found), humanBytes(total)),
 		Detail:      "These indexes have zero scans since stats began. They cost storage and slow writes without serving reads.",
-		Evidence:    cap10(ev),
+		Evidence:    ev,
+		Objects:    objs,
 		Remediation: rem,
 		Impact:      impact(model.DimStorage, found[0].score, estimate, basis),
 		Confidence:  confidence,
@@ -484,12 +488,13 @@ func bloatedTables(c *model.Context, add func(model.Finding), tun Tunables) {
 	if c.Tables == nil {
 		return
 	}
-	var ev []string
+	var ev, objs []string
 	var worstDeadBytes float64
 	autovacKeepingPace := true
 	for _, t := range c.Tables.Top {
 		if t.DeadRatio >= tun.DeadRatioWarn && t.LiveTuples+t.DeadTuples >= deadRatioTableMinRows {
 			ev = append(ev, fmt.Sprintf("%s.%s %.0f%% dead (%d rows)", t.Schema, t.Name, t.DeadRatio*100, t.DeadTuples))
+			objs = append(objs, t.Schema+"."+t.Name)
 			if db := t.DeadRatio * float64(t.TotalBytes); db > worstDeadBytes {
 				worstDeadBytes = db
 			}
@@ -513,7 +518,8 @@ func bloatedTables(c *model.Context, add func(model.Finding), tun Tunables) {
 		ID: "table_bloat", Severity: model.SeverityWarn,
 		Title:       fmt.Sprintf("%d table(s) with high dead-tuple ratio", len(ev)),
 		Detail:      "Dead tuples inflate table size and slow scans until autovacuum reclaims them. A persistently high ratio suggests vacuum isn't keeping up.",
-		Evidence:    cap10(ev),
+		Evidence:    ev,
+		Objects:    objs,
 		Remediation: rem,
 		Impact: impact(model.DimStorage, score,
 			"≈"+humanBytes(int64(worstDeadBytes))+" dead in the worst table",
@@ -534,10 +540,11 @@ func redundantIndexes(c *model.Context, add func(model.Finding)) {
 	if c.Indexes == nil || len(c.Indexes.Redundant) == 0 {
 		return
 	}
-	var ev []string
+	var ev, objs []string
 	var total int64
 	for _, r := range c.Indexes.Redundant {
 		ev = append(ev, fmt.Sprintf("%s.%s (%s) — prefix of %s", r.Table, r.Name, humanBytes(r.Bytes), r.CoveredBy))
+		objs = append(objs, r.Schema+"."+r.Name)
 		total += r.Bytes
 	}
 	var caveats []string
@@ -548,7 +555,8 @@ func redundantIndexes(c *model.Context, add func(model.Finding)) {
 		ID: "redundant_indexes", Severity: model.SeverityInfo,
 		Title:       fmt.Sprintf("%d redundant index(es) · %s", len(ev), humanBytes(total)),
 		Detail:      "Each of these has leading columns that are a prefix of a wider index on the same table, so that index already serves the same lookups. The narrower one costs writes and storage for no extra read benefit.",
-		Evidence:    cap10(ev),
+		Evidence:    ev,
+		Objects:    objs,
 		Remediation: fmt.Sprintf("After confirming the covering index serves its queries, DROP INDEX CONCURRENTLY the redundant one. Reclaims ≈%s.", humanBytes(total)),
 		Impact:      impact(model.DimStorage, sizeScore(total), "≈"+humanBytes(total)+" reclaimable", fmt.Sprintf("%d prefix-redundant indexes (indkey/indclass containment)", len(ev))),
 		Confidence:  0.75,
@@ -563,10 +571,11 @@ func unindexedForeignKeys(c *model.Context, add func(model.Finding)) {
 	if c.Indexes == nil || len(c.Indexes.UnindexedFKs) == 0 {
 		return
 	}
-	var ev []string
+	var ev, objs []string
 	var worst int64
 	for _, fk := range c.Indexes.UnindexedFKs {
 		ev = append(ev, fmt.Sprintf("%s.%s (%s) on (%s)", fk.Schema, fk.Table, humanBytes(fk.ChildBytes), fk.Columns))
+		objs = append(objs, fk.Schema+"."+fk.Table)
 		if fk.ChildBytes > worst {
 			worst = fk.ChildBytes
 		}
@@ -575,7 +584,8 @@ func unindexedForeignKeys(c *model.Context, add func(model.Finding)) {
 		ID: "fk_unindexed", Severity: model.SeverityWarn,
 		Title:       fmt.Sprintf("%d foreign key(s) without a supporting index", len(ev)),
 		Detail:      "A foreign key with no index on the child means every DELETE or UPDATE of a referenced parent row sequentially scans the whole child to check references, escalating lock duration. It stays invisible until the child grows.",
-		Evidence:    cap10(ev),
+		Evidence:    ev,
+		Objects:    objs,
 		Remediation: "Add an index on the child's FK columns: CREATE INDEX CONCURRENTLY ON child (fk_columns).",
 		Impact:      impact(model.DimLatency, sizeScore(worst), "largest child "+humanBytes(worst), fmt.Sprintf("%d FKs with no leading-column index", len(ev))),
 		Confidence:  0.85,
@@ -590,7 +600,7 @@ func partitionSeqScanHeavy(c *model.Context, add func(model.Finding)) {
 	if c.Tables == nil || c.Window.ColdWindow() {
 		return
 	}
-	var ev []string
+	var ev, objs []string
 	for _, p := range c.Tables.Partitioned {
 		if p.LiveTuples < seqScanTableMinRows || p.SeqScans < partitionSeqScanMin {
 			continue
@@ -600,6 +610,7 @@ func partitionSeqScanHeavy(c *model.Context, add func(model.Finding)) {
 		}
 		ev = append(ev, fmt.Sprintf("%s.%s (%d partitions, %s): %s seq vs %s index scans",
 			p.Schema, p.Name, p.Partitions, humanBytes(p.TotalBytes), human(p.SeqScans), human(p.IndexScans)))
+		objs = append(objs, p.Schema+"."+p.Name)
 	}
 	if len(ev) == 0 {
 		return
@@ -608,7 +619,8 @@ func partitionSeqScanHeavy(c *model.Context, add func(model.Finding)) {
 		ID: "partition_seq_scan_heavy", Severity: model.SeverityWarn,
 		Title:       fmt.Sprintf("%d partitioned table(s) scanned end-to-end", len(ev)),
 		Detail:      "Rolled up across its partitions, this table takes far more sequential than index scans. Each partition's own count looks harmless, so a per-relation view misses it — the parent is being read end to end, usually a missing index or a query that can't prune partitions.",
-		Evidence:    cap10(ev),
+		Evidence:    ev,
+		Objects:    objs,
 		Remediation: "Add an index matching the predicate (create it on the parent; it propagates to partitions), and confirm queries include the partition key so the planner can prune.",
 		Impact:      impact(model.DimLatency, 55, "partitioned end-to-end scan", "rolled-up seq vs index scans across partitions"),
 		Confidence:  0.7,
@@ -619,13 +631,14 @@ func seqScanHeavy(c *model.Context, add func(model.Finding)) {
 	if c.Tables == nil || c.Window.ColdWindow() { // scan counts are cold-window-sensitive
 		return
 	}
-	var ev []string
+	var ev, objs []string
 	var worstScanRows int64
 	for _, t := range c.Tables.Top {
 		total := t.SeqScans + t.IndexScans
 		if t.LiveTuples >= seqScanTableMinRows && total >= 100 && t.SeqScans > t.IndexScans*2 {
 			ev = append(ev, fmt.Sprintf("%s.%s %s seq scans vs %s index (%s rows)",
 				t.Schema, t.Name, human(t.SeqScans), human(t.IndexScans), human(t.LiveTuples)))
+			objs = append(objs, t.Schema+"."+t.Name)
 			if r := t.SeqScans * t.LiveTuples; r > worstScanRows {
 				worstScanRows = r
 			}
@@ -638,7 +651,8 @@ func seqScanHeavy(c *model.Context, add func(model.Finding)) {
 		ID: "seq_scan_heavy", Severity: model.SeverityWarn,
 		Title:       fmt.Sprintf("%d table(s) sequential-scanning heavily", len(ev)),
 		Detail:      "These tables are read mostly by full scans rather than index lookups. On a large table that's CPU and IO the database repeats on every query.",
-		Evidence:    cap10(ev),
+		Evidence:    ev,
+		Objects:    objs,
 		Remediation: "Add an index for the hot predicate, or confirm the full scans are intended (small lookup tables, analytics).",
 		Impact: impact(model.DimThroughput, math.Min(90, 40+math.Log10(float64(worstScanRows)+1)*8),
 			fmt.Sprintf("%d table(s) scanning full", len(ev)),
@@ -672,15 +686,18 @@ func autovacuumHealth(c *model.Context, add func(model.Finding)) {
 		gThresh := settingFloat(c, "autovacuum_vacuum_threshold", 50)
 		gScale := settingFloat(c, "autovacuum_vacuum_scale_factor", 0.2)
 		var disabled, never, starved []string
+		var disabledObj, neverObj, starvedObj []string
 		for _, t := range c.Tables.Top {
 			if t.AutovacuumDisabled {
 				disabled = append(disabled, fmt.Sprintf("%s.%s", t.Schema, t.Name))
+				disabledObj = append(disabledObj, t.Schema+"."+t.Name)
 			}
 			if t.LiveTuples < deadRatioTableMinRows {
 				continue
 			}
 			if t.LastVacuum == nil && t.LastAutovac == nil {
 				never = append(never, fmt.Sprintf("%s.%s (%s rows)", t.Schema, t.Name, human(t.LiveTuples)))
+				neverObj = append(neverObj, t.Schema+"."+t.Name)
 				continue
 			}
 			th, sf := gThresh, gScale
@@ -694,6 +711,7 @@ func autovacuumHealth(c *model.Context, add func(model.Finding)) {
 			// Dead tuples well past the trigger while no autovacuum has run: it's behind.
 			if trigger > 0 && float64(t.DeadTuples) >= 1.5*trigger && t.LastAutovac == nil {
 				starved = append(starved, fmt.Sprintf("%s.%s: %s dead (trigger ≈%s), no autovacuum recorded", t.Schema, t.Name, human(t.DeadTuples), human(int64(trigger))))
+				starvedObj = append(starvedObj, t.Schema+"."+t.Name)
 			}
 		}
 		if len(disabled) > 0 {
@@ -701,7 +719,8 @@ func autovacuumHealth(c *model.Context, add func(model.Finding)) {
 				ID: "autovacuum_disabled_on_table", Severity: model.SeverityCritical,
 				Title:       fmt.Sprintf("autovacuum is DISABLED on %d table(s)", len(disabled)),
 				Detail:      "These tables have autovacuum_enabled=false in their reloptions — almost always disabled 'temporarily' during a migration and never re-enabled. Dead tuples and transaction-id age accumulate on them unchecked, invisible in every global setting and dashboard, until bloat or wraparound forces a reckoning.",
-				Evidence:    cap10(disabled),
+				Evidence:    disabled,
+				Objects:     disabledObj,
 				Remediation: "Re-enable it: ALTER TABLE … SET (autovacuum_enabled = true); then VACUUM the table to catch up.",
 				Impact:      impact(model.DimRisk, 80, fmt.Sprintf("%d tables excluded from autovacuum", len(disabled)), "reloptions autovacuum_enabled=false"),
 				Confidence:  1.0,
@@ -712,7 +731,8 @@ func autovacuumHealth(c *model.Context, add func(model.Finding)) {
 				ID: "table_never_vacuumed", Severity: model.SeverityWarn,
 				Title:       fmt.Sprintf("%d table(s) never vacuumed", len(never)),
 				Detail:      "These tables above the size floor have no record of a manual or automatic vacuum. Dead tuples and transaction-id age accumulate until the first one runs.",
-				Evidence:    cap10(never),
+				Evidence:    never,
+				Objects:     neverObj,
 				Remediation: "VACUUM them, and check autovacuum isn't disabled globally or per-table.",
 				Impact:      impact(model.DimRisk, 40, fmt.Sprintf("%d unvacuumed tables", len(never)), "last_vacuum and last_autovacuum both null"),
 				Confidence:  0.75,
@@ -723,7 +743,8 @@ func autovacuumHealth(c *model.Context, add func(model.Finding)) {
 				ID: "autovacuum_starved", Severity: model.SeverityWarn,
 				Title:       fmt.Sprintf("%d table(s) with dead tuples past the trigger and no autovacuum", len(starved)),
 				Detail:      "Dead tuples on these tables are well past the autovacuum trigger, yet no autovacuum has run — autovacuum is being outrun (not enough workers or cost budget), not blocked at the horizon.",
-				Evidence:    cap10(starved),
+				Evidence:    starved,
+				Objects:     starvedObj,
 				Remediation: "Raise autovacuum_max_workers / autovacuum_vacuum_cost_limit or lower autovacuum_vacuum_cost_delay so vacuum keeps pace; VACUUM the worst tables now.",
 				Impact:      impact(model.DimStorage, 45, fmt.Sprintf("%d tables past the vacuum trigger", len(starved)), "dead_tuples vs threshold + scale × n_live_tup"),
 				Confidence:  0.6,
@@ -771,12 +792,14 @@ func staleStatistics(c *model.Context, add func(model.Finding)) {
 	gScale := settingFloat(c, "autovacuum_analyze_scale_factor", 0.1)
 
 	var staleEv, neverEv []string
+	var staleObj, neverObj2 []string
 	for _, t := range c.Tables.Top {
 		if t.LiveTuples < deadRatioTableMinRows {
 			continue
 		}
 		if t.LastAnalyze == nil && t.LastAutoanalyze == nil {
 			neverEv = append(neverEv, fmt.Sprintf("%s.%s (%s rows)", t.Schema, t.Name, human(t.LiveTuples)))
+			neverObj2 = append(neverObj2, t.Schema+"."+t.Name)
 			continue // never-analyzed is reported by its own finding, not stale
 		}
 		th, sf := gThresh, gScale
@@ -789,6 +812,7 @@ func staleStatistics(c *model.Context, add func(model.Finding)) {
 		trigger := th + sf*float64(t.LiveTuples)
 		if trigger > 0 && float64(t.ModsSinceAnalyze) >= 2*trigger {
 			staleEv = append(staleEv, fmt.Sprintf("%s.%s: %s rows modified since analyze (trigger ≈%s)", t.Schema, t.Name, human(t.ModsSinceAnalyze), human(int64(trigger))))
+			staleObj = append(staleObj, t.Schema+"."+t.Name)
 		}
 	}
 
@@ -797,7 +821,8 @@ func staleStatistics(c *model.Context, add func(model.Finding)) {
 			ID: "stale_statistics", Severity: model.SeverityWarn,
 			Title:       fmt.Sprintf("%d table(s) with stale planner statistics", len(staleEv)),
 			Detail:      "These tables have changed far more than the autoanalyze threshold since their statistics were last refreshed, so the planner is estimating from an out-of-date picture — the usual cause of a sudden plan flip to a bad plan.",
-			Evidence:    cap10(staleEv),
+			Evidence:    staleEv,
+			Objects:     staleObj,
 			Remediation: "ANALYZE the affected tables; if it recurs, lower autovacuum_analyze_scale_factor (globally or per-table).",
 			Impact:      impact(model.DimLatency, 45, fmt.Sprintf("%d tables past 2× the analyze trigger", len(staleEv)), "n_mod_since_analyze vs threshold + scale × n_live_tup"),
 			Confidence:  0.7,
@@ -815,7 +840,8 @@ func staleStatistics(c *model.Context, add func(model.Finding)) {
 			ID: "never_analyzed", Severity: model.SeverityWarn,
 			Title:       fmt.Sprintf("%d table(s) never analyzed", len(neverEv)),
 			Detail:      "These tables have no statistics at all — the planner is guessing from defaults, which produces bad plans on anything non-trivial.",
-			Evidence:    cap10(neverEv),
+			Evidence:    neverEv,
+			Objects:     neverObj2,
 			Remediation: "Run ANALYZE on them; check why autovacuum hasn't (disabled globally or per-table, or the table is newer than the last cycle).",
 			Impact:      impact(model.DimLatency, 50, fmt.Sprintf("%d unanalyzed tables", len(neverEv)), "last_analyze and last_autoanalyze both null"),
 			Confidence:  0.8,
@@ -854,7 +880,7 @@ func lowHotUpdateRatio(c *model.Context, add func(model.Finding)) {
 	if c.Tables == nil {
 		return
 	}
-	var ev []string
+	var ev, objs []string
 	worst := 1.0
 	for _, t := range c.Tables.Top {
 		if t.Updates < hotUpdateMinVolume {
@@ -868,6 +894,7 @@ func lowHotUpdateRatio(c *model.Context, add func(model.Finding)) {
 			worst = ratio
 		}
 		ev = append(ev, fmt.Sprintf("%s.%s: %.0f%% HOT (%s updates)", t.Schema, t.Name, ratio*100, human(t.Updates)))
+		objs = append(objs, t.Schema+"."+t.Name)
 	}
 	if len(ev) == 0 {
 		return
@@ -876,7 +903,8 @@ func lowHotUpdateRatio(c *model.Context, add func(model.Finding)) {
 		ID: "low_hot_update_ratio", Severity: model.SeverityWarn,
 		Title:       fmt.Sprintf("%d table(s) with low HOT-update ratio (worst %.0f%%)", len(ev), worst*100),
 		Detail:      "A HOT (heap-only tuple) update avoids rewriting every index. A low ratio means most updates either touch an indexed column or land on a page with no free space (fillfactor 100), so each update writes to every index — extra WAL, index bloat, and vacuum work.",
-		Evidence:    cap10(ev),
+		Evidence:    ev,
+		Objects:     objs,
 		Remediation: "Lower the table's fillfactor (e.g. 90) to leave room for HOT updates, and avoid indexing columns that are updated frequently.",
 		Impact:      impact(model.DimThroughput, 40, fmt.Sprintf("%.0f%% HOT on the worst table", worst*100), "n_tup_hot_upd / n_tup_upd"),
 		Confidence:  0.7,
@@ -1091,7 +1119,7 @@ func sequenceExhaustion(c *model.Context, add func(model.Finding)) {
 	if c.Sequences == nil || len(c.Sequences.Items) == 0 {
 		return
 	}
-	var ev []string
+	var ev, objs []string
 	var worst float64
 	for _, s := range c.Sequences.Items {
 		if s.PctUsed < seqExhaustionWarn {
@@ -1105,6 +1133,7 @@ func sequenceExhaustion(c *model.Context, add func(model.Finding)) {
 			owned = " (" + s.OwnedBy + ")"
 		}
 		ev = append(ev, fmt.Sprintf("%s.%s%s: %.0f%% used (%s / %s)", s.Schema, s.Name, owned, s.PctUsed*100, human(s.LastValue), human(s.Ceiling)))
+		objs = append(objs, s.Schema+"."+s.Name)
 	}
 	if len(ev) == 0 {
 		return
@@ -1117,7 +1146,8 @@ func sequenceExhaustion(c *model.Context, add func(model.Finding)) {
 		ID: "sequence_exhaustion", Severity: sev,
 		Title:       fmt.Sprintf("%d sequence(s) near exhaustion (worst %.0f%%)", len(ev), worst*100),
 		Detail:      "A sequence at its ceiling raises an error on the next nextval() — a write outage for anything that inserts. An int4 identity/serial column wraps at 2.1 billion even when the sequence's own max_value is higher.",
-		Evidence:    cap10(ev),
+		Evidence:    ev,
+		Objects:     objs,
 		Remediation: "Migrate the owning column to bigint (ALTER TABLE … ALTER COLUMN … TYPE bigint — plan for the table rewrite). If the column is already bigint, exhaustion is astronomically far off.",
 		Impact:      impact(model.DimRisk, worst*100, fmt.Sprintf("%.0f%% of range used", worst*100), "last_value / min(max_value, column type max)"),
 		Confidence:  0.9,
@@ -1379,17 +1409,18 @@ func replicaDisconnected(c *model.Context) string {
 // corruption detection being silenced, and checksums being off entirely.
 func checksumFindings(c *model.Context, add func(model.Finding)) {
 	if c.Checksums != nil && len(c.Checksums.Failures) > 0 {
-		var ev []string
+		var ev, objs []string
 		var total int64
 		for _, f := range c.Checksums.Failures {
 			total += f.Count
 			ev = append(ev, fmt.Sprintf("%s: %d failure(s), last %s", f.Database, f.Count, tsOr(f.LastFailure)))
+			objs = append(objs, "db:"+f.Database)
 		}
 		add(model.Finding{
-			ID: "checksum_failures", Severity: model.SeverityCritical,
+			ID: "checksum_failures", Severity: model.SeverityCritical, Objects: objs,
 			Title:       fmt.Sprintf("%d data-checksum failure(s) — likely corruption", total),
 			Detail:      "Postgres read one or more pages whose checksum did not match what was written: storage corruption, bad memory, or a filesystem that acknowledged a write it didn't persist. It does not heal itself, and reads of the affected pages return wrong data.",
-			Evidence:    cap10(ev),
+			Evidence:    ev,
 			Remediation: "Identify the affected relation and take it out of write service; investigate storage and hardware; restore the affected data from a known-good backup.",
 			// Load-bearing: the instinct is to VACUUM FULL / REINDEX, which is the wrong move.
 			Caveats:    []string{"Do NOT VACUUM FULL or REINDEX the affected relation — rewriting the pages destroys the evidence and can propagate the damage. Preserve state, then restore from backup."},

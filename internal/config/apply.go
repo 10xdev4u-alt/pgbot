@@ -11,24 +11,114 @@ import (
 
 // Apply enforces the config over already-computed findings, in the precedence
 // the spec fixes: [thresholds] were already applied before Compute (they change
-// whether a finding is produced at all); here we remap [severity], then mark
-// [[ignore]] matches suppressed. A suppressed finding is NEVER deleted — the
-// renderer and exit-code logic read the Suppressed flag and decide visibility.
+// whether a finding is produced at all); here we remap [severity], then apply
+// [[ignore]] matches. A suppressed finding is NEVER deleted — the renderer and
+// exit-code logic read the Suppressed flag and decide visibility.
+//
+// Aggregate findings (Objects populated) suppress PER ROW: an object-scoped rule
+// drops only the matching entries and the finding survives on the rest; the whole
+// finding is suppressed only if a rule with no object matches, or every row is.
+// This is what makes muting one sequence not swallow a new one. Rules that fire
+// this run are recorded for the dead-rule detector (B2-3).
+//
 // now is used to skip expired ignore rules (B2-3).
 func (c *Config) Apply(fs []model.Finding, now time.Time) []model.Finding {
+	c.matched = map[string]bool{}
 	for i := range fs {
 		f := &fs[i]
 		if sv, ok := c.Severity[f.ID]; ok && sv != f.Severity {
 			f.SeverityRemapped = f.Severity
 			f.Severity = sv
 		}
-		if rule, ok := c.matchIgnore(f.ID, f.Object, now); ok {
-			f.Suppressed = true
-			f.SuppressionReason = rule.Reason
-			f.SuppressionRule = rule.String()
-		}
+		c.applyIgnore(f, now)
 	}
 	return fs
+}
+
+// applyIgnore marks/filters one finding by the ignore rules.
+func (c *Config) applyIgnore(f *model.Finding, now time.Time) {
+	if len(f.Objects) > 0 {
+		c.suppressRows(f, now)
+		return
+	}
+	if rule, ok := c.matchIgnore(f.ID, f.Object, now); ok {
+		c.matched[rule.String()] = true
+		f.Suppressed = true
+		f.SuppressionReason = rule.Reason
+		f.SuppressionRule = rule.String()
+	}
+}
+
+// suppressRows applies ignore rules to an aggregate finding at the row level.
+func (c *Config) suppressRows(f *model.Finding, now time.Time) {
+	// A rule with no object mutes the whole aggregate (the "all of them" case).
+	for _, r := range c.Ignore {
+		if r.Finding == f.ID && r.Object == "" && !expired(r, now) {
+			c.matched[r.String()] = true
+			f.Suppressed = true
+			f.SuppressionReason = r.Reason
+			f.SuppressionRule = r.String()
+			return
+		}
+	}
+	// Otherwise drop only the rows an object-scoped rule matches.
+	var keepEv, keepObj, cut []string
+	var lastRule, lastReason string
+	for i, obj := range f.Objects {
+		rule, ok := c.matchIgnore(f.ID, obj, now)
+		if ok {
+			c.matched[rule.String()] = true
+			cut = append(cut, obj)
+			lastRule = rule.String()
+			if rule.Reason != "" {
+				lastReason = rule.Reason
+			}
+			continue
+		}
+		keepObj = append(keepObj, obj)
+		if i < len(f.Evidence) {
+			keepEv = append(keepEv, f.Evidence[i])
+		}
+	}
+	switch {
+	case len(cut) == 0:
+		return // nothing matched
+	case len(keepObj) == 0:
+		// Every row matched → suppress the whole finding.
+		f.Suppressed = true
+		f.SuppressionReason = lastReason
+		f.SuppressionRule = lastRule
+	default:
+		// Partial: keep the survivors, correct the leading count, and note what
+		// was dropped so the suppression is never silent.
+		f.Evidence, f.Objects = keepEv, keepObj
+		f.Title = decrementLeadingCount(f.Title, len(keepObj))
+		f.Caveats = append(f.Caveats, fmt.Sprintf("%d entr%s suppressed by config (%s): %s",
+			len(cut), plural(len(cut), "y", "ies"), lastRule, strings.Join(cut, ", ")))
+	}
+}
+
+// decrementLeadingCount rewrites the leading integer of an aggregate title to n
+// (titles are built as "%d thing(s) …"). If the title doesn't start with a digit
+// it is returned unchanged. Secondary stats in the title (worst %, total bytes)
+// are not recomputed and reflect the pre-suppression set — the survivor list is
+// authoritative.
+func decrementLeadingCount(title string, n int) string {
+	i := 0
+	for i < len(title) && title[i] >= '0' && title[i] <= '9' {
+		i++
+	}
+	if i == 0 {
+		return title
+	}
+	return fmt.Sprintf("%d%s", n, title[i:])
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 // matchIgnore returns the most specific active ignore rule for (id, object).
@@ -142,16 +232,4 @@ func UnusedFindings(ruleStrings []string) []model.Finding {
 		Impact:      model.Impact{Score: 5, Basis: "no match across recent snapshots"},
 		Confidence:  0.7,
 	}}
-}
-
-// MatchedRules reports, for a set of findings, which ignore rules actually fired.
-// Used by `config check`/`explain` and the dead-rule detector (B2-3).
-func (c *Config) MatchedRules(fs []model.Finding, now time.Time) map[string]bool {
-	hit := map[string]bool{}
-	for _, f := range fs {
-		if r, ok := c.matchIgnore(f.ID, f.Object, now); ok {
-			hit[r.String()] = true
-		}
-	}
-	return hit
 }

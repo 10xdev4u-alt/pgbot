@@ -142,6 +142,12 @@ func TestDocsPages_structureAndFrontMatter(t *testing.T) {
 			if !strings.Contains(p.body, "[[ignore]]") || !strings.Contains(p.body, `finding = "`+p.id+`"`) {
 				t.Error("no pasteable [[ignore]] block naming this finding")
 			}
+			// A per-object finding must show an object-scoped rule — a bare
+			// finding-only rule over-suppresses and is exactly the failure mode the
+			// aggregate-suppression decision fixed.
+			if p.fm["object"] != "cluster" && !strings.Contains(p.body, "object  = ") && !strings.Contains(p.body, "object = ") {
+				t.Errorf("object class %q but the [[ignore]] block has no `object =` line", p.fm["object"])
+			}
 		})
 	}
 }

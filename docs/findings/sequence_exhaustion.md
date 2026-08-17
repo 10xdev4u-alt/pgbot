@@ -3,7 +3,7 @@ id: sequence_exhaustion
 severity: warn
 critical_when: "a sequence is ≥90% consumed"
 dimension: risk
-object: cluster
+object: relation
 requires: []
 thresholds: []
 related: [txid_wraparound]
@@ -11,7 +11,7 @@ related: [txid_wraparound]
 
 # sequence_exhaustion
 
-**Severity:** warn (critical when a sequence is ≥90% consumed) · **Dimension:** risk · **Object identity:** `cluster` (see [configuration](../configuration.md)) · **Requires:** —
+**Severity:** warn (critical when a sequence is ≥90% consumed) · **Dimension:** risk · **Object identity:** `schema.sequence` (see [configuration](../configuration.md)) · **Requires:** —
 
 ## What pgbot observed
 
@@ -73,15 +73,22 @@ If the column is **already `bigint`**, exhaustion is astronomically far off
 
 ## When to ignore it
 
-Every near-ceiling sequence is already `bigint`, so the wrap is effectively
-impossible in the lifetime of the system:
+You've confirmed a **specific** sequence is `bigint`-backed, so its wrap is
+astronomically far off. Scope the rule to that sequence by name — a new `int4`
+serial that crosses the threshold tomorrow still surfaces, because the rule only
+drops this one object:
 
 ```toml
 [[ignore]]
 finding = "sequence_exhaustion"
-reason  = "the near-ceiling sequences are all bigint; wrap is astronomically far off"
+object  = "public.legacy_events_id_seq"
+reason  = "already bigint; wrap is astronomically far off"
 expires = "2027-01-01"
 ```
+
+Do **not** omit `object` here — a bare `finding = "sequence_exhaustion"` mutes the
+check for *every* sequence, including ones you add later, which is exactly how a
+future `int4` overflow gets hidden.
 
 ## What pgbot cannot see
 

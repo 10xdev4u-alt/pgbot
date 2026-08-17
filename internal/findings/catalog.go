@@ -1,6 +1,10 @@
 package findings
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/pgrundev/pgbot/internal/model"
+)
 
 // Meta is the machine-readable metadata for one finding: the contract the
 // docs/findings/<id>.md page must match, and the source of truth for the
@@ -25,16 +29,16 @@ type Meta struct {
 var catalog = map[string]Meta{
 	"sequence_exhaustion": {
 		Severity: "warn", CriticalWhen: "a sequence is ≥90% consumed",
-		Dimension: "risk", ObjectClass: "cluster",
+		Dimension: "risk", ObjectClass: "relation",
 		Related: []string{"txid_wraparound"},
 	},
 	"low_hot_update_ratio": {
-		Severity: "warn", Dimension: "throughput", ObjectClass: "cluster",
+		Severity: "warn", Dimension: "throughput", ObjectClass: "relation",
 		Requires: []string{"track_counts (default on)"},
 		Related:  []string{"table_bloat", "unused_indexes"},
 	},
 	"checksum_failures": {
-		Severity: "critical", Dimension: "risk", ObjectClass: "cluster",
+		Severity: "critical", Dimension: "risk", ObjectClass: "db",
 		Requires: []string{"PG12+", "data_checksums=on"},
 		Related:  []string{"ignore_checksum_failure_on", "checksums_disabled"},
 	},
@@ -50,6 +54,16 @@ func CatalogIDs() []string {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+// FindingObjectClass returns the suppression class a finding is keyed by: for an
+// aggregate (per-row Objects populated) it's the row class; otherwise the
+// finding-level Object's class.
+func FindingObjectClass(f model.Finding) string {
+	if len(f.Objects) > 0 {
+		return ObjectClass(f.Objects[0])
+	}
+	return ObjectClass(f.Object)
 }
 
 // ObjectClass maps a finding's Object string to its suppression class — the
