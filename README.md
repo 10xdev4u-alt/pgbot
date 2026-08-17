@@ -131,6 +131,7 @@ carried into the advice, not lost.
 | Go | `go install github.com/pgrundev/pgbot/cmd/pgbot@latest` |
 | Docker | `docker run --rm ghcr.io/pgrundev/pgbot inspect "$DATABASE_URL"` |
 | Homebrew | `brew install pgrundev/tap/pgbot` |
+| Windows / manual | download the archive for your OS/arch from [Releases](https://github.com/pgrundev/pgbot/releases) (Linux/macOS `.tar.gz`, Windows `.zip`) |
 
 Some security teams won't pipe `curl` to `sh` — every alternative above installs
 the same verified binary. Releases ship SHA256 checksums signed with **cosign**
@@ -378,8 +379,9 @@ Override the model or endpoint per provider: `PGBOT_OPENAI_MODEL` /
 `PGBOT_OPENAI_URL` (any OpenAI-compatible endpoint works — Azure OpenAI,
 OpenRouter, a local server) and `PGBOT_GEMINI_MODEL` / `PGBOT_GEMINI_URL`.
 
-**Exit codes** (for CI): `0` clean · `1` warnings · `2` critical findings ·
-`3` connection/execution failure.
+**Exit codes** (a stable contract for CI): `0` clean · `1` warnings · `2` critical
+findings · `3` connection/execution failure · `64` usage error (bad flags/args).
+Suppressed findings never contribute to the exit code.
 
 ### `advise` — index suggestions the planner validates
 
