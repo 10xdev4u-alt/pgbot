@@ -47,10 +47,19 @@ func main() {
 	root.AddCommand(newExplainFindingCmd())
 	root.AddCommand(newDiffCmd())
 
+	// enteredRun distinguishes a malformed invocation (bad flags/args/unknown
+	// command — cobra fails before PersistentPreRun) from an execution failure
+	// (a handler ran and returned an error). B5's --fail-on makes exit codes a
+	// public interface, so the two must not share code 3.
+	enteredRun := false
+	root.PersistentPreRun = func(*cobra.Command, []string) { enteredRun = true }
+
 	if err := root.ExecuteContext(ctx); err != nil {
-		// Exit-code contract: connection/exec failure is 3. Command handlers that
-		// need the finding-based codes (1 warn, 2 critical) call os.Exit directly.
 		fmt.Fprintln(os.Stderr, "pgbot: "+err.Error())
-		os.Exit(exitFailure)
+		if !enteredRun {
+			os.Exit(exitUsage) // 64 — bad flags/args/command; the request was malformed
+		}
+		os.Exit(exitFailure) // 3 — connection/execution failure. Finding-based codes
+		// (1 warn, 2 critical) are set by handlers via os.Exit directly.
 	}
 }

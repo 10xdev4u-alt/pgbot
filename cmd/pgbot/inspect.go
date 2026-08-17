@@ -16,12 +16,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Exit-code contract (CI users depend on these):
+// Exit-code contract — a public interface people script against (B5). Suppressed
+// findings never contribute to it (B2-2). Documented in the README.
 const (
-	exitClean    = 0 // no findings above info
-	exitWarn     = 1 // warnings present
-	exitCritical = 2 // critical findings present
-	exitFailure  = 3 // connection / execution failure
+	exitClean    = 0  // no findings above info (or all above-info findings suppressed)
+	exitWarn     = 1  // at least one warning, no criticals
+	exitCritical = 2  // at least one critical finding
+	exitFailure  = 3  // connection / execution failure
+	exitUsage    = 64 // malformed invocation: bad flags, args, or unknown command (EX_USAGE)
 )
 
 type inspectFlags struct {
@@ -36,7 +38,7 @@ type inspectFlags struct {
 	window       time.Duration
 	full         bool
 	timeout      time.Duration
-	config       string // explicit .pgbot.toml path ("" = discover)
+	config       string   // explicit .pgbot.toml path ("" = discover)
 	ignore       []string // one-off --ignore finding[:object] rules (B2-4)
 }
 
