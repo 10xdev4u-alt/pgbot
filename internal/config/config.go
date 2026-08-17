@@ -69,8 +69,8 @@ type Config struct {
 	ThresholdOverrides map[string]float64 // config-key → value, only those the file set
 	Severity           map[string]string  // finding id → remapped severity
 	Ignore             []IgnoreRule
-	Source             string   // path loaded from; "" means built-in defaults
-	Warnings           []string // non-fatal problems → Context.ConfigWarnings
+	Source             string          // path loaded from; "" means built-in defaults
+	Warnings           []string        // non-fatal problems → Context.ConfigWarnings
 	matched            map[string]bool // rules that fired this run (set by Apply, for B2-3 rot)
 }
 

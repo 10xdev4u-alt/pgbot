@@ -13,13 +13,13 @@ import (
 // Meta fails CI, and against every page's front-matter (the docs test) so a page
 // that disagrees with the binary fails CI too.
 type Meta struct {
-	Severity      string   // base severity: critical | warn | info
-	CriticalWhen  string   // when the severity escalates to critical ("" if fixed)
-	Dimension     string   // Impact.Dimension: risk | storage | latency | throughput
-	ObjectClass   string   // suppression object class: cluster|relation|index|query|slot|sub|setting|db
-	Requires      []string // capabilities/versions the finding needs
-	Thresholds    []string // overridable [thresholds] keys, if any
-	Related       []string // finding ids that travel with this one
+	Severity     string   // base severity: critical | warn | info
+	CriticalWhen string   // when the severity escalates to critical ("" if fixed)
+	Dimension    string   // Impact.Dimension: risk | storage | latency | throughput
+	ObjectClass  string   // suppression object class: cluster|relation|index|query|slot|sub|setting|db
+	Requires     []string // capabilities/versions the finding needs
+	Thresholds   []string // overridable [thresholds] keys, if any
+	Related      []string // finding ids that travel with this one
 }
 
 // catalog holds Meta for every finding. B7-0 seeds the two exemplars plus the
@@ -41,13 +41,13 @@ var catalog = map[string]Meta{
 		Severity: "warn", CriticalWhen: "",
 		Dimension: "storage", ObjectClass: "relation",
 		Thresholds: []string{"unused_index_min_size_mb"},
-		Related: []string{"redundant_indexes", "low_hot_update_ratio"},
+		Related:    []string{"redundant_indexes", "low_hot_update_ratio"},
 	},
 	"table_bloat": {
 		Severity: "warn", CriticalWhen: "",
 		Dimension: "storage", ObjectClass: "relation",
 		Thresholds: []string{"dead_ratio_warn"},
-		Related: []string{"low_hot_update_ratio", "vacuum_horizon_blocked", "autovacuum_starved"},
+		Related:    []string{"low_hot_update_ratio", "vacuum_horizon_blocked", "autovacuum_starved"},
 	},
 	"redundant_indexes": {
 		Severity: "info", CriticalWhen: "",
@@ -108,7 +108,7 @@ var catalog = map[string]Meta{
 		Severity: "warn", CriticalWhen: "",
 		Dimension: "throughput", ObjectClass: "relation",
 		Requires: []string{"track_counts (default on)"},
-		Related: []string{"table_bloat", "unused_indexes"},
+		Related:  []string{"table_bloat", "unused_indexes"},
 	},
 	"low_cache_hit": {
 		Severity: "warn", CriticalWhen: "",
@@ -129,19 +129,19 @@ var catalog = map[string]Meta{
 		Severity: "warn", CriticalWhen: "",
 		Dimension: "latency", ObjectClass: "cluster",
 		Requires: []string{"ASH sampling (ash-hz>0)"},
-		Related: []string{"blocking_chains"},
+		Related:  []string{"blocking_chains"},
 	},
 	"wait_io_bound": {
 		Severity: "warn", CriticalWhen: "",
 		Dimension: "throughput", ObjectClass: "cluster",
 		Requires: []string{"ASH sampling (ash-hz>0)", "track_io_timing"},
-		Related: []string{"low_cache_hit", "seq_scan_heavy"},
+		Related:  []string{"low_cache_hit", "seq_scan_heavy"},
 	},
 	"wait_lwlock_pressure": {
 		Severity: "warn", CriticalWhen: "",
 		Dimension: "throughput", ObjectClass: "cluster",
 		Requires: []string{"ASH sampling (ash-hz>0)"},
-		Related: []string{"checkpoints_forced"},
+		Related:  []string{"checkpoints_forced"},
 	},
 	"connection_saturation": {
 		Severity: "warn", CriticalWhen: "at/near max_connections",
@@ -177,32 +177,32 @@ var catalog = map[string]Meta{
 		Severity: "critical", CriticalWhen: "",
 		Dimension: "risk", ObjectClass: "cluster",
 		Requires: []string{"replication", "synchronous_standby_names set"},
-		Related: []string{"replica_lag_time", "replica_disconnected"},
+		Related:  []string{"replica_lag_time", "replica_disconnected"},
 	},
 	"replica_lag_time": {
 		Severity: "warn", CriticalWhen: "replay lag past the critical threshold",
 		Dimension: "risk", ObjectClass: "cluster",
 		Thresholds: []string{"replica_lag_warn_seconds"},
-		Requires: []string{"replication", "WAL flowing"},
-		Related: []string{"sync_rep_degraded", "recovery_conflicts"},
+		Requires:   []string{"replication", "WAL flowing"},
+		Related:    []string{"sync_rep_degraded", "recovery_conflicts"},
 	},
 	"recovery_conflicts": {
 		Severity: "warn", CriticalWhen: "",
 		Dimension: "risk", ObjectClass: "cluster",
 		Requires: []string{"standby"},
-		Related: []string{"replica_lag_time"},
+		Related:  []string{"replica_lag_time"},
 	},
 	"replica_disconnected": {
 		Severity: "warn", CriticalWhen: "",
 		Dimension: "risk", ObjectClass: "cluster",
 		Requires: []string{"replication"},
-		Related: []string{"sync_rep_degraded", "replication_slot_inactive"},
+		Related:  []string{"sync_rep_degraded", "replication_slot_inactive"},
 	},
 	"checksum_failures": {
 		Severity: "critical", CriticalWhen: "",
 		Dimension: "risk", ObjectClass: "db",
 		Requires: []string{"PG12+", "data_checksums=on"},
-		Related: []string{"ignore_checksum_failure_on", "checksums_disabled"},
+		Related:  []string{"ignore_checksum_failure_on", "checksums_disabled"},
 	},
 	"ignore_checksum_failure_on": {
 		Severity: "critical", CriticalWhen: "",
@@ -213,25 +213,25 @@ var catalog = map[string]Meta{
 		Severity: "info", CriticalWhen: "",
 		Dimension: "risk", ObjectClass: "setting",
 		Requires: []string{"PG12+"},
-		Related: []string{"checksum_failures"},
+		Related:  []string{"checksum_failures"},
 	},
 	"archiving_failing": {
 		Severity: "critical", CriticalWhen: "downgraded to info on a managed provider",
 		Dimension: "risk", ObjectClass: "cluster",
 		Requires: []string{"primary", "archive_mode=on"},
-		Related: []string{"archiving_stalled", "replication_slot_inactive"},
+		Related:  []string{"archiving_stalled", "replication_slot_inactive"},
 	},
 	"archiving_stalled": {
 		Severity: "critical", CriticalWhen: "downgraded to info on a managed provider",
 		Dimension: "risk", ObjectClass: "cluster",
 		Requires: []string{"primary", "archive_mode=on"},
-		Related: []string{"archiving_failing"},
+		Related:  []string{"archiving_failing"},
 	},
 	"archiving_disabled": {
 		Severity: "warn", CriticalWhen: "downgraded to info on a managed provider",
 		Dimension: "risk", ObjectClass: "cluster",
 		Requires: []string{"primary"},
-		Related: []string{"archiving_failing"},
+		Related:  []string{"archiving_failing"},
 	},
 	"replication_slot_inactive": {
 		Severity: "warn", CriticalWhen: "retained WAL past the critical size",
@@ -242,19 +242,19 @@ var catalog = map[string]Meta{
 		Severity: "warn", CriticalWhen: "",
 		Dimension: "risk", ObjectClass: "sub",
 		Requires: []string{"logical replication"},
-		Related: []string{"replica_disconnected"},
+		Related:  []string{"replica_disconnected"},
 	},
 	"query_slowdown": {
 		Severity: "warn", CriticalWhen: "",
 		Dimension: "latency", ObjectClass: "cluster",
 		Requires: []string{"pg_stat_statements", "a baseline snapshot"},
-		Related: []string{"stale_statistics"},
+		Related:  []string{"stale_statistics"},
 	},
 	"pgss_entries_evicted": {
 		Severity: "warn", CriticalWhen: "",
 		Dimension: "throughput", ObjectClass: "cluster",
 		Requires: []string{"pg_stat_statements"},
-		Related: []string{"pg_stat_statements_missing"},
+		Related:  []string{"pg_stat_statements_missing"},
 	},
 	"work_mem_low": {
 		Severity: "warn", CriticalWhen: "",
@@ -290,7 +290,7 @@ var catalog = map[string]Meta{
 		Severity: "warn", CriticalWhen: "",
 		Dimension: "latency", ObjectClass: "setting",
 		Requires: []string{"a managed/SSD provider"},
-		Related: []string{"seq_scan_heavy"},
+		Related:  []string{"seq_scan_heavy"},
 	},
 	"work_mem_overcommit": {
 		Severity: "warn", CriticalWhen: "",

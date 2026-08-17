@@ -38,9 +38,9 @@ func TestApply_severityRemap(t *testing.T) {
 func TestApply_ignorePrecedence(t *testing.T) {
 	// exact object beats glob beats omitted-object.
 	c := &Config{Ignore: []IgnoreRule{
-		{Finding: "unused_indexes", Reason: "all"},                                  // omitted → spec 1
-		{Finding: "unused_indexes", Object: "public.idx_*", Reason: "glob"},         // glob → spec 2
-		{Finding: "unused_indexes", Object: "public.idx_legacy", Reason: "exact"},   // exact → spec 3
+		{Finding: "unused_indexes", Reason: "all"},                                // omitted → spec 1
+		{Finding: "unused_indexes", Object: "public.idx_*", Reason: "glob"},       // glob → spec 2
+		{Finding: "unused_indexes", Object: "public.idx_legacy", Reason: "exact"}, // exact → spec 3
 	}}
 	fs := []model.Finding{{ID: "unused_indexes", Object: "public.idx_legacy", Severity: model.SeverityWarn}}
 	fs = c.Apply(fs, fixedNow())
@@ -153,7 +153,7 @@ func TestExpiredFindings(t *testing.T) {
 	c := &Config{Ignore: []IgnoreRule{
 		{Finding: "checksums_disabled", Expires: "2026-08-15", Reason: "temp"}, // expired at fixedNow
 		{Finding: "unused_indexes", Expires: "2027-01-01"},                     // still valid
-		{Finding: "io_timing_off"},                                            // no expiry
+		{Finding: "io_timing_off"},                                             // no expiry
 	}}
 	fs := c.ExpiredFindings(fixedNow())
 	if len(fs) != 1 {

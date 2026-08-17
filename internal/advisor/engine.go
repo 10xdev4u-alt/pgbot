@@ -24,8 +24,8 @@ type Planner interface {
 // QueryInput is one candidate-for-improvement slow query.
 type QueryInput struct {
 	QueryID  int64
-	Text     string  // RAW normalized ($1) SQL, used only to plan — never stored
-	Scrubbed string  // display form (scrubbed), safe for output
+	Text     string // RAW normalized ($1) SQL, used only to plan — never stored
+	Scrubbed string // display form (scrubbed), safe for output
 	Calls    int64
 	SharePct float64 // % of total DB exec time
 }

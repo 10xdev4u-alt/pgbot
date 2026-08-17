@@ -66,13 +66,13 @@ func TestCatalog_idsAreKnown(t *testing.T) {
 
 func TestObjectClass(t *testing.T) {
 	cases := map[string]string{
-		"":                          "cluster",
-		"setting:track_io_timing":   "setting",
-		"slot:wal2json":             "slot",
-		"sub:orders":                "sub",
-		"q:123":                     "query",
-		"db:analytics":              "db",
-		"public.orders":             "relation",
+		"":                        "cluster",
+		"setting:track_io_timing": "setting",
+		"slot:wal2json":           "slot",
+		"sub:orders":              "sub",
+		"q:123":                   "query",
+		"db:analytics":            "db",
+		"public.orders":           "relation",
 	}
 	for in, want := range cases {
 		if got := ObjectClass(in); got != want {

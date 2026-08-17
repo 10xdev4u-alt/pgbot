@@ -68,12 +68,12 @@ func TestQuoteIdent(t *testing.T) {
 
 func TestSanitizeQuery(t *testing.T) {
 	cases := map[string]string{
-		"SELECT * FROM t WHERE a = $1":  "SELECT * FROM t WHERE a = $1",
-		"select 1;":                     "select 1",
-		"  SELECT x FROM y ; ":          "SELECT x FROM y",
+		"SELECT * FROM t WHERE a = $1":    "SELECT * FROM t WHERE a = $1",
+		"select 1;":                       "select 1",
+		"  SELECT x FROM y ; ":            "SELECT x FROM y",
 		"WITH w AS (...) SELECT * FROM w": "", // WITH refused (writable-CTE risk)
-		"UPDATE t SET x = 1":            "",   // DML refused
-		"SELECT 1; DROP TABLE t":        "",   // second statement refused
+		"UPDATE t SET x = 1":              "", // DML refused
+		"SELECT 1; DROP TABLE t":          "", // second statement refused
 	}
 	for in, want := range cases {
 		if got := sanitizeQuery(in); got != want {

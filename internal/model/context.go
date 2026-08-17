@@ -530,11 +530,11 @@ type Finding struct {
 	// "sub:<name>", "setting:<name>", "db:<name>", or "" for cluster-scoped.
 	// NEVER an ephemeral id (pid, LSN, lock address) — that would silence a
 	// different session tomorrow, so PID-scoped findings are cluster-scoped.
-	Object      string   `json:"object,omitempty"`
-	Severity    string   `json:"severity"`
-	Title       string   `json:"title"`
-	Detail      string   `json:"detail"`
-	Evidence    []string `json:"evidence,omitempty"`
+	Object   string   `json:"object,omitempty"`
+	Severity string   `json:"severity"`
+	Title    string   `json:"title"`
+	Detail   string   `json:"detail"`
+	Evidence []string `json:"evidence,omitempty"`
 	// Objects is the per-Evidence-row stable object identity for an AGGREGATE
 	// finding (one finding listing many objects), aligned index-for-index with
 	// Evidence. It lets an object-scoped [[ignore]] rule drop just the matching

@@ -51,7 +51,6 @@ func TestWalArchiving(t *testing.T) {
 	}
 }
 
-
 // The run-over-run failed_count delta must fire archiving_failing even when the
 // timestamp says currently-succeeding (the intermittent-failure case).
 func TestWalArchiving_deltaTrigger(t *testing.T) {

@@ -24,13 +24,13 @@ func TestStableObject_rejectsEphemeral(t *testing.T) {
 	}
 	// Ephemeral identifiers a suppression rule must never key on.
 	invalid := []string{
-		"42",             // pid
-		"18446744073",    // xid/oid
-		"0/1A2B3C4",      // LSN-ish (no dot, has slash)
-		"setting:",       // empty payload
-		"slot:",          // empty payload
-		"orders",         // unqualified relation
-		"12345.678",      // all-digit "relation" → could be a pid.oid
+		"42",          // pid
+		"18446744073", // xid/oid
+		"0/1A2B3C4",   // LSN-ish (no dot, has slash)
+		"setting:",    // empty payload
+		"slot:",       // empty payload
+		"orders",      // unqualified relation
+		"12345.678",   // all-digit "relation" → could be a pid.oid
 	}
 	for _, s := range invalid {
 		if StableObject(s) {
