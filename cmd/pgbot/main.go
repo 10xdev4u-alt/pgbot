@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -56,10 +57,21 @@ func main() {
 
 	if err := root.ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "pgbot: "+err.Error())
-		if !enteredRun {
-			os.Exit(exitUsage) // 64 — bad flags/args/command; the request was malformed
+		// 64 — the invocation was malformed: cobra failed before a handler ran
+		// (bad flags/args/command), OR a handler rejected a flag VALUE (tagged
+		// usageError). 3 otherwise — a real connection/execution failure. The
+		// finding-based codes (1 warn, 2 critical) are set by handlers directly.
+		var ue usageError
+		if !enteredRun || errors.As(err, &ue) {
+			os.Exit(exitUsage)
 		}
-		os.Exit(exitFailure) // 3 — connection/execution failure. Finding-based codes
-		// (1 warn, 2 critical) are set by handlers via os.Exit directly.
+		os.Exit(exitFailure)
 	}
 }
+
+// usageError tags an error a handler raises for a bad flag VALUE (e.g.
+// --fail-on=bogus), so main maps it to exit 64 like cobra's own parse errors.
+type usageError struct{ error }
+
+// usageErrf builds a usageError.
+func usageErrf(format string, a ...any) error { return usageError{fmt.Errorf(format, a...)} }

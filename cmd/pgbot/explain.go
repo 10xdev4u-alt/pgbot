@@ -49,10 +49,14 @@ func newExplainCmd() *cobra.Command {
 	fl.BoolVar(&yes, "yes", false, "skip the 'this sends data to the AI provider' confirmation prompt")
 	fl.StringVar(&f.config, "config", "", "path to .pgbot.toml (default: discover from cwd upward)")
 	fl.StringArrayVar(&f.ignore, "ignore", nil, "suppress a finding for this run: finding[:object] (repeatable)")
+	fl.StringVar(&f.failOn, "fail-on", "warn", "exit non-zero on findings at/above this severity: critical|warn|info|none")
 	return cmd
 }
 
 func runExplain(cmd *cobra.Command, args []string, f inspectFlags, yes bool) error {
+	if !validFailOn(f.failOn) {
+		return usageErrf("--fail-on must be critical|warn|info|none, got %q", f.failOn)
+	}
 	// Build the model client first — fail fast before we connect if the key is
 	// missing, so the user isn't surprised after a full inspection.
 	client, err := ai.NewFromEnv()
@@ -125,7 +129,7 @@ func runExplain(cmd *cobra.Command, args []string, f inspectFlags, yes bool) err
 	explanation, aiErr := ai.Explain(ctx, client, c)
 	printAISection(color, client.ModelName(), explanation, aiErr)
 
-	os.Exit(exitCode(c.Findings))
+	os.Exit(exitCode(c.Findings, f.failOn))
 	return nil
 }
 

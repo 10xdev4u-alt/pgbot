@@ -28,7 +28,7 @@ func TestExitCode_suppressedNeverContributes(t *testing.T) {
 		}, exitCritical},
 	}
 	for _, tc := range cases {
-		if got := exitCode(tc.fs); got != tc.want {
+		if got := exitCode(tc.fs, "warn"); got != tc.want {
 			t.Errorf("%s: exitCode = %d, want %d", tc.name, got, tc.want)
 		}
 	}

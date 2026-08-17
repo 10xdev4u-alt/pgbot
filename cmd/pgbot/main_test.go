@@ -25,7 +25,7 @@ func TestExitCode(t *testing.T) {
 		{"critical outranks warning regardless of order", []model.Finding{crit, warn}, exitCritical},
 	}
 	for _, c := range cases {
-		if got := exitCode(c.fs); got != c.want {
+		if got := exitCode(c.fs, "warn"); got != c.want {
 			t.Errorf("%s: exitCode = %d, want %d", c.name, got, c.want)
 		}
 	}

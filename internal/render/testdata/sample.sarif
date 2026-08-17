@@ -1,0 +1,147 @@
+{
+  "version": "2.1.0",
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "informationUri": "https://pgbot.dev",
+          "name": "pgbot",
+          "rules": [
+            {
+              "id": "fsync_off",
+              "shortDescription": {
+                "text": "fsync is OFF — a crash can corrupt the database"
+              },
+              "helpUri": "https://github.com/pgrundev/pgbot/blob/main/docs/findings/fsync_off.md",
+              "properties": {
+                "defaultSeverity": "critical",
+                "dimension": "risk",
+                "security-severity": "9.0"
+              }
+            },
+            {
+              "id": "unused_indexes",
+              "shortDescription": {
+                "text": "2 unused index(es)"
+              },
+              "helpUri": "https://github.com/pgrundev/pgbot/blob/main/docs/findings/unused_indexes.md",
+              "properties": {
+                "defaultSeverity": "warn",
+                "dimension": "storage",
+                "security-severity": "5.5"
+              }
+            },
+            {
+              "id": "io_timing_off",
+              "shortDescription": {
+                "text": "track_io_timing is off"
+              },
+              "helpUri": "https://github.com/pgrundev/pgbot/blob/main/docs/findings/io_timing_off.md",
+              "properties": {
+                "defaultSeverity": "info",
+                "dimension": "throughput",
+                "security-severity": "2.0"
+              }
+            },
+            {
+              "id": "checksums_disabled",
+              "shortDescription": {
+                "text": "data checksums are off"
+              },
+              "helpUri": "https://github.com/pgrundev/pgbot/blob/main/docs/findings/checksums_disabled.md",
+              "properties": {
+                "defaultSeverity": "info",
+                "dimension": "risk",
+                "security-severity": "2.0"
+              }
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "fsync_off",
+          "ruleIndex": 0,
+          "level": "error",
+          "message": {
+            "text": "fsync is OFF — a crash can corrupt the database — Set fsync = on."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "setting:fsync",
+                  "kind": "resource"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "ruleId": "unused_indexes",
+          "ruleIndex": 1,
+          "level": "warning",
+          "message": {
+            "text": "2 unused index(es) — Drop with DROP INDEX CONCURRENTLY."
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "cluster",
+                  "kind": "resource"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "ruleId": "io_timing_off",
+          "ruleIndex": 2,
+          "level": "note",
+          "message": {
+            "text": "track_io_timing is off"
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "setting:track_io_timing",
+                  "kind": "resource"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "ruleId": "checksums_disabled",
+          "ruleIndex": 3,
+          "level": "note",
+          "message": {
+            "text": "data checksums are off"
+          },
+          "locations": [
+            {
+              "logicalLocations": [
+                {
+                  "fullyQualifiedName": "setting:data_checksums",
+                  "kind": "resource"
+                }
+              ]
+            }
+          ],
+          "suppressions": [
+            {
+              "kind": "external",
+              "status": null,
+              "location": null,
+              "guid": null,
+              "justification": "managed provider"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

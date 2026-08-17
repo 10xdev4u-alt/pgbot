@@ -40,6 +40,8 @@ type inspectFlags struct {
 	timeout      time.Duration
 	config       string   // explicit .pgbot.toml path ("" = discover)
 	ignore       []string // one-off --ignore finding[:object] rules (B2-4)
+	failOn       string   // exit non-zero on findings at/above this severity (B5-1)
+	format       string   // text|json|sarif|junit (B5-2)
 }
 
 func newInspectCmd() *cobra.Command {
@@ -70,10 +72,21 @@ func newInspectCmd() *cobra.Command {
 	fl.DurationVar(&f.timeout, "timeout", 30*time.Second, "total wall-clock budget for the whole run (raise it for slow or remote databases)")
 	fl.StringVar(&f.config, "config", "", "path to .pgbot.toml (default: discover from cwd upward, then $XDG_CONFIG_HOME)")
 	fl.StringArrayVar(&f.ignore, "ignore", nil, "suppress a finding for this run: finding[:object] (repeatable)")
+	fl.StringVar(&f.failOn, "fail-on", "warn", "exit non-zero on findings at/above this severity: critical|warn|info|none")
+	fl.StringVar(&f.format, "format", "text", "output format: text|json|sarif|junit")
 	return cmd
 }
 
 func runInspect(cmd *cobra.Command, args []string, f inspectFlags) error {
+	if !validFailOn(f.failOn) {
+		return usageErrf("--fail-on must be critical|warn|info|none, got %q", f.failOn)
+	}
+	if f.json && f.format == "text" {
+		f.format = "json" // --json is a shortcut for --format=json
+	}
+	if !validFormat(f.format) {
+		return usageErrf("--format must be text|json|sarif|junit, got %q", f.format)
+	}
 	connString := firstNonEmpty(argAt(args, 0), os.Getenv("DATABASE_URL"), os.Getenv("PGBOT_DATABASE_URL"))
 	if connString == "" {
 		return fmt.Errorf("no connection string (pass one or set $DATABASE_URL)")
@@ -134,11 +147,20 @@ func runInspect(cmd *cobra.Command, args []string, f inspectFlags) error {
 		return err
 	}
 
-	if f.json {
+	switch f.format {
+	case "json":
 		if err := render.JSON(os.Stdout, c); err != nil {
 			return err
 		}
-	} else {
+	case "sarif":
+		if err := render.SARIF(os.Stdout, c); err != nil {
+			return err
+		}
+	case "junit":
+		if err := render.JUnit(os.Stdout, c, f.failOn); err != nil {
+			return err
+		}
+	default:
 		host, _ := hostPort(target)
 		opts := render.Options{Color: useColor(f.noColor), Trends: trends, BaselinePath: baselinePath, Width: terminalWidth(), Full: f.full, Host: host}
 		if err := render.Terminal(os.Stdout, c, opts); err != nil {
@@ -146,7 +168,7 @@ func runInspect(cmd *cobra.Command, args []string, f inspectFlags) error {
 		}
 	}
 
-	os.Exit(exitCode(c.Findings))
+	os.Exit(exitCode(c.Findings, f.failOn))
 	return nil
 }
 
@@ -224,21 +246,63 @@ func settingsOf(c *model.Context) map[string]string {
 	return c.Settings.Overrides
 }
 
-// exitCode maps the worst finding severity to the CI contract. Suppressed
-// findings (B2) never contribute — that is the entire point of an exit-code
-// suppression: a muted checksums_disabled must not keep failing CI.
-func exitCode(fs []model.Finding) int {
-	worst := exitClean
+// severityRank orders severities so --fail-on can gate on a threshold.
+func severityRank(sev string) int {
+	switch sev {
+	case model.SeverityCritical:
+		return 3
+	case model.SeverityWarn:
+		return 2
+	case model.SeverityInfo:
+		return 1
+	}
+	return 0
+}
+
+// exitCode maps findings to the CI contract, gated by --fail-on (B5-1): only
+// unsuppressed findings at or above the failOn threshold count. failOn is one of
+// critical|warn|info|none; "warn" is the default and reproduces the historical
+// behavior (critical→2, warn→1). "none" always returns 0. Suppressed findings
+// (B2) never contribute — a muted checksums_disabled must not keep failing CI.
+func exitCode(fs []model.Finding, failOn string) int {
+	if failOn == "none" {
+		return exitClean
+	}
+	threshold := severityRank(failOn)
+	hasCritical, hasAtThreshold := false, false
 	for _, f := range fs {
-		if f.Suppressed {
+		if f.Suppressed || severityRank(f.Severity) < threshold {
 			continue
 		}
-		switch f.Severity {
-		case model.SeverityCritical:
-			return exitCritical
-		case model.SeverityWarn:
-			worst = exitWarn
+		hasAtThreshold = true
+		if f.Severity == model.SeverityCritical {
+			hasCritical = true
 		}
 	}
-	return worst
+	switch {
+	case hasCritical:
+		return exitCritical
+	case hasAtThreshold:
+		return exitWarn
+	default:
+		return exitClean
+	}
+}
+
+// validFailOn reports whether s is an accepted --fail-on value.
+func validFailOn(s string) bool {
+	switch s {
+	case "critical", "warn", "info", "none":
+		return true
+	}
+	return false
+}
+
+// validFormat reports whether s is an accepted --format value.
+func validFormat(s string) bool {
+	switch s {
+	case "text", "json", "sarif", "junit":
+		return true
+	}
+	return false
 }
