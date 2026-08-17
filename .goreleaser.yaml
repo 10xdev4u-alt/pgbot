@@ -114,6 +114,11 @@ release:
     owner: pgrundev
     name: pgbot
   prerelease: auto
+  # Publish the JSON Schema for the --json contracts as release assets, so a
+  # consumer can pin against a version (B7-2). The files are generated from the
+  # Go types and drift-checked in CI (TestSchema_matchesModel).
+  extra_files:
+    - glob: ./schema/*.json
 
 changelog:
   sort: asc

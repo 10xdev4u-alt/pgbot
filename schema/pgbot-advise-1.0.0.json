@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pgbot.dev/schema/pgbot-advise-1.0.0.json",
+  "$ref": "#/$defs/Report",
+  "$defs": {
+    "Recommendation": {
+      "properties": {
+        "index": {
+          "type": "string"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "columns": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "queryid": {
+          "type": "integer"
+        },
+        "query": {
+          "type": "string"
+        },
+        "calls": {
+          "type": "integer"
+        },
+        "db_time_pct": {
+          "type": "number"
+        },
+        "cost_before": {
+          "type": "number"
+        },
+        "cost_after": {
+          "type": "number"
+        },
+        "estimated_bytes": {
+          "type": "integer"
+        },
+        "confidence": {
+          "type": "number"
+        },
+        "caveats": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "index",
+        "schema",
+        "table",
+        "columns",
+        "queryid",
+        "query",
+        "calls",
+        "db_time_pct",
+        "cost_before",
+        "cost_after",
+        "estimated_bytes",
+        "confidence"
+      ]
+    },
+    "Report": {
+      "properties": {
+        "database": {
+          "type": "string"
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "recommendations": {
+          "items": {
+            "$ref": "#/$defs/Recommendation"
+          },
+          "type": "array"
+        },
+        "considered": {
+          "type": "integer"
+        },
+        "planned": {
+          "type": "integer"
+        },
+        "candidates": {
+          "type": "integer"
+        },
+        "skipped_stale": {
+          "type": "integer"
+        },
+        "note": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "database",
+        "available",
+        "recommendations",
+        "considered",
+        "planned",
+        "candidates",
+        "skipped_stale"
+      ]
+    }
+  },
+  "description": "pgbot advise --json — planner-validated index recommendations (hypopg). Nothing is built."
+}
