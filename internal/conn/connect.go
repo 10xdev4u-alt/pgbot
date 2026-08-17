@@ -36,9 +36,19 @@ const maxConns = 4
 // are pinned safe. The read-only GUARANTEE is the role (pg_monitor, no write
 // grants); the session settings here are defence in depth, not a boundary.
 func Connect(ctx context.Context, connString string) (*Target, error) {
+	return ConnectDB(ctx, connString, "")
+}
+
+// ConnectDB is Connect with the target database overridden (for --all-databases):
+// the connString supplies host/auth/TLS and `database` names which database on
+// that server to inspect. Empty database keeps the connString's own.
+func ConnectDB(ctx context.Context, connString, database string) (*Target, error) {
 	cfg, err := pgxpool.ParseConfig(connString)
 	if err != nil {
 		return nil, fmt.Errorf("parse connection string: %w", err)
+	}
+	if database != "" {
+		cfg.ConnConfig.Database = database
 	}
 	cfg.MaxConns = maxConns
 	cfg.MinConns = 0

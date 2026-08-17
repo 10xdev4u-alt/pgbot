@@ -42,6 +42,8 @@ type inspectFlags struct {
 	ignore       []string // one-off --ignore finding[:object] rules (B2-4)
 	failOn       string   // exit non-zero on findings at/above this severity (B5-1)
 	format       string   // text|json|sarif|junit (B5-2)
+	allDatabases bool     // inspect every database in the cluster (B3)
+	parallel     int      // max concurrent database inspections (B3); default 1 = serial
 }
 
 func newInspectCmd() *cobra.Command {
@@ -74,6 +76,8 @@ func newInspectCmd() *cobra.Command {
 	fl.StringArrayVar(&f.ignore, "ignore", nil, "suppress a finding for this run: finding[:object] (repeatable)")
 	fl.StringVar(&f.failOn, "fail-on", "warn", "exit non-zero on findings at/above this severity: critical|warn|info|none")
 	fl.StringVar(&f.format, "format", "text", "output format: text|json|sarif|junit")
+	fl.BoolVar(&f.allDatabases, "all-databases", false, "inspect every database in the cluster (cluster-wide findings reported once)")
+	fl.IntVar(&f.parallel, "parallel", 1, "max databases inspected concurrently under --all-databases (default 1 = serial)")
 	return cmd
 }
 
@@ -90,6 +94,9 @@ func runInspect(cmd *cobra.Command, args []string, f inspectFlags) error {
 	connString := firstNonEmpty(argAt(args, 0), os.Getenv("DATABASE_URL"), os.Getenv("PGBOT_DATABASE_URL"))
 	if connString == "" {
 		return fmt.Errorf("no connection string (pass one or set $DATABASE_URL)")
+	}
+	if f.allDatabases {
+		return runInspectAll(cmd.Context(), connString, f)
 	}
 
 	ctx, cancel := context.WithTimeout(cmd.Context(), f.timeout)

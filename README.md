@@ -521,6 +521,11 @@ a silent substitution), warns up front when a **stats reset** or
 untrustworthy, and refuses to compare two different databases (pass
 `--fingerprint` when the store holds more than one).
 
+> **Whole cluster:** `pgbot inspect "$DATABASE_URL" --all-databases` inspects every
+> connectable database on the server. Cluster-wide findings (settings, replication,
+> archiving, wraparound) are reported once; per-database findings appear per
+> database. Serial by default (`--parallel N` to fan out).
+
 ## CI integration
 
 pgbot is built to run in a pipeline. `--fail-on` decouples the exit code from the

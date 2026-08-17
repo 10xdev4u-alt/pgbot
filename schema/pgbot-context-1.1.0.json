@@ -475,6 +475,9 @@
         },
         "severity_remapped": {
           "type": "string"
+        },
+        "cluster_scoped": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false,

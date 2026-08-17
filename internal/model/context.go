@@ -561,6 +561,11 @@ type Finding struct {
 	// SeverityRemapped, when non-empty, is the original severity before a
 	// [severity] override changed it — so the change is auditable in --json.
 	SeverityRemapped string `json:"severity_remapped,omitempty"`
+	// ClusterScoped marks a finding that comes from a cluster-wide source (settings,
+	// replication, archiving, wraparound, cluster activity) rather than the
+	// connected database. In an --all-databases run it is reported once, on the
+	// first database, and omitted from the rest (B3) — this flag says so.
+	ClusterScoped bool `json:"cluster_scoped,omitempty"`
 }
 
 // Impact is why a finding matters and how much, in ONE dimension. Two findings
