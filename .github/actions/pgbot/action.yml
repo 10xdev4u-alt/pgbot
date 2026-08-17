@@ -1,0 +1,83 @@
+name: "pgbot database health check"
+description: "Read-only PostgreSQL health check for CI. Uploads findings to the Security tab (SARIF) and fails the job on your chosen severity."
+branding:
+  icon: database
+  color: blue
+
+inputs:
+  dsn:
+    description: "postgres:// DSN. Use a pg_monitor role with NO data access — never a superuser. Pass it from a secret."
+    required: true
+  fail-on:
+    description: "Fail the job on findings at/above this severity: critical | warn | info | none."
+    required: false
+    default: warn
+  format:
+    description: "Report format: sarif | json | junit | text."
+    required: false
+    default: sarif
+  config:
+    description: "Path to a .pgbot.toml (optional)."
+    required: false
+    default: ""
+  version:
+    description: "pgbot version to install (e.g. v0.2.0), or 'latest'. Ignored if pgbot is already on PATH."
+    required: false
+    default: latest
+  upload-sarif:
+    description: "Upload the SARIF report to the Security tab (only when format=sarif). Needs security-events: write."
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Install pgbot
+      shell: bash
+      env:
+        PGBOT_VERSION: ${{ inputs.version }}
+      run: |
+        if command -v pgbot >/dev/null 2>&1; then
+          echo "pgbot already on PATH: $(pgbot --version)"
+        else
+          curl -fsSL https://pgbot.dev/install | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        fi
+
+    - name: Run pgbot
+      id: run
+      shell: bash
+      env:
+        # Via env, not command interpolation, so a special char in the DSN can't
+        # break the command line or leak into logs.
+        PGBOT_DSN: ${{ inputs.dsn }}
+        PGBOT_FAIL_ON: ${{ inputs.fail-on }}
+        PGBOT_FORMAT: ${{ inputs.format }}
+        PGBOT_CONFIG_PATH: ${{ inputs.config }}
+      run: |
+        out="pgbot-report.${PGBOT_FORMAT}"
+        args=(inspect "$PGBOT_DSN" --no-store --no-color --format="$PGBOT_FORMAT" --fail-on="$PGBOT_FAIL_ON")
+        if [ -n "$PGBOT_CONFIG_PATH" ]; then args+=(--config "$PGBOT_CONFIG_PATH"); fi
+        set +e
+        pgbot "${args[@]}" > "$out"
+        code=$?
+        set -e
+        {
+          echo "exit-code=$code"
+          echo "report-file=$out"
+        } >> "$GITHUB_OUTPUT"
+        # Show the report in the log for non-SARIF formats (SARIF goes to the
+        # Security tab); always surface the exit code.
+        if [ "$PGBOT_FORMAT" != "sarif" ]; then cat "$out"; fi
+        echo "pgbot exit code: $code (0 clean · 1 warn · 2 critical · 3 error · 64 usage)"
+
+    - name: Upload SARIF to the Security tab
+      if: ${{ inputs.format == 'sarif' && inputs.upload-sarif == 'true' }}
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ steps.run.outputs.report-file }}
+        category: pgbot
+
+    - name: Enforce --fail-on
+      shell: bash
+      run: exit ${{ steps.run.outputs.exit-code }}

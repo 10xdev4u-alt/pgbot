@@ -52,6 +52,38 @@ jobs:
           go install golang.org/x/vuln/cmd/govulncheck@latest
           "$(go env GOPATH)/bin/govulncheck" ./...
 
+  action-smoke:
+    name: github action smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: build pgbot onto PATH (so the action uses it — no release needed)
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          CGO_ENABLED=0 go build -o "$HOME/.local/bin/pgbot" ./cmd/pgbot
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: start PostgreSQL with a pg_monitor role
+        run: |
+          docker run -d --name pg -p 5432:5432 -e POSTGRES_PASSWORD=pw \
+            postgres:17 -c shared_preload_libraries=pg_stat_statements
+          for i in $(seq 1 60); do docker exec pg pg_isready -U postgres -h 127.0.0.1 -q && break; sleep 1; done
+          docker exec pg psql -U postgres -q \
+            -c "CREATE EXTENSION pg_stat_statements;" \
+            -c "CREATE ROLE pgbot_ro LOGIN PASSWORD 'ro'; GRANT pg_monitor TO pgbot_ro; GRANT CONNECT ON DATABASE postgres TO pgbot_ro;"
+      - name: run the composite action (fail-on=none so findings don't fail the smoke)
+        uses: ./.github/actions/pgbot
+        with:
+          dsn: postgres://pgbot_ro:ro@127.0.0.1:5432/postgres
+          format: sarif
+          fail-on: none
+          upload-sarif: "false"
+      - name: the action's SARIF is valid
+        run: |
+          python3 -c "import json,sys; d=json.load(open('pgbot-report.sarif')); assert d['version']=='2.1.0' and d['runs'], 'bad SARIF'; print('valid SARIF,', len(d['runs'][0]['results']), 'results')"
+
   static-check:
     name: no EXPLAIN ANALYZE
     runs-on: ubuntu-latest

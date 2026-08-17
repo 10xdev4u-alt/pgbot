@@ -513,6 +513,42 @@ a silent substitution), warns up front when a **stats reset** or
 untrustworthy, and refuses to compare two different databases (pass
 `--fingerprint` when the store holds more than one).
 
+## CI integration
+
+pgbot is built to run in a pipeline. `--fail-on` decouples the exit code from the
+default severity map, and `--format` emits machine-readable reports:
+
+```bash
+pgbot inspect "$DATABASE_URL" --fail-on=critical --format=sarif > pgbot.sarif
+```
+
+`--format=sarif` produces [SARIF 2.1.0](https://sarifweb.azurewebsites.net/);
+upload it with `github/codeql-action/upload-sarif` and every finding lands in your
+repo's **Security** tab, linked to its catalogue page. `--format=junit` feeds
+Jenkins/GitLab test panes. Suppressed findings stay visible (a SARIF suppression /
+a JUnit `skipped`) and never affect the exit code.
+
+### GitHub Action
+
+```yaml
+- uses: pgrundev/pgbot@v1
+  with:
+    dsn: ${{ secrets.PGBOT_DSN }}
+    fail-on: critical
+```
+
+That runs the check and uploads SARIF to the Security tab. **The DSN must be a
+`pg_monitor` role with no data access — never a superuser.** Create one:
+
+```sql
+CREATE ROLE pgbot_ci LOGIN PASSWORD '…';
+GRANT pg_monitor TO pgbot_ci;
+GRANT CONNECT ON DATABASE yourdb TO pgbot_ci;
+```
+
+`pg_monitor` grants read access to the statistics views pgbot needs and nothing
+else — no table data. The job that uploads SARIF needs `security-events: write`.
+
 ## The findings catalogue
 
 Every finding pgbot emits has a reference page — what it observed, why it matters,
