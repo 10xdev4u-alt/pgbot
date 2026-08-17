@@ -12,7 +12,7 @@ builds:
     binary: pgbot
     env:
       - CGO_ENABLED=0
-    goos: [linux, darwin]
+    goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
     flags:
       - -trimpath
@@ -22,10 +22,20 @@ builds:
 archives:
   - id: pgbot
     formats: [tar.gz]
+    # Windows users expect a zip, not a tar.gz.
+    format_overrides:
+      - goos: windows
+        formats: [zip]
     name_template: "pgbot_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - README.md
       - LICENSE
+
+# Per-artifact CycloneDX SBOMs, published alongside the binaries — a supply-chain
+# expectation for a tool that connects to production databases.
+sboms:
+  - id: pgbot
+    artifacts: archive
 
 # SHA256 checksums — the install script verifies against this before chmod +x.
 checksum:
