@@ -10,10 +10,10 @@ func TestExpectAutovacuum(t *testing.T) {
 		live, dead int64
 		want       bool
 	}{
-		{0, 50, false},      // exactly at threshold — not yet past
-		{0, 51, true},       // one over the base threshold of 50
-		{1000, 200, false},  // 200 < 50 + 0.2*1000 = 250
-		{1000, 300, true},   // 300 > 250
+		{0, 50, false},     // exactly at threshold — not yet past
+		{0, 51, true},      // one over the base threshold of 50
+		{1000, 200, false}, // 200 < 50 + 0.2*1000 = 250
+		{1000, 300, true},  // 300 > 250
 		{100000, 20000, false},
 		{100000, 20100, true}, // 20100 > 50 + 20000
 	}
