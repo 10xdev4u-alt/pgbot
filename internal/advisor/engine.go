@@ -144,11 +144,22 @@ func validate(ctx context.Context, p Planner, q QueryInput, cand Candidate, quer
 	return rec, true
 }
 
-// sanitizeQuery trims a single normalized statement for EXPLAIN: it drops a
-// trailing semicolon (EXPLAIN takes one statement) and rejects anything that
-// isn't a plain SELECT — no WITH (which can hide a writable CTE), no DML, no
-// utility statement (whose pgss text can carry literals). Belt-and-braces on top
-// of the READ ONLY transaction.
+// sanitizeQuery trims a single normalized statement for EXPLAIN and refuses
+// anything that could smuggle a second statement or a write past the planner.
+// GenericPlan uses the simple-query protocol (PgConn.Exec), which WOULD run a
+// ";"-separated second statement, so this is the first of the two layers that
+// keep §0.1 ("never execute the inspected query") true — the READ ONLY
+// transaction is the second (see TestAdviseSafety_readOnlyTxBlocksInjectedWrite).
+//
+// It rejects: anything not starting with SELECT (no WITH, which can hide a
+// writable CTE; no DML; no utility statement, whose pgss text can carry
+// literals), and ANY interior semicolon. We reject every ";" rather than only
+// statement separators "outside literals and comments" because the input is
+// normalized pg_stat_statements text — its literals are already $N and its
+// comments are stripped, so there is no literal or comment for a ";" to live in,
+// which means any interior ";" IS a statement separator. Over-rejecting a rare
+// query is safe (we just skip advising it); under-rejecting would let a write
+// reach the server and lean entirely on the transaction being read-only.
 func sanitizeQuery(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.TrimRight(s, "; \t\n\r")
@@ -159,7 +170,7 @@ func sanitizeQuery(s string) string {
 		return ""
 	}
 	if strings.Contains(s, ";") {
-		return "" // a second statement snuck in — refuse
+		return "" // an interior ";" — a second statement snuck in; refuse
 	}
 	return s
 }
