@@ -381,6 +381,37 @@ OpenRouter, a local server) and `PGBOT_GEMINI_MODEL` / `PGBOT_GEMINI_URL`.
 **Exit codes** (for CI): `0` clean · `1` warnings · `2` critical findings ·
 `3` connection/execution failure.
 
+### `advise` — index suggestions the planner validates
+
+`pgbot advise` finds missing indexes without guessing. It reads the slowest
+queries from `pg_stat_statements`, derives candidate indexes from the planner's
+own sequential-scan filters (deterministically, in Go — never an LLM), and then
+**validates each one**: it creates the index *hypothetically* with
+[hypopg](https://github.com/HypoPG/hypopg), re-plans the query, and only reports
+it if the planner actually switches to it and the estimated cost drops.
+
+```
+$ pgbot advise "$DATABASE_URL"
+index advisor · app · postgres 17 · hypopg validation — nothing was built
+
+1 validated recommendation(s):
+
+⚑ public.orders
+  CREATE INDEX ON public.orders (customer_id, status);
+  helps: SELECT count(*) FROM orders WHERE customer_id = $1 AND status = $2
+         60 calls · 68% of DB time
+  planner confirmed: cost 4653 → 4.1 (−99.9%)
+  ↳ nothing was created. Review, then build off-peak: add CONCURRENTLY.
+```
+
+Nothing is ever built — the hypothetical indexes live in backend memory and are
+discarded. Everything runs in a READ ONLY transaction; pgbot only *plans* your
+query (`EXPLAIN (GENERIC_PLAN)`), it never executes it and never uses the
+executing form of EXPLAIN. Requires **hypopg**, **pg_stat_statements**, and
+**PostgreSQL 16+**; when any is missing it prints exactly what to enable and does
+nothing else. `--json` gives structured recommendations for agents (also exposed
+as the MCP `suggest_indexes` tool).
+
 > **Local Docker gotcha:** with a database in Docker Desktop, connect via
 > `127.0.0.1`, not `localhost`. `localhost` resolves to IPv6 (`::1`) first, which
 > Docker Desktop doesn't forward, so the connect stalls for ~10s before falling

@@ -634,7 +634,7 @@ func seqScanHeavy(c *model.Context, add func(model.Finding)) {
 	if len(ev) == 0 {
 		return
 	}
-	add(model.Finding{
+	f := model.Finding{
 		ID: "seq_scan_heavy", Severity: model.SeverityWarn,
 		Title:       fmt.Sprintf("%d table(s) sequential-scanning heavily", len(ev)),
 		Detail:      "These tables are read mostly by full scans rather than index lookups. On a large table that's CPU and IO the database repeats on every query.",
@@ -644,7 +644,24 @@ func seqScanHeavy(c *model.Context, add func(model.Finding)) {
 			fmt.Sprintf("%d table(s) scanning full", len(ev)),
 			"seq_scans ≫ index_scans on tables ≥ 50k rows"),
 		Confidence: 0.6,
-	})
+	}
+	// If hypopg is installed, pgbot can turn "add an index for the hot predicate"
+	// from advice into evidence: `pgbot advise` proposes indexes and only reports
+	// the ones the planner confirms it would use (B1).
+	if hasExtension(c, "hypopg") {
+		f.Caveats = append(f.Caveats, "run `pgbot advise` — with hypopg installed it validates candidate indexes against the planner (nothing is built) instead of guessing")
+	}
+	add(f)
+}
+
+// hasExtension reports whether the named extension is installed on the target.
+func hasExtension(c *model.Context, name string) bool {
+	for _, e := range c.Server.Extensions {
+		if e == name {
+			return true
+		}
+	}
+	return false
 }
 
 // autovacuumHealth answers whether autovacuum is being OUTRUN (distinct from A1's

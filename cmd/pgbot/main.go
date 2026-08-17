@@ -43,6 +43,7 @@ func main() {
 	root.AddCommand(newTuneCmd())
 	root.AddCommand(newMCPCmd())
 	root.AddCommand(newConfigCmd())
+	root.AddCommand(newAdviseCmd())
 
 	if err := root.ExecuteContext(ctx); err != nil {
 		// Exit-code contract: connection/exec failure is 3. Command handlers that

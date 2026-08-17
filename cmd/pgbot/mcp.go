@@ -93,6 +93,17 @@ func pgbotTools() []mcp.Tool {
 			InputSchema: dsnSchema,
 			Handler:     vacuumHealthTool,
 		},
+		{
+			Name: "suggest_indexes",
+			Description: "Suggest missing indexes, each VALIDATED by the planner with hypopg — the " +
+				"candidate is created hypothetically (nothing is built), the slow query re-planned, and " +
+				"only surfaced if the planner switches to it with a real cost drop (cost_before/cost_after). " +
+				"Deterministic candidates from the planner's own Seq Scan filters, never an LLM. Requires " +
+				"hypopg + pg_stat_statements + PostgreSQL 16+; returns a reason when unavailable. pgbot " +
+				"never runs your query and never builds an index — recommend, don't act.",
+			InputSchema: dsnSchema,
+			Handler:     suggestIndexesTool,
+		},
 	}
 }
 
