@@ -189,6 +189,10 @@ func renderAll(contexts []*model.Context, f inspectFlags) error {
 		return render.SARIF(os.Stdout, mergeContexts(contexts))
 	case "junit":
 		return render.JUnit(os.Stdout, mergeContexts(contexts), f.failOn)
+	case "prometheus":
+		// One grouped exposition for all databases — repeated # HELP/# TYPE lines
+		// (one block per database) would be rejected by the textfile collector.
+		return render.PrometheusAll(os.Stdout, contexts)
 	default:
 		for i, c := range contexts {
 			if i > 0 {

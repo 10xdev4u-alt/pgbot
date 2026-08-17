@@ -133,3 +133,67 @@ func TestJUnit_failOnCritical(t *testing.T) {
 		t.Errorf("--fail-on=critical: only the critical is a failure:\n%s", buf.String())
 	}
 }
+
+func TestPrometheus_golden(t *testing.T) {
+	c := sampleContextForFormats()
+	// add a gauge source so a metric line is exercised
+	hit := 0.994
+	c.Health = &model.Health{CacheHitRatio: &hit}
+	var buf bytes.Buffer
+	if err := Prometheus(&buf, c); err != nil {
+		t.Fatal(err)
+	}
+	golden(t, "sample.prom", buf.Bytes())
+	s := buf.String()
+	// every finding is a series; the suppressed one carries suppressed="true".
+	if !strings.Contains(s, `pgbot_finding{database="app",id="fsync_off"`) {
+		t.Error("missing pgbot_finding series")
+	}
+	if !strings.Contains(s, `id="checksums_disabled"`) || !strings.Contains(s, `suppressed="true"`) {
+		t.Error("suppressed finding must be exported with suppressed=\"true\", not omitted")
+	}
+	if !strings.Contains(s, "pgbot_cache_hit_ratio{") {
+		t.Error("underlying gauges should be exported")
+	}
+}
+
+// Under --all-databases the exposition must stay valid: one # HELP/# TYPE per
+// metric name across every database, with each database's samples grouped beneath
+// (a per-database block would repeat the headers and the textfile collector would
+// reject the whole file).
+func TestPrometheusAll_groupedHeaders(t *testing.T) {
+	a := sampleContextForFormats()
+	b := sampleContextForFormats()
+	b.Server.Database = "analytics"
+	hit := 0.99
+	a.Health = &model.Health{CacheHitRatio: &hit}
+	b.Health = &model.Health{CacheHitRatio: &hit}
+
+	var buf bytes.Buffer
+	if err := PrometheusAll(&buf, []*model.Context{a, b}); err != nil {
+		t.Fatal(err)
+	}
+	help := map[string]int{}
+	typ := map[string]int{}
+	for _, ln := range strings.Split(buf.String(), "\n") {
+		if f := strings.TrimPrefix(ln, "# HELP "); f != ln {
+			help[strings.Fields(f)[0]]++
+		} else if f := strings.TrimPrefix(ln, "# TYPE "); f != ln {
+			typ[strings.Fields(f)[0]]++
+		}
+	}
+	for name, n := range help {
+		if n != 1 {
+			t.Errorf("# HELP %s appears %d times; the text format allows exactly one", name, n)
+		}
+	}
+	for name, n := range typ {
+		if n != 1 {
+			t.Errorf("# TYPE %s appears %d times; the text format allows exactly one", name, n)
+		}
+	}
+	// Both databases must still be present as distinct label sets.
+	if !strings.Contains(buf.String(), `database="app"`) || !strings.Contains(buf.String(), `database="analytics"`) {
+		t.Error("each database's series must be present under its own database label")
+	}
+}

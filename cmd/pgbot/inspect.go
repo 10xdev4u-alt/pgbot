@@ -75,7 +75,7 @@ func newInspectCmd() *cobra.Command {
 	fl.StringVar(&f.config, "config", "", "path to .pgbot.toml (default: discover from cwd upward, then $XDG_CONFIG_HOME)")
 	fl.StringArrayVar(&f.ignore, "ignore", nil, "suppress a finding for this run: finding[:object] (repeatable)")
 	fl.StringVar(&f.failOn, "fail-on", "warn", "exit non-zero on findings at/above this severity: critical|warn|info|none")
-	fl.StringVar(&f.format, "format", "text", "output format: text|json|sarif|junit")
+	fl.StringVar(&f.format, "format", "text", "output format: text|json|sarif|junit|prometheus")
 	fl.BoolVar(&f.allDatabases, "all-databases", false, "inspect every database in the cluster (cluster-wide findings reported once)")
 	fl.IntVar(&f.parallel, "parallel", 1, "max databases inspected concurrently under --all-databases (default 1 = serial)")
 	return cmd
@@ -89,7 +89,7 @@ func runInspect(cmd *cobra.Command, args []string, f inspectFlags) error {
 		f.format = "json" // --json is a shortcut for --format=json
 	}
 	if !validFormat(f.format) {
-		return usageErrf("--format must be text|json|sarif|junit, got %q", f.format)
+		return usageErrf("--format must be text|json|sarif|junit|prometheus, got %q", f.format)
 	}
 	connString := firstNonEmpty(argAt(args, 0), os.Getenv("DATABASE_URL"), os.Getenv("PGBOT_DATABASE_URL"))
 	if connString == "" {
@@ -165,6 +165,10 @@ func runInspect(cmd *cobra.Command, args []string, f inspectFlags) error {
 		}
 	case "junit":
 		if err := render.JUnit(os.Stdout, c, f.failOn); err != nil {
+			return err
+		}
+	case "prometheus":
+		if err := render.Prometheus(os.Stdout, c); err != nil {
 			return err
 		}
 	default:
@@ -308,7 +312,7 @@ func validFailOn(s string) bool {
 // validFormat reports whether s is an accepted --format value.
 func validFormat(s string) bool {
 	switch s {
-	case "text", "json", "sarif", "junit":
+	case "text", "json", "sarif", "junit", "prometheus":
 		return true
 	}
 	return false

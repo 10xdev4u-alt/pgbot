@@ -562,6 +562,26 @@ GRANT CONNECT ON DATABASE yourdb TO pgbot_ci;
 `pg_monitor` grants read access to the statistics views pgbot needs and nothing
 else — no table data. The job that uploads SARIF needs `security-events: write`.
 
+### Prometheus
+
+`--format=prometheus` writes the [node_exporter textfile
+format](https://github.com/prometheus/node_exporter#textfile-collector): every
+finding as a `pgbot_finding{id,severity,dimension,object}` series plus the gauges
+behind them (`pgbot_cache_hit_ratio`, `pgbot_xid_age`, `pgbot_connections_used`,
+`pgbot_replica_lag_seconds`, …), so an alert can fire on a trend before a finding
+crosses its threshold. Suppressed findings are exported with `suppressed="true"`,
+not dropped — a muted config stays visible in your metrics.
+
+pgbot has **no daemon** — that is deliberate. Point it at a textfile collector on a
+cron or systemd timer:
+
+```bash
+pgbot inspect "$DATABASE_URL" --format=prometheus > /var/lib/node_exporter/pgbot.prom.$$
+mv /var/lib/node_exporter/pgbot.prom.$$ /var/lib/node_exporter/pgbot.prom   # atomic
+```
+
+Under `--all-databases`, each database's series carry a `database="…"` label.
+
 ## The findings catalogue
 
 Every finding pgbot emits has a reference page — what it observed, why it matters,
