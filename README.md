@@ -484,6 +484,24 @@ gone stale, and ships `pgbot config check` / `explain` / `init`. Full contract �
 including the per-finding object-identity table — in
 [`docs/configuration.md`](docs/configuration.md).
 
+### `diff` — what changed since last time
+
+`pgbot diff [--since 24h]` compares the two most relevant baseline snapshots from
+the local store — no connection needed. It's honest about what it compared:
+
+```
+$ pgbot diff --since 24h
+diff · prod · a1b2c3d4e5f6
+2026-08-16 09:00 → 2026-08-17 16:00  ·  31h elapsed
+note: you asked for ~24h back, but the nearest older snapshot is 31h back — comparing that.
+```
+
+It prints the interval it *actually* used (the nearest snapshot to `--since`, not
+a silent substitution), warns up front when a **stats reset** or
+**pg_stat_statements eviction** between the snapshots makes specific deltas
+untrustworthy, and refuses to compare two different databases (pass
+`--fingerprint` when the store holds more than one).
+
 ## The findings catalogue
 
 Every finding pgbot emits has a reference page — what it observed, why it matters,
