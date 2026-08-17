@@ -152,6 +152,47 @@ func TestDocsPages_structureAndFrontMatter(t *testing.T) {
 	}
 }
 
+// TestDocsCoverage_bidirectional is the drift guard (B7-1 DoD 8): every finding
+// pgbot can emit has a page, a catalog entry, and a summary; and every page is a
+// known finding. Without it the catalogue is stale within two sprints.
+func TestDocsCoverage_bidirectional(t *testing.T) {
+	pages := map[string]bool{}
+	for _, n := range listPages(t) {
+		pages[strings.TrimSuffix(n, ".md")] = true
+	}
+	for id := range knownIDs {
+		if IsMetaFinding(id) {
+			continue // config-hygiene meta-finding — documented in configuration.md
+		}
+		if !pages[id] {
+			t.Errorf("finding %q has no docs/findings/%s.md", id, id)
+		}
+		if _, ok := MetaFor(id); !ok {
+			t.Errorf("finding %q has no catalog Meta entry", id)
+		}
+		if Summary(id) == "" {
+			t.Errorf("finding %q has no catalogue summary", id)
+		}
+	}
+	for id := range pages {
+		if !KnownID(id) {
+			t.Errorf("docs/findings/%s.md is not a known finding id", id)
+		}
+	}
+}
+
+// TestCatalogIndex_matchesCommitted diffs the committed docs/findings/README.md
+// against a fresh generation, so the index can't drift from the catalog.
+func TestCatalogIndex_matchesCommitted(t *testing.T) {
+	got, err := os.ReadFile(filepath.Join(docsDir(t), "README.md"))
+	if err != nil {
+		t.Fatalf("%v — run `go run ./tools/schemagen`", err)
+	}
+	if string(got) != string(CatalogIndexMarkdown()) {
+		t.Error("docs/findings/README.md is stale — run `go run ./tools/schemagen` and commit it")
+	}
+}
+
 // TestChecksumFailures_remediationIsSafe enforces DoD 12: the fix section never
 // RECOMMENDS a page-rewriting operation. Such an op may appear only inside a
 // negated paragraph (the explicit "do not" warning).

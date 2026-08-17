@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 
 	"github.com/pgrundev/pgbot/internal/advisor"
+	"github.com/pgrundev/pgbot/internal/findings"
 	"github.com/pgrundev/pgbot/internal/model"
 )
 
@@ -38,4 +39,13 @@ func main() {
 		}
 		fmt.Println("wrote", p)
 	}
+
+	// The findings-catalogue index is generated from the same catalog the pages
+	// are checked against, so it can't drift.
+	idx := filepath.Join("docs", "findings", "README.md")
+	if err := os.WriteFile(idx, findings.CatalogIndexMarkdown(), 0o644); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	fmt.Println("wrote", idx)
 }
