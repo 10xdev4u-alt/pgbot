@@ -28,6 +28,7 @@ type Target struct {
 	Pool   *pgxpool.Pool
 	Caps   Capabilities
 	Pooler PoolerInfo
+	self   *selfPIDs // backend PIDs of our own pool connections; see ExcludeSelf
 }
 
 const maxConns = 4
@@ -75,20 +76,55 @@ func ConnectDB(ctx context.Context, connString, database string) (*Target, error
 		cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
 	}
 
+	// Track our own backend PIDs so collectors can exclude every pgbot connection
+	// from pg_stat_activity, not just the one running a given query (ExcludeSelf).
+	self := newSelfPIDs()
 	cfg.AfterConnect = func(ctx context.Context, c *pgx.Conn) error {
-		return applySessionSetup(ctx, c, caps)
+		if err := applySessionSetup(ctx, c, caps); err != nil {
+			return err
+		}
+		self.add(c.PgConn().PID())
+		return nil
+	}
+	cfg.BeforeClose = func(c *pgx.Conn) {
+		self.remove(c.PgConn().PID())
 	}
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("open pool: %w", err)
 	}
-	return &Target{Pool: pool, Caps: caps, Pooler: pooler}, nil
+	return &Target{Pool: pool, Caps: caps, Pooler: pooler, self: self}, nil
 }
 
 func (t *Target) Close() {
 	if t.Pool != nil {
 		t.Pool.Close()
+	}
+}
+
+// Warm opens the pool to its full size and releases the connections back, so
+// every one of pgbot's backend PIDs is registered (ExcludeSelf) BEFORE any
+// collector samples pg_stat_activity. Without this, collectors that open pool
+// connections concurrently could sample while a sibling is still being created —
+// its PID not yet tracked — and count it as a phantom idle-in-transaction
+// session. Acquiring all connections at once (before releasing any) forces the
+// pool to open distinct ones. Best-effort: an Acquire failure just leaves the
+// pool partly warm, which degrades to the pg_backend_pid()-only filter.
+func (t *Target) Warm(ctx context.Context) {
+	if t.Pool == nil {
+		return
+	}
+	held := make([]*pgxpool.Conn, 0, maxConns)
+	for i := 0; i < maxConns; i++ {
+		c, err := t.Pool.Acquire(ctx)
+		if err != nil {
+			break
+		}
+		held = append(held, c)
+	}
+	for _, c := range held {
+		c.Release()
 	}
 }
 

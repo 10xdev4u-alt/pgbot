@@ -29,7 +29,7 @@ func (limitsCollector) Kind() Kind                       { return KindGauge }
 func (limitsCollector) Available(conn.Capabilities) bool { return true }
 
 func (limitsCollector) Sample(ctx context.Context, t *conn.Target, _ conn.Capabilities) (any, error) {
-	return queryOne[limitsRow](ctx, t, sqlLimits)
+	return queryOne[limitsRow](ctx, t, t.ExcludeSelf(sqlLimits))
 }
 
 func (limitsCollector) Assemble(c *model.Context, _ conn.Capabilities, s sampled, _ time.Duration, _ Options) {

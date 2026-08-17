@@ -30,7 +30,7 @@ func (horizonCollector) Kind() Kind                       { return KindGauge }
 func (horizonCollector) Available(conn.Capabilities) bool { return true }
 
 func (horizonCollector) Sample(ctx context.Context, t *conn.Target, _ conn.Capabilities) (any, error) {
-	return queryMany[horizonRow](ctx, t, sqlHorizon)
+	return queryMany[horizonRow](ctx, t, t.ExcludeSelf(sqlHorizon))
 }
 
 func (horizonCollector) Assemble(c *model.Context, _ conn.Capabilities, s sampled, _ time.Duration, _ Options) {

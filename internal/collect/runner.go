@@ -35,6 +35,11 @@ func Run(ctx context.Context, t *conn.Target, opts Options) (*model.Context, err
 	ctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
 
+	// Register all of pgbot's own backend PIDs before any collector (or the ASH
+	// sampler) reads pg_stat_activity, so ExcludeSelf never misses a sibling
+	// connection and counts it as a phantom session.
+	t.Warm(ctx)
+
 	caps := t.Caps
 	var mu sync.Mutex
 	results := make(map[string]*sampled, len(registry))

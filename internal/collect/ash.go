@@ -54,7 +54,7 @@ func sampleWaits(ctx context.Context, t *conn.Target, caps conn.Capabilities, hz
 	if hz <= 0 || window <= 0 {
 		return ashResult{}
 	}
-	sql := ashSQL(caps)
+	sql := t.ExcludeSelf(ashSQL(caps))
 	interval := time.Second / time.Duration(hz)
 	start := time.Now()
 	deadline := start.Add(window)

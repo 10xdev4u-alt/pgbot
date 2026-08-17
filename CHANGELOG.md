@@ -7,13 +7,30 @@ separately by `model.SchemaVersion` (currently 1.1.0).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-17
+
 ### Fixed
-- `idle_in_transaction` no longer counts pgbot's own monitoring connections.
-  pgbot samples through a small pool whose connections are briefly idle in a
-  READ ONLY transaction between samples; the activity query excluded only the
-  single querying backend, so sibling pool connections were intermittently
-  reported as idle-in-transaction sessions — a flaky false positive on an
-  otherwise-quiet database. The query now excludes `application_name = 'pgbot'`.
+- **pgbot no longer counts its own connections as findings.** pgbot samples
+  through a small connection pool; between short READ ONLY samples each
+  connection is briefly idle in a transaction and holds an xmin. The
+  pg_stat_activity queries excluded only the single querying backend, so sibling
+  pool connections were intermittently counted — a flaky false positive on an
+  otherwise-quiet database (`N session(s) idle in transaction` with nothing
+  actually idle, a self-pinned vacuum horizon, connection-saturation slots pgbot
+  was itself consuming, wait-profile noise, and pgbot listed in its own
+  connection breakdown). Every pg_stat_activity query now excludes all of
+  pgbot's own backend PIDs — captured when the pool warms, so the exclusion is
+  unspoofable (a session can't hide by naming itself `pgbot`) and never affects a
+  user service that happens to be named `pgbot`.
+- Installer: `PGBOT_INSTALL_DIR` is created if it doesn't exist (a custom path
+  like `~/.local/bin`), instead of falling through to an unexpected `sudo`
+  prompt.
+
+### Changed
+- Installer signature verification prefers a self-contained cosign bundle
+  (`checksums.txt.cosign.bundle`) when present, so it no longer depends on the
+  `--certificate` / `--signature` flags cosign v3 has deprecated; it falls back
+  to the detached certificate + signature when no bundle is published.
 
 ## [0.2.0] - 2026-08-17
 
@@ -73,4 +90,5 @@ separately by `model.SchemaVersion` (currently 1.1.0).
   1.25.13, and golang.org/x/text to v0.39.0; `govulncheck` now runs in CI and
   reports no vulnerabilities.
 
+[0.2.1]: https://github.com/pgrundev/pgbot/releases/tag/v0.2.1
 [0.2.0]: https://github.com/pgrundev/pgbot/releases/tag/v0.2.0

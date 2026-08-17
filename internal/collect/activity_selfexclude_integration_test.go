@@ -8,26 +8,19 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/pgrundev/pgbot/internal/collect"
 	"github.com/pgrundev/pgbot/internal/conn"
+	"github.com/pgrundev/pgbot/internal/model"
 )
 
-// A confirmed false positive, found walking the install path for v0.2.0: pgbot
-// samples through a small pool whose connections are all application_name='pgbot'
-// and each briefly idle-in-transaction between short READ ONLY samples.
-// activity.sql only dropped pg_backend_pid(), so sibling pool connections were
-// counted as "idle in transaction" — a flaky finding on an otherwise-quiet
-// database (0 one run, 2 the next). activity.sql now also excludes
-// application_name='pgbot'. This proves a pgbot-labelled idle-in-transaction
-// session is NOT counted, while a genuine external one still is.
-func TestIntegration_idleInTransaction_excludesPgbotOwnBackends(t *testing.T) {
+// End-to-end wiring guard for the observer-exclusion class, found walking the
+// v0.2.0 install path: the collectors must actually route pg_stat_activity
+// through ExcludeSelf. Assertions are noise-immune (no exact idle counts) so they
+// hold under CI's concurrent write load. The precise by-PID-not-label proof lives
+// in the conn package (TestIntegration_excludeSelf_byPIDNotLabel).
+func TestIntegration_selfExclusion_wiring(t *testing.T) {
 	d := dsn(t)
 	ctx := context.Background()
 
-	run := func() int {
-		target, err := conn.Connect(ctx, d)
-		if err != nil {
-			t.Fatalf("connect: %v", err)
-		}
-		defer target.Close()
+	run := func(target *conn.Target) *model.Context {
 		c, err := collect.Run(ctx, target, collect.Options{Interval: 500 * time.Millisecond, ASHHz: 0})
 		if err != nil {
 			t.Fatalf("collect: %v", err)
@@ -35,44 +28,50 @@ func TestIntegration_idleInTransaction_excludesPgbotOwnBackends(t *testing.T) {
 		if c.Activity == nil {
 			t.Fatal("no activity section")
 		}
-		return c.Activity.IdleInTransaction
+		return c
 	}
 
-	// hold opens a connection with the given application_name and parks it
-	// idle-in-transaction (persistent, so every sample sees it) until closed.
-	hold := func(app string) func() {
-		cfg, err := pgx.ParseConfig(d)
-		if err != nil {
-			t.Fatalf("parse dsn: %v", err)
-		}
-		cfg.RuntimeParams["application_name"] = app
-		pc, err := pgx.ConnectConfig(ctx, cfg)
-		if err != nil {
-			t.Fatalf("hold connect: %v", err)
-		}
-		if _, err := pc.Exec(ctx, "BEGIN READ ONLY"); err != nil {
-			t.Fatalf("begin: %v", err)
-		}
-		if _, err := pc.Exec(ctx, "SELECT 1"); err != nil { // -> idle in transaction
-			t.Fatalf("select: %v", err)
-		}
-		return func() { _, _ = pc.Exec(ctx, "ROLLBACK"); pc.Close(ctx) }
+	target, err := conn.Connect(ctx, d)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer target.Close()
+
+	// The connection breakdown reads pg_stat_activity via ExcludeSelf: pgbot must
+	// never list its own pool connections as a connection source.
+	if appInConnections(run(target).Activity.Connections, "pgbot") {
+		t.Error("pgbot must not list its own connections in the breakdown (conn_breakdown must route through ExcludeSelf)")
 	}
 
-	base := run()
-
-	// A genuine external idle-in-transaction session MUST be counted.
-	closeReal := hold("pgbot_selftest_app")
-	defer closeReal()
-	if withReal := run(); withReal != base+1 {
-		t.Fatalf("a real idle-in-transaction session must be counted: base=%d withReal=%d (want base+1)", base, withReal)
+	// Hold a real idle-in-transaction session; pgbot must count it. Counting is a
+	// lower bound (background activity can only add), so this stays robust while
+	// still failing if the activity collector stopped counting real sessions.
+	cfg, err := pgx.ParseConfig(d)
+	if err != nil {
+		t.Fatalf("parse dsn: %v", err)
 	}
-
-	// A pgbot-labelled idle-in-transaction session must NOT be counted — this is
-	// the regression: pgbot must never flag its own monitoring connections.
-	closePgbot := hold("pgbot")
-	defer closePgbot()
-	if withBoth := run(); withBoth != base+1 {
-		t.Fatalf("pgbot's own idle-in-transaction connection must be excluded: base=%d withBoth=%d (want base+1, i.e. only the real one)", base, withBoth)
+	cfg.RuntimeParams["application_name"] = "pgbot_selftest_app"
+	held, err := pgx.ConnectConfig(ctx, cfg)
+	if err != nil {
+		t.Fatalf("hold connect: %v", err)
 	}
+	defer held.Close(ctx)
+	if _, err := held.Exec(ctx, "BEGIN READ ONLY"); err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := held.Exec(ctx, "SELECT 1"); err != nil { // -> idle in transaction
+		t.Fatalf("select: %v", err)
+	}
+	if got := run(target).Activity.IdleInTransaction; got < 1 {
+		t.Errorf("a real idle-in-transaction session must be counted, got %d", got)
+	}
+}
+
+func appInConnections(cs []model.ConnGroup, app string) bool {
+	for _, c := range cs {
+		if c.AppName == app {
+			return true
+		}
+	}
+	return false
 }

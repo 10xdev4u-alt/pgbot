@@ -64,15 +64,35 @@ fetch "$base/checksums.txt" "$tmp/checksums.txt" || die "checksums download fail
 # (keyless, GitHub Actions OIDC), which closes that gap. Do this BEFORE trusting
 # checksums.txt for the hash comparison.
 require_sig="${PGBOT_REQUIRE_SIGNATURE:-0}"
+# Identity of pgbot's release workflow (keyless signing, GitHub Actions OIDC).
+cert_id_re="^https://github.com/${REPO}/"
+oidc_issuer="https://token.actions.githubusercontent.com"
 if have cosign; then
-  if fetch "$base/checksums.txt.sig" "$tmp/checksums.txt.sig" 2>/dev/null &&
-     fetch "$base/checksums.txt.pem" "$tmp/checksums.txt.pem" 2>/dev/null; then
+  if fetch "$base/checksums.txt.cosign.bundle" "$tmp/checksums.txt.cosign.bundle" 2>/dev/null; then
+    # Preferred: a self-contained cosign bundle (certificate + signature in one
+    # file). Verified with --bundle, so no reliance on the --certificate /
+    # --signature flags cosign v3 has deprecated.
+    say "verifying signature (cosign bundle)"
+    if cosign verify-blob \
+         --bundle "$tmp/checksums.txt.cosign.bundle" \
+         --certificate-identity-regexp "$cert_id_re" \
+         --certificate-oidc-issuer "$oidc_issuer" \
+         "$tmp/checksums.txt" >/dev/null 2>&1; then
+      say "signature OK"
+    else
+      die "signature verification FAILED — refusing to install"
+    fi
+  elif fetch "$base/checksums.txt.sig" "$tmp/checksums.txt.sig" 2>/dev/null &&
+       fetch "$base/checksums.txt.pem" "$tmp/checksums.txt.pem" 2>/dev/null; then
+    # Fallback: detached certificate + signature. cosign v3 deprecated these flags
+    # (still functional); the bundle path above supersedes them once a release
+    # publishes checksums.txt.cosign.bundle.
     say "verifying signature (cosign)"
     if cosign verify-blob \
          --certificate "$tmp/checksums.txt.pem" \
          --signature "$tmp/checksums.txt.sig" \
-         --certificate-identity-regexp "^https://github.com/${REPO}/" \
-         --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+         --certificate-identity-regexp "$cert_id_re" \
+         --certificate-oidc-issuer "$oidc_issuer" \
          "$tmp/checksums.txt" >/dev/null 2>&1; then
       say "signature OK"
     else
@@ -103,10 +123,15 @@ tar -xzf "$tmp/$tarball" -C "$tmp"
 [ -f "$tmp/pgbot" ] || die "binary not found in archive"
 chmod +x "$tmp/pgbot"
 
-if [ -w "$INSTALL_DIR" ]; then
+# Create the install dir if it doesn't exist yet — a custom PGBOT_INSTALL_DIR
+# like ~/.local/bin often won't. Only fall back to sudo when we genuinely can't
+# write there, rather than surprising the user with a password prompt for a
+# directory they own.
+if mkdir -p "$INSTALL_DIR" 2>/dev/null && [ -w "$INSTALL_DIR" ]; then
   mv "$tmp/pgbot" "$INSTALL_DIR/pgbot"
 elif have sudo; then
   say "installing to $INSTALL_DIR (needs sudo)"
+  sudo mkdir -p "$INSTALL_DIR"
   sudo mv "$tmp/pgbot" "$INSTALL_DIR/pgbot"
 else
   die "$INSTALL_DIR is not writable and sudo is unavailable; set PGBOT_INSTALL_DIR to a writable path"

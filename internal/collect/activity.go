@@ -49,12 +49,12 @@ type activitySample struct {
 }
 
 func (activityCollector) Sample(ctx context.Context, t *conn.Target, _ conn.Capabilities) (any, error) {
-	rows, err := queryMany[activityRow](ctx, t, sqlActivity)
+	rows, err := queryMany[activityRow](ctx, t, t.ExcludeSelf(sqlActivity))
 	if err != nil {
 		return nil, err
 	}
 	out := activitySample{Rows: rows}
-	out.Conns, _ = queryMany[connRow](ctx, t, sqlConnBreakdown) // best-effort breakdown
+	out.Conns, _ = queryMany[connRow](ctx, t, t.ExcludeSelf(sqlConnBreakdown)) // best-effort breakdown
 	// Autovacuum worker count + longest-running worker (A19), best-effort.
 	out.AVWorker, _ = queryOne[avRow](ctx, t, `SELECT count(*) FILTER (WHERE backend_type = 'autovacuum worker')::int AS workers,
 		coalesce(max(extract(epoch FROM now() - xact_start)) FILTER (WHERE backend_type = 'autovacuum worker'), 0)::float8 AS max_age
