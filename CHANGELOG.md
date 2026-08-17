@@ -7,6 +7,14 @@ separately by `model.SchemaVersion` (currently 1.1.0).
 
 ## [Unreleased]
 
+### Fixed
+- `idle_in_transaction` no longer counts pgbot's own monitoring connections.
+  pgbot samples through a small pool whose connections are briefly idle in a
+  READ ONLY transaction between samples; the activity query excluded only the
+  single querying backend, so sibling pool connections were intermittently
+  reported as idle-in-transaction sessions — a flaky false positive on an
+  otherwise-quiet database. The query now excludes `application_name = 'pgbot'`.
+
 ## [0.2.0] - 2026-08-17
 
 ### Added
