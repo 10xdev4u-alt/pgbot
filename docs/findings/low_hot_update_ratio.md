@@ -61,14 +61,32 @@ ORDER BY hot_pct ASC NULLS LAST
 LIMIT 20;
 ```
 
-Then find which indexes cover a frequently-updated column (the HOT blockers). Replace
-`last_seen_at` with your table's hot column:
+Then find which indexes on **that table** cover a frequently-updated column (the HOT
+blockers). Scope it to the table — otherwise you get indexes on every table that
+happens to have a column of the same name. Replace the table and column with yours:
 
 ```sql
-SELECT i.indexrelid::regclass AS index, i.indrelid::regclass AS table
+SELECT i.indexrelid::regclass AS index, am.amname AS type
 FROM pg_index i
-JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey)
-WHERE a.attname = 'last_seen_at';
+JOIN pg_class ic     ON ic.oid = i.indexrelid
+JOIN pg_am am        ON am.oid = ic.relam
+JOIN pg_attribute a  ON a.attrelid = i.indrelid AND a.attnum = ANY (i.indkey)
+WHERE i.indrelid = 'public.issues'::regclass
+  AND a.attname = 'last_seen_at';
+```
+
+The `type` column matters (see the BRIN note below): a **summarizing** index (BRIN)
+on the hot column does **not** block HOT on PostgreSQL 16+, so it isn't a culprit.
+
+On **PostgreSQL 16+** you can tell *which* cause you have directly — `n_tup_newpage_upd`
+counts updates that failed HOT because the row didn't fit on the page (a fillfactor
+problem), separating them from updates blocked by an indexed-column change:
+
+```sql
+SELECT n_tup_upd, n_tup_hot_upd, n_tup_newpage_upd
+FROM pg_stat_user_tables WHERE relname = 'issues';
+-- high n_tup_newpage_upd → page-full (lower fillfactor)
+-- low  n_tup_newpage_upd but low HOT → an indexed column is changing
 ```
 
 ## How to fix it
@@ -81,7 +99,10 @@ Two independent levers — the example above is the first:
    ```sql
    DROP INDEX CONCURRENTLY public.index_issues_on_last_seen_at;
    ```
-   Check `redundant_indexes` first — it often names exactly these.
+   Check `redundant_indexes` first — it often names exactly these. **Note:** on
+   PostgreSQL 16+ a **BRIN** (summarizing) index on the hot column no longer blocks
+   HOT, so don't drop one on that account — check the index `type` from the query
+   above before assuming an index is the culprit.
 2. **Leave room on the page.** If the column set is fine but pages are full
    (fillfactor 100), lower it so updates have somewhere to go:
    ```sql
@@ -110,8 +131,10 @@ expires = "2027-01-01"
 - It sees the **ratio**, not the cause. It cannot prove *which* index blocks HOT —
   only that HOT isn't happening. The index-to-column query above is how you confirm
   the culprit.
-- It cannot tell an indexed-column update apart from a page-full (fillfactor)
-  problem; both produce a low ratio and need different fixes.
+- pgbot reports the ratio, not the split between an indexed-column change and a
+  page-full (fillfactor) problem. On **PostgreSQL 16+** that split *is* knowable via
+  `n_tup_newpage_upd` (see *How to verify*), but pgbot does not yet read that column;
+  on older versions it isn't available at all.
 - Counts are cumulative since the last stats reset, so a recent reset can make a
   chronically-bad table look fine (and vice versa).
 

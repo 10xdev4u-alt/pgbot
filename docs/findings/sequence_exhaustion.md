@@ -58,13 +58,31 @@ WHERE a.attnum > 0 AND NOT a.attisdropped
 
 ## How to fix it
 
-Widen the owning column to `bigint`. This is a table rewrite — plan for it, and
-run it during a maintenance window or with a tool like `pg_repack`:
+Widen the owning column to `bigint`. `ALTER TABLE … ALTER COLUMN … TYPE bigint`
+rewrites the whole table under an `ACCESS EXCLUSIVE` lock — acceptable for a small
+table in a maintenance window, but for a large, hot table do it **online** instead.
+(`pg_repack` can rewrite a bloated table but **cannot** change a column's type, so
+it is not the tool for this.) The online pattern:
+
+1. Add a new `bigint` column (a fast metadata-only change on PG11+).
+2. Backfill it in **batches** — bounded `UPDATE`s by primary-key range — so you
+   never lock the whole table at once, keeping a trigger in sync for new writes.
+3. Once caught up, swap in a short transaction: drop/rename the old column, repoint
+   the sequence's `OWNED BY`, and set the column default.
+
+**Widen the foreign-key columns in child tables too.** If `orders.id` becomes
+`bigint` while `order_items.order_id` stays `int4`, you hit the same 2.1-billion
+wall from the child side once its values grow — and the type mismatch also defeats
+some join optimizations. Find the child columns that still need it:
 
 ```sql
-ALTER TABLE public.orders ALTER COLUMN id TYPE bigint;
--- The sequence follows the column; on PG10+ an identity column's sequence is int8
--- once the column is. Re-check pct_used afterward.
+SELECT conrelid::regclass AS child_table, a.attname AS fk_column, t.typname
+FROM pg_constraint c
+JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+JOIN pg_type t      ON t.oid = a.atttypid
+WHERE c.contype = 'f'
+  AND c.confrelid = 'public.orders'::regclass
+  AND t.typname = 'int4';
 ```
 
 If the column is **already `bigint`**, exhaustion is astronomically far off
