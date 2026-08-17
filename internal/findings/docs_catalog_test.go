@@ -1,0 +1,176 @@
+package findings
+
+import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"strings"
+	"testing"
+)
+
+// docsDir locates docs/findings from this test file's location.
+func docsDir(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot resolve caller path")
+	}
+	// internal/findings/docs_catalog_test.go → repo root is two dirs up.
+	root := filepath.Dir(filepath.Dir(filepath.Dir(file)))
+	return filepath.Join(root, "docs", "findings")
+}
+
+// page holds a parsed docs/findings/<id>.md.
+type page struct {
+	id       string
+	fm       map[string]string
+	body     string
+	sections map[string]string // "## Heading" → section text up to the next "## "
+}
+
+var reSection = regexp.MustCompile(`(?m)^## (.+)$`)
+
+func parsePage(t *testing.T, path string) page {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(raw)
+	// Front-matter: between the first two --- lines.
+	if !strings.HasPrefix(s, "---\n") {
+		t.Fatalf("%s: missing YAML front-matter", filepath.Base(path))
+	}
+	end := strings.Index(s[4:], "\n---")
+	if end < 0 {
+		t.Fatalf("%s: unterminated front-matter", filepath.Base(path))
+	}
+	fmText := s[4 : 4+end]
+	body := s[4+end+4:]
+
+	fm := map[string]string{}
+	for _, line := range strings.Split(fmText, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		fm[strings.TrimSpace(k)] = strings.Trim(strings.TrimSpace(v), `"`)
+	}
+
+	// Sections: split the body on "## " headings.
+	sections := map[string]string{}
+	idx := reSection.FindAllStringIndex(body, -1)
+	names := reSection.FindAllStringSubmatch(body, -1)
+	for i, loc := range idx {
+		start := loc[1]
+		end := len(body)
+		if i+1 < len(idx) {
+			end = idx[i+1][0]
+		}
+		sections[strings.TrimSpace(names[i][1])] = body[start:end]
+	}
+	return page{id: fm["id"], fm: fm, body: body, sections: sections}
+}
+
+func listPages(t *testing.T) []string {
+	t.Helper()
+	entries, err := os.ReadDir(docsDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, e := range entries {
+		n := e.Name()
+		if e.IsDir() || !strings.HasSuffix(n, ".md") || strings.HasPrefix(n, "_") || n == "README.md" {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+// requiredSections every page must carry (B7-0 template).
+var requiredSections = []string{
+	"What pgbot observed", "Why it matters", "How to verify it yourself",
+	"How to fix it", "When to ignore it", "What pgbot cannot see", "Related",
+}
+
+// TestDocsPages_structureAndFrontMatter validates every existing page against the
+// template and the code (B7 DoD 9, 11). The reverse — every knownID HAS a page —
+// is turned on in B7-1 once the catalogue is complete.
+func TestDocsPages_structureAndFrontMatter(t *testing.T) {
+	for _, name := range listPages(t) {
+		name := name
+		t.Run(name, func(t *testing.T) {
+			p := parsePage(t, filepath.Join(docsDir(t), name))
+			base := strings.TrimSuffix(name, ".md")
+
+			if p.id != base {
+				t.Errorf("front-matter id %q != filename %q", p.id, base)
+			}
+			if !KnownID(p.id) {
+				t.Errorf("page %q is not a known finding id", p.id)
+			}
+			// Front-matter must agree with the code's catalog (DoD 9).
+			if meta, ok := MetaFor(p.id); ok {
+				if p.fm["dimension"] != meta.Dimension {
+					t.Errorf("dimension: page %q != catalog %q", p.fm["dimension"], meta.Dimension)
+				}
+				if p.fm["severity"] != meta.Severity {
+					t.Errorf("severity: page %q != catalog %q", p.fm["severity"], meta.Severity)
+				}
+				if p.fm["object"] != meta.ObjectClass {
+					t.Errorf("object: page %q != catalog %q", p.fm["object"], meta.ObjectClass)
+				}
+			}
+			// All template sections present (DoD: template survives).
+			for _, sec := range requiredSections {
+				if _, ok := p.sections[sec]; !ok {
+					t.Errorf("missing section %q", sec)
+				}
+			}
+			// A runnable verification query (DoD 11).
+			if !regexp.MustCompile("(?s)```sql.*?SELECT").MatchString(p.body) {
+				t.Error("no runnable SQL verification query (```sql … SELECT)")
+			}
+			// A pasteable [[ignore]] block (DoD 11).
+			if !strings.Contains(p.body, "[[ignore]]") || !strings.Contains(p.body, `finding = "`+p.id+`"`) {
+				t.Error("no pasteable [[ignore]] block naming this finding")
+			}
+		})
+	}
+}
+
+// TestChecksumFailures_remediationIsSafe enforces DoD 12: the fix section never
+// RECOMMENDS a page-rewriting operation. Such an op may appear only inside a
+// negated paragraph (the explicit "do not" warning).
+func TestChecksumFailures_remediationIsSafe(t *testing.T) {
+	p := parsePage(t, filepath.Join(docsDir(t), "checksum_failures.md"))
+	fix, ok := p.sections["How to fix it"]
+	if !ok {
+		t.Fatal("checksum_failures has no 'How to fix it' section")
+	}
+	rewriteOps := []string{"vacuum full", "reindex", "pg_repack"}
+	for _, para := range strings.Split(fix, "\n\n") {
+		low := strings.ToLower(para)
+		for _, op := range rewriteOps {
+			if strings.Contains(low, op) && !hasNegation(low) {
+				t.Errorf("checksum_failures remediation appears to recommend %q (paragraph without a negation): %q", op, strings.TrimSpace(para))
+			}
+		}
+	}
+}
+
+func hasNegation(low string) bool {
+	for _, neg := range []string{"do not", "don't", "never", "must not", "avoid", "instead of"} {
+		if strings.Contains(low, neg) {
+			return true
+		}
+	}
+	return false
+}
