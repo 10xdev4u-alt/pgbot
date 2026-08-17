@@ -88,6 +88,10 @@ jobs:
       - name: run integration suite (full pipeline + PII + rates under load)
         env:
           PGBOT_TEST_DSN: postgres://pgbot_ro:ro@127.0.0.1:5432/postgres
+          # Superuser dsn for the doc-verify guard: it creates a small fixture
+          # (tables + pgstattuple) the read-only role can't, then runs every
+          # "How to verify" query from the catalogue read-only (PG18 job only).
+          PGBOT_TEST_SUPERUSER_DSN: postgres://postgres:pw@127.0.0.1:5432/postgres
           PGBOT_TEST_LOAD: "1"
         run: |
           # concurrent write load so the stats-caching / rate guards are meaningful

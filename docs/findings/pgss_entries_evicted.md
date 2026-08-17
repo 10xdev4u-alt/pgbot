@@ -44,7 +44,7 @@ SELECT (SELECT dealloc FROM pg_stat_statements_info)                        AS d
        (SELECT count(*) FROM pg_stat_statements)                            AS entries,
        current_setting('pg_stat_statements.max')::int                       AS max_entries,
        round(100.0 * (SELECT count(*) FROM pg_stat_statements)
-             / current_setting('pg_stat_statements.max')::float, 1)         AS pct_full;
+             / current_setting('pg_stat_statements.max')::numeric, 1)       AS pct_full;
 ```
 
 A non-zero, *growing* `deallocations` across two reads a while apart confirms active churn

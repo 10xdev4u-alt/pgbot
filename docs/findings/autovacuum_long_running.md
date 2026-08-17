@@ -50,7 +50,7 @@ Before deciding it's stuck, read its **progress** — how far along it is and wh
 phase — from `pg_stat_progress_vacuum` (PG 9.6+):
 
 ```sql
-SELECT p.pid, v.relid::regclass AS table, p.phase,
+SELECT p.pid, p.relid::regclass AS table, p.phase,
        p.heap_blks_scanned, p.heap_blks_total,
        round(100.0 * p.heap_blks_scanned / nullif(p.heap_blks_total, 0), 1) AS pct
 FROM pg_stat_progress_vacuum p
