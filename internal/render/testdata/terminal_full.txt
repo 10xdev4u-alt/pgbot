@@ -1,0 +1,23 @@
+connected · app · postgres 17.10 · read-only · — window
+
+┌─────────────┬────────┬──────────┬──────┐
+│ subsystem   │ status │  value   │ note │
+├─────────────┼────────┼──────────┼──────┤
+│ connections │   ok   │       24 │      │
+│ cache       │   ok   │    99.4% │      │
+│ throughput  │   ok   │ 1.2k tps │      │
+└─────────────┴────────┴──────────┴──────┘
+
+1 finding(s) · 1 warning
+  ⚠ 1 unused index
+     docs: pgbot explain-finding unused_indexes
+
+HEALTH  sampled
+  TPS 1.2k   cache hit 99.4%   connections 24   rollbacks —
+  writes —/s   returned —/s   deadlocks —/min
+
+ACTIVITY  scraped
+  24 total · 6 active · 0 idle · 0 idle-in-txn · 0 waiting
+
+
+
