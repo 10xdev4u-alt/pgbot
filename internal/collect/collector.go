@@ -28,6 +28,18 @@ type Options struct {
 	RawQueryText bool          // keep raw pg_stat_activity query text (default: scrub — PII)
 	ASHHz        int           // wait-event poll rate in Hz (default 10; 0 disables the sampler)
 	ASHWindow    time.Duration // active-session sampling window (default 5s)
+	SchemaOnly   bool          // --profile=schema: run only schema-relevant collectors (D3-1)
+}
+
+// schemaCollectors are the collectors that can produce a schema-scoped finding.
+// Under --profile=schema the runner skips the rest, so a PR check doesn't sample
+// pg_stat_activity for its ASH window or wait out a counter interval only to throw
+// the result away. The profile integration tests are the drift guard: a schema
+// finding produced by a collector missing here would fail the acceptance test.
+var schemaCollectors = map[string]bool{
+	"indexes":   true, // index_invalid, redundant_indexes, fk_unindexed
+	"sequences": true, // int4_identity_column
+	"tables":    true, // autovacuum_disabled_on_table (reloptions)
 }
 
 func (o Options) interval() time.Duration {

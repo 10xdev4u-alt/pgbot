@@ -38,6 +38,21 @@ func computeFindings(c *model.Context, f inspectFlags) error {
 			c.Findings = append(c.Findings, config.UnusedFindings(unused)...)
 		}
 	}
+
+	// --profile=schema: keep only findings derivable from the catalog alone, so a
+	// PR check against an empty database stays quiet about everything the empty
+	// database can't speak to (D3-1). The collectors that would feed the rest were
+	// already skipped; this is the belt-and-suspenders filter over the findings.
+	if f.schemaProfile() {
+		c.Profile = "schema"
+		kept := c.Findings[:0]
+		for _, fd := range c.Findings {
+			if findings.IsSchemaScoped(fd.ID) {
+				kept = append(kept, fd)
+			}
+		}
+		c.Findings = kept
+	}
 	return nil
 }
 

@@ -106,6 +106,7 @@ func inspectOne(ctx context.Context, connString, database string, f inspectFlags
 
 	c, err := collect.Run(ctx, target, collect.Options{
 		Interval: f.interval, RawQueryText: f.rawQueries, ASHHz: f.ashHz, ASHWindow: f.window, Deadline: f.timeout,
+		SchemaOnly: f.schemaProfile(),
 	})
 	if err != nil {
 		return nil, err

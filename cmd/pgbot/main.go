@@ -47,6 +47,7 @@ func main() {
 	root.AddCommand(newAdviseCmd())
 	root.AddCommand(newExplainFindingCmd())
 	root.AddCommand(newDiffCmd())
+	root.AddCommand(newLintCmd())
 
 	// enteredRun distinguishes a malformed invocation (bad flags/args/unknown
 	// command — cobra fails before PersistentPreRun) from an execution failure

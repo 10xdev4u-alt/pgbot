@@ -43,7 +43,13 @@ func renderGrouped(b *strings.Builder, st styler, c *model.Context, width int) {
 	case score < 90:
 		paintScore = st.warn
 	}
-	fmt.Fprintf(b, "%s %s\n\n", st.dim("Database health:"), paintScore(fmt.Sprintf("%d/100", score)))
+	// Under --profile=schema the score grades only the schema; label it so, and it
+	// never reads as an overall "database health" verdict.
+	scoreLabel := "Database health:"
+	if c.Profile == "schema" {
+		scoreLabel = "Schema check:"
+	}
+	fmt.Fprintf(b, "%s %s\n\n", st.dim(scoreLabel), paintScore(fmt.Sprintf("%d/100", score)))
 
 	var crit, warn, note []model.Finding
 	hidden := 0 // suppressed non-criticals: counted in the footer, not listed
@@ -97,12 +103,18 @@ func renderGrouped(b *strings.Builder, st styler, c *model.Context, width int) {
 		fmt.Fprintln(b)
 	}
 
-	if good := buildGood(c); len(good) > 0 {
-		fmt.Fprintln(b, st.good("GOOD"))
-		for _, g := range good {
-			fmt.Fprintf(b, "%s %s\n", st.good("●"), st.dim(g))
+	// The GOOD list infers health from the ABSENCE of a finding — valid only when
+	// the check actually ran. A schema profile skips the workload/infra collectors,
+	// so "no blocking locks" there would be a claim about a database it never
+	// examined. Suppress it; the header already says this is schema-only.
+	if c.Profile != "schema" {
+		if good := buildGood(c); len(good) > 0 {
+			fmt.Fprintln(b, st.good("GOOD"))
+			for _, g := range good {
+				fmt.Fprintf(b, "%s %s\n", st.good("●"), st.dim(g))
+			}
+			fmt.Fprintln(b)
 		}
-		fmt.Fprintln(b)
 	}
 
 	fmt.Fprintln(b, st.dim("Details: pgbot inspect --full   ·   Machine-readable: --json"))

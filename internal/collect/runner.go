@@ -24,6 +24,13 @@ func Run(ctx context.Context, t *conn.Target, opts Options) (*model.Context, err
 	if ashOn && opts.ashWindow() > iv {
 		iv = opts.ashWindow()
 	}
+	// --profile=schema: no wait-event sampling and no counter interval — every
+	// schema collector is a point-in-time catalog read, so there's nothing to
+	// double-sample. This is what keeps a PR check from spending 20s in ASH.
+	if opts.SchemaOnly {
+		ashOn = false
+		iv = 0
+	}
 	// Total wall-clock cap. The old 5s+iv was fine for a local database but too
 	// tight for a remote/large one over the internet (many round trips × latency),
 	// and there was no way to extend it. Default generous; callers can override
@@ -76,7 +83,7 @@ func Run(ctx context.Context, t *conn.Target, opts Options) (*model.Context, err
 	g1.SetLimit(4)
 	for _, c := range registry {
 		c := c
-		if !c.Available(caps) {
+		if !c.Available(caps) || (opts.SchemaOnly && !schemaCollectors[c.Name()]) {
 			mu.Lock()
 			results[c.Name()] = &sampled{}
 			mu.Unlock()
@@ -105,7 +112,7 @@ func Run(ctx context.Context, t *conn.Target, opts Options) (*model.Context, err
 	g2.SetLimit(4)
 	for _, c := range registry {
 		c := c
-		if c.Kind() != KindCounter || !c.Available(caps) {
+		if c.Kind() != KindCounter || !c.Available(caps) || (opts.SchemaOnly && !schemaCollectors[c.Name()]) {
 			continue
 		}
 		g2.Go(func() error {

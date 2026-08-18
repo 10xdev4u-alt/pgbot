@@ -31,29 +31,32 @@ type Section struct {
 
 // Context is the whole picture of one database at one moment.
 type Context struct {
-	SchemaVersion string         `json:"schema_version"`
-	CollectedAt   time.Time      `json:"collected_at"`
-	Fingerprint   string         `json:"fingerprint"` // stable per target database (see store)
-	Server        ServerInfo     `json:"server"`
-	Window        Window         `json:"window"`
-	Health        *Health        `json:"health,omitempty"`
-	Activity      *Activity      `json:"activity,omitempty"`
-	Locks         *Locks         `json:"locks,omitempty"`
-	Queries       *Queries       `json:"queries,omitempty"`
-	Tables        *Tables        `json:"tables,omitempty"`
-	Indexes       *Indexes       `json:"indexes,omitempty"`
-	WAL           *WAL           `json:"wal,omitempty"`
-	IO            *IO            `json:"io,omitempty"`
-	Replication   *Replication   `json:"replication,omitempty"`
-	Settings      *Settings      `json:"settings,omitempty"`
-	Limits        *Limits        `json:"limits,omitempty"`
-	Horizon       *VacuumHorizon `json:"horizon,omitempty"`   // what pins the xmin/vacuum horizon (A1)
-	Sequences     *Sequences     `json:"sequences,omitempty"` // sequence exhaustion headroom (A8)
-	Progress      *Progress      `json:"progress,omitempty"`  // in-flight pg_stat_progress_* operations (A11)
-	Archiver      *Archiver      `json:"archiver,omitempty"`  // WAL archiving health (A15)
-	Checksums     *Checksums     `json:"checksums,omitempty"` // data-checksum failures cluster-wide (A16)
-	Standby       *StandbyStatus `json:"standby,omitempty"`   // standby-side recovery conflicts (A17)
-	Deltas        *Deltas        `json:"deltas,omitempty"`    // vs baseline; nil on first run
+	SchemaVersion string `json:"schema_version"`
+	// Profile is "schema" for a schema-only run (--profile=schema); empty for the
+	// default full run. It changes what the report is allowed to claim (D3-1).
+	Profile     string         `json:"profile,omitempty"`
+	CollectedAt time.Time      `json:"collected_at"`
+	Fingerprint string         `json:"fingerprint"` // stable per target database (see store)
+	Server      ServerInfo     `json:"server"`
+	Window      Window         `json:"window"`
+	Health      *Health        `json:"health,omitempty"`
+	Activity    *Activity      `json:"activity,omitempty"`
+	Locks       *Locks         `json:"locks,omitempty"`
+	Queries     *Queries       `json:"queries,omitempty"`
+	Tables      *Tables        `json:"tables,omitempty"`
+	Indexes     *Indexes       `json:"indexes,omitempty"`
+	WAL         *WAL           `json:"wal,omitempty"`
+	IO          *IO            `json:"io,omitempty"`
+	Replication *Replication   `json:"replication,omitempty"`
+	Settings    *Settings      `json:"settings,omitempty"`
+	Limits      *Limits        `json:"limits,omitempty"`
+	Horizon     *VacuumHorizon `json:"horizon,omitempty"`   // what pins the xmin/vacuum horizon (A1)
+	Sequences   *Sequences     `json:"sequences,omitempty"` // sequence exhaustion headroom (A8)
+	Progress    *Progress      `json:"progress,omitempty"`  // in-flight pg_stat_progress_* operations (A11)
+	Archiver    *Archiver      `json:"archiver,omitempty"`  // WAL archiving health (A15)
+	Checksums   *Checksums     `json:"checksums,omitempty"` // data-checksum failures cluster-wide (A16)
+	Standby     *StandbyStatus `json:"standby,omitempty"`   // standby-side recovery conflicts (A17)
+	Deltas      *Deltas        `json:"deltas,omitempty"`    // vs baseline; nil on first run
 	// Set (with Deltas nil) when a stats reset / restart between runs makes any
 	// comparison fiction — e.g. serverless scale-to-zero. See T2.
 	DeltaSuppressedReason string       `json:"delta_suppressed_reason,omitempty"`

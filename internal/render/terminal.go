@@ -83,6 +83,18 @@ func Terminal(w io.Writer, c *model.Context, opts Options) error {
 	fmt.Fprintf(&b, "%s · %s · %s · %s · %s window\n\n",
 		st.good("connected"), st.head(target), pgLower(c.Server.VersionNum), st.dim("read-only"), windowLabel(c))
 
+	// --profile=schema: state plainly that this is a schema check, so a clean
+	// report is never mistaken for "this running database is healthy" (D3-1). A
+	// schema profile skips every workload/history/infra finding — including
+	// backups, replication, and wraparound — so silence here means nothing about
+	// a live database.
+	if c.Profile == "schema" {
+		fmt.Fprintln(&b, st.warn("SCHEMA CHECK — catalog only."))
+		fmt.Fprintln(&b, st.dim("Validates the schema of a (possibly empty) database. It says NOTHING about the"))
+		fmt.Fprintln(&b, st.dim("health of a running database — not backups, replication, bloat, or wraparound."))
+		fmt.Fprintln(&b)
+	}
+
 	if !c.Server.HasPgMonitor {
 		fmt.Fprintln(&b, st.warn("! role lacks pg_monitor — some stats are partial. Fix: GRANT pg_monitor TO <role>;"))
 		fmt.Fprintln(&b)
@@ -98,8 +110,9 @@ func Terminal(w io.Writer, c *model.Context, opts Options) error {
 		fmt.Fprintln(&b)
 	}
 
-	// Cold-window / reset surfacing — front and center, not buried.
-	if c.Window.ColdWindow() {
+	// Cold-window / reset surfacing — front and center, not buried. Irrelevant
+	// under --profile=schema, which samples no counters, so skip it there.
+	if c.Window.ColdWindow() && c.Profile != "schema" {
 		age := int64(0)
 		if c.Window.WindowAgeSeconds != nil {
 			age = *c.Window.WindowAgeSeconds
