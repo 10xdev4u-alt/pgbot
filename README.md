@@ -338,6 +338,13 @@ docker run --rm --network <that-network> ghcr.io/pgrundev/pgbot \
   inspect "postgres://postgres:pw@mypg:5432/postgres?sslmode=disable"
 ```
 
+The image is multi-arch (amd64/arm64) and public — no login needed. Prefer passing
+the DSN by environment so it stays out of the container's argument list:
+
+```bash
+docker run --rm --network <that-network> -e DATABASE_URL ghcr.io/pgrundev/pgbot inspect
+```
+
 **pgbot as a container reaching a DB on the host.** Use `host.docker.internal`
 (add `--add-host=host.docker.internal:host-gateway` on Linux).
 
