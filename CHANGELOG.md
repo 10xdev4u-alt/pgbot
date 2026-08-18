@@ -7,6 +7,14 @@ separately by `model.SchemaVersion` (currently 1.1.0).
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-08-18
+
+### Fixed
+- Re-cut of 0.3.1 to publish the npm packages — 0.3.1's npm step failed because a
+  CI publish needs a 2FA-bypass/automation token. No code changes versus 0.3.1
+  (the binaries, Docker image, and signatures are identical). npm is now live:
+  `npx pgbot inspect "$DATABASE_URL"`.
+
 ## [0.3.1] - 2026-08-18
 
 ### Fixed
@@ -165,6 +173,7 @@ separately by `model.SchemaVersion` (currently 1.1.0).
   1.25.13, and golang.org/x/text to v0.39.0; `govulncheck` now runs in CI and
   reports no vulnerabilities.
 
+[0.3.2]: https://github.com/pgrundev/pgbot/releases/tag/v0.3.2
 [0.3.1]: https://github.com/pgrundev/pgbot/releases/tag/v0.3.1
 [0.3.0]: https://github.com/pgrundev/pgbot/releases/tag/v0.3.0
 [0.2.1]: https://github.com/pgrundev/pgbot/releases/tag/v0.2.1
