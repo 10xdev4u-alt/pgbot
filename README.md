@@ -123,6 +123,38 @@ carried into the advice, not lost.
 
 ![pgbot ask — an AI reading of pgbot's findings, with caveats carried](docs/img/ask.png)
 
+## Commands and flags
+
+Every command takes the connection the same way — an argument, `$DATABASE_URL`,
+or `$PGBOT_DATABASE_URL`.
+
+| Command | What it does |
+|---|---|
+| `inspect` | the full findings-first health report (`--full` for the section tables) |
+| `lint` | schema-only check, safe on an empty CI database (`inspect --profile=schema --no-store`) |
+| `diff` | compare two baseline snapshots offline |
+| `indexes` · `queries` · `tables` · `vacuum` | drill into one signal |
+| `advise` | planner-validated missing-index suggestions (needs hypopg) |
+| `ask "…"` · `explain` | a plain-language AI reading of the same deterministic findings |
+| `explain-finding <id>` | the catalogue page for a finding, offline |
+| `mcp` | serve the findings to an AI agent over MCP |
+| `config` · `baselines` | manage `.pgbot.toml` and the local baseline store |
+
+Key `inspect` flags:
+
+| Flag | |
+|---|---|
+| `--json` · `--format=text\|json\|sarif\|junit\|prometheus` | output format; SARIF uploads to the GitHub Security tab |
+| `--fail-on=critical\|warn\|info\|none` | the severity that makes the exit code non-zero (the CI gate) |
+| `--profile=full\|schema` | `schema` runs only catalog-derived findings — safe on an empty CI database |
+| `--fail-on-new <base.json>` | act only on findings not already in a base report (migration PRs) |
+| `--all-databases` | inspect every database in the cluster; cluster-wide findings reported once |
+| `--config <path>` | a `.pgbot.toml` for thresholds, severity remaps, and `[[ignore]]` rules |
+
+Exit codes are a scriptable contract: `0` clean · `1` warn · `2` critical · `3`
+connection/execution failure · `64` usage error. Suppressed and pre-existing
+findings never move them.
+
 ## Install
 
 | Method | Command |
@@ -154,7 +186,7 @@ PGBOT_REQUIRE_SIGNATURE=1 curl -fsSL https://pgbot.dev/install | sh
 pass. To verify a release by hand:
 
 ```bash
-cosign verify-blob --certificate checksums.txt.pem --signature checksums.txt.sig \
+cosign verify-blob --bundle checksums.txt.cosign.bundle \
   --certificate-identity-regexp '^https://github.com/pgrundev/pgbot/' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt
 ```

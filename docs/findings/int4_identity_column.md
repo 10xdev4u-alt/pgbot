@@ -101,6 +101,11 @@ through. Scope it to the one relation you've reasoned about.
 - It cannot see gaps: `nextval` is consumed on every attempt (including rolled-back
   inserts and cached blocks), so a sequence burns through its range faster than the
   live row count suggests — the real runway is shorter than `count(*)` implies.
+- **The severity is not anchored to production.** This finding on an empty CI
+  database and on an 800M-row production table produce the same output today — the
+  type is the type. Weighting severity by real table sizes and write rates (from an
+  imported production baseline) is planned but not yet implemented, so treat the
+  ranking as "this will wrap eventually", not "this wraps soon".
 
 ## Related
 

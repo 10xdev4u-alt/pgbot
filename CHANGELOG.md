@@ -7,6 +7,45 @@ separately by `model.SchemaVersion` (currently 1.1.0).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-17
+
+### Added
+- **Schema profile for CI (`--profile=schema`, `pgbot lint`).** Runs only the
+  findings derivable from the catalog alone — invalid/redundant indexes, unindexed
+  foreign keys, a narrow identity column, autovacuum disabled on a table — so it's
+  safe against an empty, freshly-migrated database, where the full profile would
+  fire `unused_indexes` and `stale_statistics` on everything. A schema report says
+  so in its header and makes no claim about a running database's health.
+- **`--fail-on-new <base.json>`.** Compare a run against a base report and act only
+  on findings the change introduced — new findings, escalated severities, and new
+  rows inside an existing aggregate (a fourth unindexed FK on top of three).
+  Pre-existing findings are marked `preexisting: true` in `--json`, excluded from
+  SARIF and the exit code. This is the migration-PR check: schema profile + base
+  vs. head, only regressions fail. The GitHub Action gains `profile` and
+  `base-report` inputs.
+- **New finding `int4_identity_column`.** A sequence-backed `int4`/`serial` (or
+  identity) column wraps at 2.1 billion — `int2` at 32767 — regardless of its
+  current value, after which the next insert errors. Detected structurally, so it
+  fires on the migration PR while the fix is still free, where the value-based
+  `sequence_exhaustion` cannot. **Note:** this is a new finding ID, so anyone with
+  a `.pgbot.toml` will see it for the first time and it will fire on serial primary
+  keys immediately, some deliberately — scope an `[[ignore]]` to the bounded tables
+  you've reasoned about. Its severity is not yet weighted by production table size
+  (planned), so read it as "will wrap eventually", not "wraps soon".
+- **npm distribution**: `npx pgbot inspect "$DATABASE_URL"` runs with no prior
+  install. The prebuilt binary ships as a per-platform `optionalDependency`
+  (`@pgbot/<os>-<arch>`), so it lands in the lockfile with an integrity hash,
+  needs no network beyond the registry, and works with `npm ci --ignore-scripts`
+  — no `postinstall` download. The wrapper passes argv, stdio, signals, and the
+  exit code through verbatim, published from the release tag with npm provenance.
+
+### Changed
+- Releases now sign the checksums into a self-contained **cosign bundle**
+  (`checksums.txt.cosign.bundle`), and `install.sh` verifies it with
+  `cosign verify-blob --bundle` — no longer relying on the `--certificate` /
+  `--signature` flags cosign v3 has deprecated. The detached `.sig`/`.pem` are kept
+  this release as a fallback.
+
 ### Fixed
 - The GitHub Action's default `version: latest` no longer 404s. `install.sh`
   treated `latest` as a literal release tag (`pgbot_latest_..._.tar.gz`, a 404);
@@ -14,16 +53,6 @@ separately by `model.SchemaVersion` (currently 1.1.0).
   Action passes an empty version rather than the literal string. The Action also
   installs into the same `~/.local/bin` it adds to `PATH` instead of disagreeing
   with the installer's default.
-
-### Added
-- **npm distribution**: `npx pgbot inspect "$DATABASE_URL"` runs with no prior
-  install. The prebuilt binary ships as a per-platform `optionalDependency`
-  (`@pgbot/<os>-<arch>`), so it lands in the lockfile with an integrity hash,
-  needs no network beyond the registry, and works with `npm ci --ignore-scripts`
-  — no `postinstall` download. The wrapper passes argv, stdio, signals, and the
-  exit code through verbatim. Published from the release tag with npm provenance;
-  the README documents that npm attests provenance while `install.sh` verifies a
-  cosign signature.
 
 ## [0.2.1] - 2026-08-17
 
@@ -108,5 +137,6 @@ separately by `model.SchemaVersion` (currently 1.1.0).
   1.25.13, and golang.org/x/text to v0.39.0; `govulncheck` now runs in CI and
   reports no vulnerabilities.
 
+[0.3.0]: https://github.com/pgrundev/pgbot/releases/tag/v0.3.0
 [0.2.1]: https://github.com/pgrundev/pgbot/releases/tag/v0.2.1
 [0.2.0]: https://github.com/pgrundev/pgbot/releases/tag/v0.2.0
