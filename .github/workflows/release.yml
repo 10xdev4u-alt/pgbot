@@ -93,3 +93,46 @@ jobs:
           done
           echo "FAILED: npx pgbot@${VERSION} --version never succeeded"
           exit 1
+
+  # The container image must be ANONYMOUSLY pullable. ghcr packages default to
+  # private, and a private image passes every other check while nobody outside the
+  # org can `docker run` it (this bit us for real). A fresh runner isn't logged in
+  # to ghcr, so this run is anonymous by construction.
+  docker-smoke:
+    needs: goreleaser
+    name: image is public + runs
+    runs-on: ubuntu-latest
+    steps:
+      - name: anonymous docker run --version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          docker logout ghcr.io || true   # ensure the pull is anonymous
+          out="$(docker run --rm ghcr.io/pgrundev/pgbot:"$VERSION" --version)"
+          echo "$out"
+          case "$out" in
+            "pgbot version"*) echo "image is public and runs ✓" ;;
+            *) echo "FAILED: unexpected --version output (or image not anonymously pullable)"; exit 1 ;;
+          esac
+
+  # Verify the release's own cosign signature — the release SIGNS the checksums but
+  # never checked that the signature actually verifies. A broken signing chain
+  # would silently ship and only surface when a user runs install.sh with
+  # PGBOT_REQUIRE_SIGNATURE=1. Verify the bundle against the release workflow's
+  # OIDC identity.
+  verify-signature:
+    needs: goreleaser
+    name: published signature verifies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: sigstore/cosign-installer@v3
+      - name: cosign verify-blob --bundle
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          base="https://github.com/pgrundev/pgbot/releases/download/${VERSION}"
+          curl -fsSL "$base/checksums.txt" -o checksums.txt
+          curl -fsSL "$base/checksums.txt.cosign.bundle" -o checksums.txt.cosign.bundle
+          cosign verify-blob --bundle checksums.txt.cosign.bundle \
+            --certificate-identity-regexp '^https://github.com/pgrundev/pgbot/\.github/workflows/release\.yml' \
+            --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+            checksums.txt
+          echo "published cosign bundle verifies ✓"
