@@ -40,3 +40,56 @@ jobs:
           # secret is added — the brews block skips the push in that case, so the
           # release still succeeds. Set it to publish the Homebrew formula.
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      # npm distribution: assemble the wrapper + per-platform packages from the
+      # binaries goreleaser just built, and publish them (platform packages first,
+      # the wrapper last, since it pins their exact versions). Version == the tag.
+      # Skips cleanly when NPM_TOKEN is unset, so a release never fails for it.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+      - name: publish npm packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "NPM_TOKEN not set — skipping npm publish (release still succeeds)."
+            exit 0
+          fi
+          VERSION="${GITHUB_REF_NAME#v}"
+          node npm/build.mjs "$VERSION"
+          for d in npm/staging/@pgbot/*/; do
+            npm publish "$d" --provenance --access public
+          done
+          npm publish npm/staging/pgbot --provenance --access public
+
+  # DoD 8: prove the published package actually runs — a packaging break is
+  # invisible to the Go test suite and only shows up here. macos-latest is
+  # darwin-arm64, windows-latest is win32-x64, ubuntu-latest is linux-x64.
+  npm-smoke:
+    needs: goreleaser
+    name: npx smoke (${{ matrix.os }})
+    env:
+      HAS_NPM: ${{ secrets.NPM_TOKEN != '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: npx pgbot@<tag> --version exits 0
+        if: env.HAS_NPM == 'true'
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          for i in $(seq 1 10); do
+            if npx -y "pgbot@${VERSION}" --version; then exit 0; fi
+            echo "pgbot@${VERSION} not installable yet (attempt $i) — waiting for npm propagation"
+            sleep 20
+          done
+          echo "FAILED: npx pgbot@${VERSION} --version never succeeded"
+          exit 1

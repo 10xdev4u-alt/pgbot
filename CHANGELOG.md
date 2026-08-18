@@ -7,6 +7,16 @@ separately by `model.SchemaVersion` (currently 1.1.0).
 
 ## [Unreleased]
 
+### Added
+- **npm distribution**: `npx pgbot inspect "$DATABASE_URL"` runs with no prior
+  install. The prebuilt binary ships as a per-platform `optionalDependency`
+  (`@pgbot/<os>-<arch>`), so it lands in the lockfile with an integrity hash,
+  needs no network beyond the registry, and works with `npm ci --ignore-scripts`
+  — no `postinstall` download. The wrapper passes argv, stdio, signals, and the
+  exit code through verbatim. Published from the release tag with npm provenance;
+  the README documents that npm attests provenance while `install.sh` verifies a
+  cosign signature.
+
 ## [0.2.1] - 2026-08-17
 
 ### Fixed

@@ -1,0 +1,39 @@
+{
+  "name": "pgbot",
+  "version": "0.0.0-dev",
+  "description": "In-database observability for PostgreSQL — one read-only binary, findings-first.",
+  "keywords": [
+    "postgres",
+    "postgresql",
+    "observability",
+    "diagnostics",
+    "dba",
+    "monitoring",
+    "performance",
+    "cli"
+  ],
+  "homepage": "https://github.com/pgrundev/pgbot#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pgrundev/pgbot.git"
+  },
+  "license": "Apache-2.0",
+  "bin": {
+    "pgbot": "bin/pgbot.js"
+  },
+  "files": [
+    "bin/pgbot.js",
+    "README.md"
+  ],
+  "optionalDependencies": {
+    "@pgbot/linux-x64": "0.0.0-dev",
+    "@pgbot/linux-arm64": "0.0.0-dev",
+    "@pgbot/darwin-x64": "0.0.0-dev",
+    "@pgbot/darwin-arm64": "0.0.0-dev",
+    "@pgbot/win32-x64": "0.0.0-dev",
+    "@pgbot/win32-arm64": "0.0.0-dev"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}

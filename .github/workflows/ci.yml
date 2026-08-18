@@ -205,3 +205,28 @@ jobs:
           docker exec pg psql -U postgres -q -c \
             "DO \$\$ BEGIN FOR i IN 1..200000 LOOP INSERT INTO t(note) VALUES('x'); IF i%50=0 THEN COMMIT; END IF; END LOOP; END \$\$;" &
           go test ./internal/collect/ -run Integration_poolerRatesStayCorrect -v
+
+  npm:
+    name: npm wrapper (packaging)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # DoD 9: exit codes and signals pass through the wrapper unmodified — a 2
+      # (critical) arrives as 2. Pure-Node, no DB.
+      - name: wrapper unit tests
+        run: node --test npm/test/*.test.mjs
+      # DoD 10: `npm install --ignore-scripts` produces a working install. Builds
+      # the real binary, packs the wrapper + this platform's package, installs the
+      # tarballs with --ignore-scripts, and runs `pgbot --version` through it.
+      - name: pack + --ignore-scripts install smoke
+        run: bash npm/test/pack-smoke.sh

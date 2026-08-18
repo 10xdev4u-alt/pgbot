@@ -127,19 +127,31 @@ carried into the advice, not lost.
 
 | Method | Command |
 |---|---|
+| npx (no install) | `npx pgbot inspect "$DATABASE_URL"` |
 | Script (cosign signature + checksum) | `curl -fsSL https://pgbot.dev/install \| sh` |
+| Homebrew | `brew install pgrundev/tap/pgbot` |
 | Go | `go install github.com/pgrundev/pgbot/cmd/pgbot@latest` |
 | Docker | `docker run --rm ghcr.io/pgrundev/pgbot inspect "$DATABASE_URL"` |
-| Homebrew | `brew install pgrundev/tap/pgbot` |
 | Windows / manual | download the archive for your OS/arch from [Releases](https://github.com/pgrundev/pgbot/releases) (Linux/macOS `.tar.gz`, Windows `.zip`) |
 
-Some security teams won't pipe `curl` to `sh` — every alternative above installs
-the same verified binary. Releases ship SHA256 checksums signed with **cosign**
-(keyless, via GitHub Actions OIDC). The install script verifies that signature
-when `cosign` is on your `PATH` — and always verifies the checksum. Set
-`PGBOT_REQUIRE_SIGNATURE=1` to make signature verification mandatory (it then
-hard-fails if `cosign` is missing or the check doesn't pass). To verify a release
-by hand:
+`npx pgbot` fetches the prebuilt binary for your platform from npm (shipped as an
+`optionalDependency`, so only the matching one installs) and runs it — nothing to
+install, works with `npm ci --ignore-scripts`.
+
+**What each path verifies.** npm is the *convenient* path: the packages carry
+registry integrity hashes and npm **provenance**, a verifiable link to the GitHub
+Actions workflow that built them — that attests *where* the package came from, not
+that the artifact was signed. `install.sh` is the *verified* path: releases ship
+SHA256 checksums signed with **cosign** (keyless, via GitHub Actions OIDC), and the
+script verifies that signature when `cosign` is on your `PATH` and always verifies
+the checksum. For the strongest guarantee, require the signature:
+
+```bash
+PGBOT_REQUIRE_SIGNATURE=1 curl -fsSL https://pgbot.dev/install | sh
+```
+
+`PGBOT_REQUIRE_SIGNATURE=1` hard-fails if `cosign` is missing or the check doesn't
+pass. To verify a release by hand:
 
 ```bash
 cosign verify-blob --certificate checksums.txt.pem --signature checksums.txt.sig \
