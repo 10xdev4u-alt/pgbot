@@ -4,6 +4,7 @@ severity: critical
 critical_when: "downgraded to warn while a CREATE INDEX CONCURRENTLY is still building"
 dimension: risk
 object: relation
+scope: schema
 requires: []
 thresholds: []
 related: [unused_indexes]

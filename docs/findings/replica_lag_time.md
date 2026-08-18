@@ -4,6 +4,7 @@ severity: warn
 critical_when: "replay lag past the critical threshold"
 dimension: risk
 object: cluster
+scope: infra
 requires: [replication, WAL flowing]
 thresholds: [replica_lag_warn_seconds]
 related: [sync_rep_degraded, recovery_conflicts]

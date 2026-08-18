@@ -4,6 +4,7 @@ severity: warn
 critical_when: ""
 dimension: throughput
 object: cluster
+scope: workload
 requires: []
 thresholds: []
 related: []

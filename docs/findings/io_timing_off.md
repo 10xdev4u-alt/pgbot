@@ -4,6 +4,7 @@ severity: info
 critical_when: ""
 dimension: throughput
 object: setting
+scope: infra
 requires: []
 thresholds: []
 related: [wait_io_bound]

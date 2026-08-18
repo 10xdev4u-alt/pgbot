@@ -4,6 +4,7 @@ severity: info
 critical_when: ""
 dimension: cost
 object: cluster
+scope: infra
 requires: []
 thresholds: []
 related: [pgss_entries_evicted]

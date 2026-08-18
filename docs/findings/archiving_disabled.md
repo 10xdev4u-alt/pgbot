@@ -4,6 +4,7 @@ severity: warn
 critical_when: "downgraded to info on a managed provider"
 dimension: risk
 object: cluster
+scope: infra
 requires: [primary]
 thresholds: []
 related: [archiving_failing]

@@ -4,6 +4,7 @@ severity: warn
 critical_when: "the pinned XID age grows large (dimension escalates from storage to risk)"
 dimension: storage
 object: cluster
+scope: infra
 requires: []
 thresholds: []
 related: [idle_in_transaction, long_running_transaction, prepared_xact_abandoned, replication_slot_inactive]

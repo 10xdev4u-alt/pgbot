@@ -4,6 +4,7 @@ severity: warn
 critical_when: "a prepared (2PC) transaction open over an hour"
 dimension: risk
 object: cluster
+scope: infra
 requires: []
 thresholds: []
 related: [vacuum_horizon_blocked]

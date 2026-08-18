@@ -4,6 +4,7 @@ severity: warn
 critical_when: ""
 dimension: risk
 object: sub
+scope: infra
 requires: [logical replication]
 thresholds: []
 related: [replica_disconnected]

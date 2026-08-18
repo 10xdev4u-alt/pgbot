@@ -4,6 +4,7 @@ severity: warn
 critical_when: ""
 dimension: risk
 object: cluster
+scope: history
 requires: [replication]
 thresholds: []
 related: [sync_rep_degraded, replication_slot_inactive]

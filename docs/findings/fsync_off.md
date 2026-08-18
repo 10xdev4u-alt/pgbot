@@ -4,6 +4,7 @@ severity: critical
 critical_when: ""
 dimension: risk
 object: setting
+scope: infra
 requires: []
 thresholds: []
 related: [full_page_writes_off]

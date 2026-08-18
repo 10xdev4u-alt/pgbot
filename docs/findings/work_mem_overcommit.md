@@ -4,6 +4,7 @@ severity: warn
 critical_when: ""
 dimension: risk
 object: setting
+scope: infra
 requires: []
 thresholds: []
 related: [work_mem_low, connections_overprovisioned]

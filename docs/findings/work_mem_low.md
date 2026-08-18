@@ -4,6 +4,7 @@ severity: warn
 critical_when: ""
 dimension: throughput
 object: setting
+scope: workload
 requires: []
 thresholds: []
 related: [work_mem_overcommit, wait_io_bound]

@@ -752,6 +752,30 @@
         "blocked_count"
       ]
     },
+    "NarrowIdentityColumn": {
+      "properties": {
+        "schema": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "column": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schema",
+        "table",
+        "column",
+        "type"
+      ]
+    },
     "PartitionRollup": {
       "properties": {
         "schema": {
@@ -1132,6 +1156,12 @@
         "items": {
           "items": {
             "$ref": "#/$defs/SequenceUsage"
+          },
+          "type": "array"
+        },
+        "narrow_identity": {
+          "items": {
+            "$ref": "#/$defs/NarrowIdentityColumn"
           },
           "type": "array"
         }

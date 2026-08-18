@@ -4,6 +4,7 @@ severity: info
 critical_when: ""
 dimension: storage
 object: relation
+scope: schema
 requires: []
 thresholds: []
 related: [unused_indexes, low_hot_update_ratio]

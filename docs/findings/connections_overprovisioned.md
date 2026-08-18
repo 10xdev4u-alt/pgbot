@@ -4,6 +4,7 @@ severity: info
 critical_when: ""
 dimension: cost
 object: cluster
+scope: workload
 requires: []
 thresholds: []
 related: [connection_saturation, work_mem_overcommit]

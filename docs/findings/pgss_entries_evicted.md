@@ -4,6 +4,7 @@ severity: warn
 critical_when: ""
 dimension: throughput
 object: cluster
+scope: history
 requires: [pg_stat_statements]
 thresholds: []
 related: [pg_stat_statements_missing]

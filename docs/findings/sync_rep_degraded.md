@@ -4,6 +4,7 @@ severity: critical
 critical_when: ""
 dimension: risk
 object: cluster
+scope: infra
 requires: [replication, synchronous_standby_names set]
 thresholds: []
 related: [replica_lag_time, replica_disconnected]

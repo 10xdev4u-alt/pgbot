@@ -4,6 +4,7 @@ severity: warn
 critical_when: ""
 dimension: throughput
 object: cluster
+scope: workload
 requires: [ASH sampling (ash-hz>0)]
 thresholds: []
 related: [checkpoints_forced]

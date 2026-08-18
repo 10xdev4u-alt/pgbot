@@ -4,6 +4,7 @@ severity: warn
 critical_when: ""
 dimension: latency
 object: relation
+scope: schema
 requires: []
 thresholds: []
 related: [seq_scan_heavy]

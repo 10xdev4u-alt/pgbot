@@ -4,6 +4,7 @@ severity: info
 critical_when: ""
 dimension: risk
 object: setting
+scope: infra
 requires: []
 thresholds: []
 related: [long_running_transaction, idle_in_transaction]

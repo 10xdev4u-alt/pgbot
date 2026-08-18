@@ -4,6 +4,7 @@ severity: warn
 critical_when: ""
 dimension: risk
 object: cluster
+scope: infra
 requires: [standby]
 thresholds: []
 related: [replica_lag_time]

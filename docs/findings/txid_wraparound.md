@@ -4,6 +4,7 @@ severity: warn
 critical_when: "XID age past the critical threshold (approaching the 2.1B wall)"
 dimension: risk
 object: cluster
+scope: infra
 requires: []
 thresholds: []
 related: [autovacuum_off, vacuum_horizon_blocked, mxid_wraparound]

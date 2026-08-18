@@ -4,6 +4,7 @@ severity: critical
 critical_when: ""
 dimension: risk
 object: relation
+scope: schema
 requires: []
 thresholds: []
 related: [table_never_vacuumed, autovacuum_starved, txid_wraparound]

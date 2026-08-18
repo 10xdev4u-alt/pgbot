@@ -4,6 +4,7 @@ severity: warn
 critical_when: ""
 dimension: latency
 object: setting
+scope: infra
 requires: [a managed/SSD provider]
 thresholds: []
 related: [seq_scan_heavy]

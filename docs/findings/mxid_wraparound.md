@@ -4,6 +4,7 @@ severity: warn
 critical_when: "multixact age past the critical threshold"
 dimension: risk
 object: cluster
+scope: infra
 requires: []
 thresholds: []
 related: [txid_wraparound]

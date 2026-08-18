@@ -4,6 +4,7 @@ severity: warn
 critical_when: ""
 dimension: storage
 object: relation
+scope: workload
 requires: []
 thresholds: [unused_index_min_size_mb]
 related: [redundant_indexes, low_hot_update_ratio]

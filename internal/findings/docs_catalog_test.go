@@ -127,6 +127,9 @@ func TestDocsPages_structureAndFrontMatter(t *testing.T) {
 				if p.fm["object"] != meta.ObjectClass {
 					t.Errorf("object: page %q != catalog %q", p.fm["object"], meta.ObjectClass)
 				}
+				if p.fm["scope"] != meta.Scope {
+					t.Errorf("scope: page %q != catalog %q", p.fm["scope"], meta.Scope)
+				}
 			}
 			// All template sections present (DoD: template survives).
 			for _, sec := range requiredSections {
@@ -177,6 +180,22 @@ func TestDocsCoverage_bidirectional(t *testing.T) {
 	for id := range pages {
 		if !KnownID(id) {
 			t.Errorf("docs/findings/%s.md is not a known finding id", id)
+		}
+	}
+}
+
+// TestScope_everyFindingClassified is the D3-0 drift guard: every finding pgbot
+// can emit declares one of the four valid scopes, so a new finding cannot be
+// added without its author deciding whether --profile=schema should keep it.
+func TestScope_everyFindingClassified(t *testing.T) {
+	for id := range knownIDs {
+		s := Scope(id)
+		if s == "" {
+			t.Errorf("%q has no Scope — add one to its catalog entry (or metaScope)", id)
+			continue
+		}
+		if !ValidScope(s) {
+			t.Errorf("%q has invalid Scope %q (want schema|workload|history|infra)", id, s)
 		}
 	}
 }

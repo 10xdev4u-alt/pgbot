@@ -4,6 +4,7 @@ severity: warn
 critical_when: ""
 dimension: storage
 object: relation
+scope: workload
 requires: []
 thresholds: [dead_ratio_warn]
 related: [low_hot_update_ratio, vacuum_horizon_blocked, autovacuum_starved]

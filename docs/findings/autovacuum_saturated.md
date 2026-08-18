@@ -4,6 +4,7 @@ severity: warn
 critical_when: "point-in-time; confirm it holds across runs"
 dimension: throughput
 object: cluster
+scope: workload
 requires: []
 thresholds: []
 related: [autovacuum_starved, autovacuum_long_running]

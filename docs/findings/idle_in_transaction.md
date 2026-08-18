@@ -4,6 +4,7 @@ severity: warn
 critical_when: "escalates with the number and age of idle-in-transaction sessions"
 dimension: risk
 object: cluster
+scope: workload
 requires: []
 thresholds: []
 related: [long_running_transaction, vacuum_horizon_blocked]

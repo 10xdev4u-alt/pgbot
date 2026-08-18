@@ -4,6 +4,7 @@ severity: warn
 critical_when: ""
 dimension: risk
 object: cluster
+scope: workload
 requires: []
 thresholds: []
 related: [idle_in_transaction, vacuum_horizon_blocked]

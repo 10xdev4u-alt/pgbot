@@ -4,6 +4,7 @@ severity: warn
 critical_when: ""
 dimension: throughput
 object: setting
+scope: workload
 requires: []
 thresholds: []
 related: [wait_lwlock_pressure]

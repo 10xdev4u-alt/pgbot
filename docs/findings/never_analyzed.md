@@ -4,6 +4,7 @@ severity: warn
 critical_when: ""
 dimension: latency
 object: relation
+scope: workload
 requires: []
 thresholds: []
 related: [stale_statistics, table_never_vacuumed]

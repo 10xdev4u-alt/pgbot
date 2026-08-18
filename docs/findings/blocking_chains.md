@@ -4,6 +4,7 @@ severity: critical
 critical_when: ""
 dimension: risk
 object: cluster
+scope: workload
 requires: []
 thresholds: []
 related: [long_running_transaction, idle_in_transaction]

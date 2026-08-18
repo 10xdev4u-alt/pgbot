@@ -4,6 +4,7 @@ severity: warn
 critical_when: ""
 dimension: storage
 object: relation
+scope: workload
 requires: []
 thresholds: []
 related: [table_bloat, autovacuum_saturated]

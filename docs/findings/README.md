@@ -25,6 +25,7 @@ Lost durability, corruption, wraparound, replication — things that end in an o
 - **[archiving_disabled](archiving_disabled.md)** · Warn — archive_mode is off — no continuous WAL archive for PITR
 - **[connection_saturation](connection_saturation.md)** · Warn — connections approaching max_connections
 - **[idle_in_transaction](idle_in_transaction.md)** · Warn — sessions idle inside an open transaction, holding locks and the xmin horizon
+- **[int4_identity_column](int4_identity_column.md)** · Warn — a sequence-backed int2/int4 column that will wrap (int4 at 2.1B) regardless of current value
 - **[long_running_transaction](long_running_transaction.md)** · Warn — a transaction open far too long, pinning vacuum
 - **[mxid_wraparound](mxid_wraparound.md)** · Warn — multixact-id age climbing toward its own wraparound wall
 - **[prepared_xact_abandoned](prepared_xact_abandoned.md)** · Warn — a prepared (2PC) transaction left open, blocking vacuum forever

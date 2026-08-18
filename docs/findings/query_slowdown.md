@@ -4,6 +4,7 @@ severity: warn
 critical_when: ""
 dimension: latency
 object: cluster
+scope: history
 requires: [pg_stat_statements, a baseline snapshot]
 thresholds: []
 related: [stale_statistics]

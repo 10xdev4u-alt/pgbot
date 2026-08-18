@@ -4,6 +4,7 @@ severity: warn
 critical_when: ""
 dimension: throughput
 object: relation
+scope: workload
 requires: []
 thresholds: []
 related: [fk_unindexed, stale_statistics]

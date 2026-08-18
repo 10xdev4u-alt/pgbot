@@ -4,6 +4,7 @@ severity: critical
 critical_when: ""
 dimension: risk
 object: db
+scope: infra
 requires: [PG12+, data_checksums=on]
 thresholds: []
 related: [ignore_checksum_failure_on, checksums_disabled]

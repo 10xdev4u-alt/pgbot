@@ -4,6 +4,7 @@ severity: warn
 critical_when: ""
 dimension: risk
 object: relation
+scope: workload
 requires: []
 thresholds: []
 related: [autovacuum_disabled_on_table, never_analyzed]

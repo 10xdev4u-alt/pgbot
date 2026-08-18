@@ -4,6 +4,7 @@ severity: warn
 critical_when: "retained WAL past the critical size"
 dimension: risk
 object: slot
+scope: infra
 requires: []
 thresholds: []
 related: [vacuum_horizon_blocked, replica_disconnected]

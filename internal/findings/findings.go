@@ -120,7 +120,8 @@ var knownIDs = map[string]bool{
 	"low_hot_update_ratio": true, "low_cache_hit": true, "idle_in_transaction": true,
 	"long_running_transaction": true, "wait_lock_contention": true,
 	"wait_io_bound": true, "wait_lwlock_pressure": true, "connection_saturation": true,
-	"txid_wraparound": true, "sequence_exhaustion": true, "mxid_wraparound": true,
+	"txid_wraparound": true, "sequence_exhaustion": true, "int4_identity_column": true,
+	"mxid_wraparound":        true,
 	"vacuum_horizon_blocked": true, "prepared_xact_abandoned": true,
 	"sync_rep_degraded": true, "replica_lag_time": true, "recovery_conflicts": true,
 	"replica_disconnected": true, "checksum_failures": true,
@@ -189,6 +190,7 @@ func ComputeWithTunables(c *model.Context, tun Tunables) []model.Finding {
 	txidWraparound(c, add)
 	mxidWraparound(c, add)
 	sequenceExhaustion(c, add)
+	int4IdentityColumn(c, add)
 	walArchiving(c, add)
 	checksumFindings(c, add)
 	failoverReadiness(c, add, tun)
@@ -1151,6 +1153,43 @@ func sequenceExhaustion(c *model.Context, add func(model.Finding)) {
 		Remediation: "Migrate the owning column to bigint (ALTER TABLE … ALTER COLUMN … TYPE bigint — plan for the table rewrite). If the column is already bigint, exhaustion is astronomically far off.",
 		Impact:      impact(model.DimRisk, worst*100, fmt.Sprintf("%.0f%% of range used", worst*100), "last_value / min(max_value, column type max)"),
 		Confidence:  0.9,
+	})
+}
+
+// int4IdentityColumn is the STRUCTURAL half of sequence exhaustion, split out as a
+// schema-scoped finding (D3-0): a narrow (int2/int4) column backed by a sequence
+// will wrap — int4 at 2.1B, int2 at 32767 — no matter its current value. It fires
+// on a freshly-migrated, never-inserted database where sequence_exhaustion (which
+// needs last_value) cannot, which is exactly when a migration PR can still fix it
+// cheaply. int2 is almost always a mistake, so it escalates to critical.
+func int4IdentityColumn(c *model.Context, add func(model.Finding)) {
+	if c.Sequences == nil || len(c.Sequences.NarrowIdentity) == 0 {
+		return
+	}
+	var ev, objs []string
+	sawInt2 := false
+	for _, n := range c.Sequences.NarrowIdentity {
+		width := "2.1 billion"
+		if n.Type == "int2" {
+			width = "32767"
+			sawInt2 = true
+		}
+		ev = append(ev, fmt.Sprintf("%s.%s.%s is %s — wraps at %s", n.Schema, n.Table, n.Column, n.Type, width))
+		objs = append(objs, n.Schema+"."+n.Table)
+	}
+	sev := model.SeverityWarn
+	if sawInt2 {
+		sev = model.SeverityCritical
+	}
+	add(model.Finding{
+		ID: "int4_identity_column", Severity: sev,
+		Title:       fmt.Sprintf("%d sequence-backed column(s) too narrow for their lifetime", len(ev)),
+		Detail:      "A sequence-backed int4 column wraps at 2.1 billion rows and an int2 at 32767, after which the next insert errors — a write outage. The current value doesn't matter; the type is the ceiling. This is a common migration mistake and invisible to review of the migration file.",
+		Evidence:    ev,
+		Objects:     objs,
+		Remediation: "Define identity/serial columns as bigint. To widen an existing one: ALTER TABLE … ALTER COLUMN … TYPE bigint (a table rewrite — plan for it, and widen any int4 foreign-key columns that reference it in the same change).",
+		Impact:      impact(model.DimRisk, 55, fmt.Sprintf("%d column(s)", len(ev)), "column type of sequence-backed columns (pg_attribute)"),
+		Confidence:  0.95,
 	})
 }
 

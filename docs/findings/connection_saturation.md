@@ -4,6 +4,7 @@ severity: warn
 critical_when: "at/near max_connections"
 dimension: risk
 object: cluster
+scope: workload
 requires: []
 thresholds: []
 related: [connections_overprovisioned, idle_in_transaction]

@@ -455,6 +455,18 @@ type ProgressOp struct {
 type Sequences struct {
 	Section
 	Items []SequenceUsage `json:"items,omitempty"`
+	// NarrowIdentity is the structural (schema-scoped) half: int2/int4 columns
+	// backed by a sequence, detectable regardless of current value (D3-0).
+	NarrowIdentity []NarrowIdentityColumn `json:"narrow_identity,omitempty"`
+}
+
+// NarrowIdentityColumn is a sequence-backed column whose integer type will wrap
+// well before a bigint would — int4 at 2.1B, int2 at 32767.
+type NarrowIdentityColumn struct {
+	Schema string `json:"schema"`
+	Table  string `json:"table"`
+	Column string `json:"column"`
+	Type   string `json:"type"` // int2 | int4
 }
 
 type SequenceUsage struct {

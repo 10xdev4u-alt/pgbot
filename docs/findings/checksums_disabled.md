@@ -4,6 +4,7 @@ severity: info
 critical_when: ""
 dimension: risk
 object: setting
+scope: infra
 requires: [PG12+]
 thresholds: []
 related: [checksum_failures]

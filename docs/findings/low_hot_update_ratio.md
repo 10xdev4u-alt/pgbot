@@ -4,6 +4,7 @@ severity: warn
 critical_when: ""
 dimension: throughput
 object: relation
+scope: workload
 requires: [track_counts (default on)]
 thresholds: []
 related: [table_bloat, unused_indexes]

@@ -4,6 +4,7 @@ severity: warn
 critical_when: "a sequence is ≥90% consumed"
 dimension: risk
 object: relation
+scope: workload
 requires: []
 thresholds: []
 related: [txid_wraparound]

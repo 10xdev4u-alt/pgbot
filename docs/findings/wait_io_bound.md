@@ -4,6 +4,7 @@ severity: warn
 critical_when: ""
 dimension: throughput
 object: cluster
+scope: workload
 requires: [ASH sampling (ash-hz>0), track_io_timing]
 thresholds: []
 related: [low_cache_hit, seq_scan_heavy]

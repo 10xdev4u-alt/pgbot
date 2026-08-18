@@ -4,6 +4,7 @@ severity: info
 critical_when: ""
 dimension: throughput
 object: cluster
+scope: workload
 requires: []
 thresholds: []
 related: [autovacuum_saturated]

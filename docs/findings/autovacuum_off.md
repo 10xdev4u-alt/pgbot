@@ -4,6 +4,7 @@ severity: critical
 critical_when: ""
 dimension: risk
 object: setting
+scope: infra
 requires: []
 thresholds: []
 related: [txid_wraparound, autovacuum_disabled_on_table]
