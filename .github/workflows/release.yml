@@ -81,17 +81,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: npx pgbot@<tag> --version exits 0
+      - name: npx @pgbot/cli@<tag> --version exits 0
         if: env.HAS_NPM == 'true'
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           for i in $(seq 1 10); do
-            if npx -y "pgbot@${VERSION}" --version; then exit 0; fi
-            echo "pgbot@${VERSION} not installable yet (attempt $i) — waiting for npm propagation"
+            if npx -y "@pgbot/cli@${VERSION}" --version; then exit 0; fi
+            echo "@pgbot/cli@${VERSION} not installable yet (attempt $i) — waiting for npm propagation"
             sleep 20
           done
-          echo "FAILED: npx pgbot@${VERSION} --version never succeeded"
+          echo "FAILED: npx @pgbot/cli@${VERSION} --version never succeeded"
           exit 1
 
   # The container image must be ANONYMOUSLY pullable. ghcr packages default to

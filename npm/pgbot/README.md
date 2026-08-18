@@ -5,7 +5,7 @@ read-only, reads Postgres's own statistics views, and prints a findings-first
 health report.
 
 ```bash
-npx pgbot inspect "postgres://pgbot_ro@host:5432/db"
+npx @pgbot/cli inspect "postgres://pgbot_ro@host:5432/db"
 ```
 
 No prior install. `npx` downloads the wrapper and the prebuilt binary for your

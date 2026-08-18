@@ -169,16 +169,17 @@ findings never move them.
 
 | Method | Command |
 |---|---|
-| npx (no install) | `npx pgbot inspect "$DATABASE_URL"` |
+| npx (no install) | `npx @pgbot/cli inspect "$DATABASE_URL"` |
 | Script (cosign signature + checksum) | `curl -fsSL https://pgbot.dev/install \| sh` |
 | Homebrew | `brew install pgrundev/tap/pgbot` |
 | Go | `go install github.com/pgrundev/pgbot/cmd/pgbot@latest` |
 | Docker | `docker run --rm ghcr.io/pgrundev/pgbot inspect "$DATABASE_URL"` |
 | Windows / manual | download the archive for your OS/arch from [Releases](https://github.com/pgrundev/pgbot/releases) (Linux/macOS `.tar.gz`, Windows `.zip`) |
 
-`npx pgbot` fetches the prebuilt binary for your platform from npm (shipped as an
-`optionalDependency`, so only the matching one installs) and runs it — nothing to
-install, works with `npm ci --ignore-scripts`.
+`npx @pgbot/cli` fetches the prebuilt binary for your platform from npm (shipped as
+an `optionalDependency`, so only the matching one installs) and runs it — nothing to
+install, works with `npm ci --ignore-scripts`. It installs the `pgbot` command
+(`npm i -g @pgbot/cli`); the scoped name is because npm reserves the bare `pgbot`.
 
 Against a **remote/managed database** (RDS, Neon, Supabase, …) the container needs
 no special networking — it reaches the host directly. Pass the DSN by

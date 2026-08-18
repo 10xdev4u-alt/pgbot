@@ -1,5 +1,5 @@
 {
-  "name": "pgbot",
+  "name": "@pgbot/cli",
   "version": "0.0.0-dev",
   "description": "In-database observability for PostgreSQL — one read-only binary, findings-first.",
   "keywords": [

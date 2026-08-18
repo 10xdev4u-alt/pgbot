@@ -7,13 +7,26 @@ separately by `model.SchemaVersion` (currently 1.1.0).
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-08-18
+
+### Changed
+- **The npm wrapper is published as `@pgbot/cli`, not `pgbot`.** npm's package-name
+  similarity policy blocks the bare name `pgbot` from being created (too close to
+  the existing `got`/`hubot` packages), which failed 0.3.2's publish after the six
+  platform packages had already gone up. The wrapper now uses the scoped name we
+  own: install with `npx @pgbot/cli inspect "$DATABASE_URL"` or
+  `npm i -g @pgbot/cli`. Nothing else changes — the installed command is still
+  `pgbot`, the six `@pgbot/<os>-<arch>` binary packages are unchanged, and the
+  Homebrew formula, `install.sh`, Docker image, and `go install` path are
+  unaffected.
+
 ## [0.3.2] - 2026-08-18
 
 ### Fixed
 - Re-cut of 0.3.1 to publish the npm packages — 0.3.1's npm step failed because a
   CI publish needs a 2FA-bypass/automation token. No code changes versus 0.3.1
   (the binaries, Docker image, and signatures are identical). npm is now live:
-  `npx pgbot inspect "$DATABASE_URL"`.
+  `npx @pgbot/cli inspect "$DATABASE_URL"`.
 
 ## [0.3.1] - 2026-08-18
 
@@ -39,7 +52,7 @@ separately by `model.SchemaVersion` (currently 1.1.0).
     "waiting"; and TPS excludes pgbot's own transactions.
 
 ### Added
-- **npm distribution is live**: `npx pgbot inspect "$DATABASE_URL"`.
+- **npm distribution is live**: `npx @pgbot/cli inspect "$DATABASE_URL"`.
 - Release self-checks: the published image must be anonymously pullable and the
   cosign signature must verify, both asserted after every release.
 
@@ -68,7 +81,7 @@ separately by `model.SchemaVersion` (currently 1.1.0).
   keys immediately, some deliberately — scope an `[[ignore]]` to the bounded tables
   you've reasoned about. Its severity is not yet weighted by production table size
   (planned), so read it as "will wrap eventually", not "wraps soon".
-- **npm distribution**: `npx pgbot inspect "$DATABASE_URL"` runs with no prior
+- **npm distribution**: `npx @pgbot/cli inspect "$DATABASE_URL"` runs with no prior
   install. The prebuilt binary ships as a per-platform `optionalDependency`
   (`@pgbot/<os>-<arch>`), so it lands in the lockfile with an integrity hash,
   needs no network beyond the registry, and works with `npm ci --ignore-scripts`
@@ -173,6 +186,7 @@ separately by `model.SchemaVersion` (currently 1.1.0).
   1.25.13, and golang.org/x/text to v0.39.0; `govulncheck` now runs in CI and
   reports no vulnerabilities.
 
+[0.3.3]: https://github.com/pgrundev/pgbot/releases/tag/v0.3.3
 [0.3.2]: https://github.com/pgrundev/pgbot/releases/tag/v0.3.2
 [0.3.1]: https://github.com/pgrundev/pgbot/releases/tag/v0.3.1
 [0.3.0]: https://github.com/pgrundev/pgbot/releases/tag/v0.3.0
