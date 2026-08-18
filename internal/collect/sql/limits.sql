@@ -6,10 +6,15 @@
 -- max_mxid_age tracks multixact-ID wraparound (mxid_age(datminmxid)); multixacts
 -- are consumed by SELECT ... FOR SHARE / FOR UPDATE and FK-check workloads and
 -- exhaust toward the same ~2.1B wall as regular transaction ids.
--- conn_used excludes pgbot's own pool connections (pid <> pg_backend_pid() is
--- rewritten by Target.ExcludeSelf to drop all of them) so the monitor doesn't
--- inflate the very connection-saturation percentage it reports.
-SELECT (SELECT count(*) FROM pg_stat_activity WHERE pid <> pg_backend_pid())::int AS conn_used,
+-- conn_used counts what max_connections actually limits: client backends.
+-- Background workers, autovacuum, checkpointer/bgwriter/walwriter and PG18's IO
+-- workers appear in pg_stat_activity but draw on other limits. pgbot's own pool
+-- connections are excluded too (pid <> pg_backend_pid() is rewritten by
+-- Target.ExcludeSelf to drop all of them) so the monitor doesn't inflate the very
+-- connection-saturation percentage it reports.
+SELECT (SELECT count(*) FROM pg_stat_activity
+          WHERE backend_type = 'client backend'
+            AND pid <> pg_backend_pid())::int                       AS conn_used,
        current_setting('max_connections')::int                    AS conn_max,
        (SELECT max(age(datfrozenxid)) FROM pg_database)::bigint    AS max_xid_age,
        (SELECT max(mxid_age(datminmxid)) FROM pg_database)::bigint AS max_mxid_age;

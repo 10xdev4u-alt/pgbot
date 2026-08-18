@@ -128,16 +128,42 @@ func (t *Target) Warm(ctx context.Context) {
 	}
 }
 
+// sessionPins are the GUCs applySessionSetup sets on every pgbot session
+// (application_name is pinned too, but separately — it is pgbot's identity in
+// pg_stat_activity and must never be unpinned). Anything that reports the SERVER's
+// configuration must look past these: pg_settings.setting and current_setting()
+// otherwise show THIS session's pinned values, not the database's (e.g.
+// statement_timeout=15s on a server that has none).
+var sessionPins = []struct{ name, value string }{
+	{"statement_timeout", "'15s'"},
+	{"lock_timeout", "'2s'"},
+	{"idle_in_transaction_session_timeout", "'10s'"},
+	{"default_transaction_read_only", "on"},
+}
+
+// UnpinLocal reverts pgbot's session pins for the current transaction only
+// (SET LOCAL … = DEFAULT restores the server/database/role value the session would
+// have without our SET). COMMIT re-establishes the pins, so a caller gets one
+// transaction in which pg_settings and current_setting() describe the database
+// rather than pgbot. Only the settings collector needs it. stats_fetch_consistency
+// (PG15+, also pinned) is left alone: it isn't a tuning parameter, and a SET LOCAL
+// of an unknown GUC would abort the transaction on PG < 15.
+func UnpinLocal(ctx context.Context, tx pgx.Tx) error {
+	for _, p := range sessionPins {
+		if _, err := tx.Exec(ctx, "SET LOCAL "+p.name+" = DEFAULT"); err != nil {
+			return fmt.Errorf("unpin %s: %w", p.name, err)
+		}
+	}
+	return nil
+}
+
 // applySessionSetup pins every physical connection. statement_timeout and
 // lock_timeout are mandatory: pgbot must never become the incident it was
 // invoked to diagnose.
 func applySessionSetup(ctx context.Context, c *pgx.Conn, caps Capabilities) error {
-	stmts := []string{
-		"SET application_name = 'pgbot'",
-		"SET statement_timeout = '15s'",
-		"SET lock_timeout = '2s'",
-		"SET idle_in_transaction_session_timeout = '10s'",
-		"SET default_transaction_read_only = on",
+	stmts := []string{"SET application_name = 'pgbot'"}
+	for _, p := range sessionPins {
+		stmts = append(stmts, "SET "+p.name+" = "+p.value)
 	}
 	for _, s := range stmts {
 		if _, err := c.Exec(ctx, s); err != nil {
@@ -185,17 +211,19 @@ func probe(ctx context.Context, cc *pgx.ConnConfig) (Capabilities, PoolerInfo, e
 		       (SELECT count(*) FROM pg_settings WHERE name LIKE 'rds.%') > 0,
 		       (SELECT count(*) FROM pg_settings WHERE name LIKE 'cloudsql.%') > 0,
 		       (SELECT count(*) FROM pg_settings WHERE name LIKE 'azure.%') > 0,
-		       pg_is_in_recovery()`
+		       pg_is_in_recovery(),
+		       -- Aurora exposes aurora_version(). Look it up in the catalog rather
+		       -- than CALLING it: on every other server the call fails, which writes
+		       -- an ERROR to the server log and books a rollback in pg_stat_database
+		       -- on each pgbot run — the very counter pgbot reports.
+		       (SELECT count(*) FROM pg_proc WHERE proname = 'aurora_version') > 0`
 	err = c.QueryRow(ctx, q, mode...).Scan(&caps.VersionNum, &caps.VersionText, &caps.Database,
 		&caps.StartedAt, &caps.HasStatStatements, &caps.HasHypopg, &caps.HasPgMonitor,
-		&mk.HasRDS, &mk.HasCloudSQL, &mk.HasAzure, &caps.InRecovery)
+		&mk.HasRDS, &mk.HasCloudSQL, &mk.HasAzure, &caps.InRecovery, &mk.IsAurora)
 	if err != nil {
 		return Capabilities{}, pooler, fmt.Errorf("probe capabilities: %w", err)
 	}
 	caps.RecoveryChecked = true // the probe scan succeeded, so InRecovery is trustworthy
-	// Aurora exposes aurora_version(); a failure just means "not Aurora".
-	var av string
-	mk.IsAurora = c.QueryRow(ctx, `SELECT aurora_version()`, mode...).Scan(&av) == nil
 	mk.Host, mk.VersionText = cc.Host, caps.VersionText
 	caps.Provider = detectProvider(mk)
 
