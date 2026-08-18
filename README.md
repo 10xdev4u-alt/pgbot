@@ -171,6 +171,33 @@ rolling them back — a read-only transaction writes nothing either way, but a
 rollback would inflate the `xact_rollback` counter pgbot itself reports. Those
 are defence in depth; the role is the boundary.
 
+## Point pgbot at your database
+
+Pass the connection string as an argument — a URL or a libpq DSN:
+
+```bash
+pgbot inspect "postgres://pgbot_ro:secret@host:5432/db?sslmode=require"
+
+# the libpq keyword/value DSN form works too:
+pgbot inspect "host=host port=5432 dbname=db user=pgbot_ro sslmode=require"
+```
+
+Or set it once in the environment and omit the argument — convenient for a shell
+session or CI, and it keeps the password out of your shell history and `ps`
+output:
+
+```bash
+export DATABASE_URL="postgres://pgbot_ro:secret@host:5432/db?sslmode=require"
+
+pgbot inspect
+pgbot queries     # every command takes the connection the same way
+pgbot diff --since 24h
+```
+
+pgbot resolves the connection in this order: the argument first, then
+`$DATABASE_URL`, then `$PGBOT_DATABASE_URL`. Add `?sslmode=require` (or stricter)
+for any database reached over a network.
+
 ## Connecting to managed providers
 
 pgbot is a **client** — it connects over the Postgres wire protocol like `psql`.
