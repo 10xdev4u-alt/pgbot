@@ -70,9 +70,12 @@ runs:
         PGBOT_BASE_REPORT: ${{ inputs.base-report }}
       run: |
         out="pgbot-report.${PGBOT_FORMAT}"
-        args=(inspect "$PGBOT_DSN" --no-store --no-color --format="$PGBOT_FORMAT" --fail-on="$PGBOT_FAIL_ON" --profile="$PGBOT_PROFILE")
+        args=(inspect "$PGBOT_DSN" --no-store --no-color --format="$PGBOT_FORMAT" --fail-on="$PGBOT_FAIL_ON")
         if [ -n "$PGBOT_CONFIG_PATH" ]; then args+=(--config "$PGBOT_CONFIG_PATH"); fi
-        # base-report set → fail only on findings this change introduced (D3-2).
+        # Only pass the newer flags when actually used, so the default invocation
+        # still works against a pgbot release that predates them (the action
+        # installs the binary; --profile/--fail-on-new need pgbot >= 0.3).
+        if [ -n "$PGBOT_PROFILE" ] && [ "$PGBOT_PROFILE" != "full" ]; then args+=(--profile="$PGBOT_PROFILE"); fi
         if [ -n "$PGBOT_BASE_REPORT" ]; then args+=(--fail-on-new "$PGBOT_BASE_REPORT"); fi
         set +e
         pgbot "${args[@]}" > "$out"
