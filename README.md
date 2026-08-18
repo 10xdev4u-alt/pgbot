@@ -180,6 +180,19 @@ findings never move them.
 `optionalDependency`, so only the matching one installs) and runs it — nothing to
 install, works with `npm ci --ignore-scripts`.
 
+Against a **remote/managed database** (RDS, Neon, Supabase, …) the container needs
+no special networking — it reaches the host directly. Pass the DSN by
+**environment**, not as an argument, so the password stays out of `ps` and your
+shell history:
+
+```bash
+export DATABASE_URL="postgres://pgbot_ro:…@yourdb.example.com:5432/db?sslmode=require"
+docker run --rm -e DATABASE_URL ghcr.io/pgrundev/pgbot inspect
+```
+
+Use a `pg_monitor` role, not a superuser. (For a database in a local container,
+see [Postgres in Docker](#postgres-in-docker) — the networking differs.)
+
 **What each path verifies.** npm is the *convenient* path: the packages carry
 registry integrity hashes and npm **provenance**, a verifiable link to the GitHub
 Actions workflow that built them — that attests *where* the package came from, not
