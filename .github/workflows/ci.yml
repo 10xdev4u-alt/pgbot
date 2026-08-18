@@ -84,6 +84,30 @@ jobs:
         run: |
           python3 -c "import json,sys; d=json.load(open('pgbot-report.sarif')); assert d['version']=='2.1.0' and d['runs'], 'bad SARIF'; print('valid SARIF,', len(d['runs'][0]['results']), 'results')"
 
+  # action-smoke pre-builds pgbot onto PATH, so it never runs install.sh. This job
+  # deliberately does NOT, so the action must install via `install.sh` with the
+  # default version 'latest' — the path the "latest is a literal tag → 404" bug
+  # broke and the entry point for the agent-push / CI-check workflow.
+  action-install-smoke:
+    name: github action install path (latest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: start PostgreSQL with a pg_monitor role
+        run: |
+          docker run -d --name pg -p 5432:5432 -e POSTGRES_PASSWORD=pw postgres:17
+          for i in $(seq 1 60); do docker exec pg pg_isready -U postgres -h 127.0.0.1 -q && break; sleep 1; done
+          docker exec pg psql -U postgres -q \
+            -c "CREATE ROLE pgbot_ro LOGIN PASSWORD 'ro'; GRANT pg_monitor TO pgbot_ro; GRANT CONNECT ON DATABASE postgres TO pgbot_ro;"
+      - name: run the action with no pgbot on PATH (default version=latest)
+        uses: ./.github/actions/pgbot
+        with:
+          dsn: postgres://pgbot_ro:ro@127.0.0.1:5432/postgres
+          format: text
+          fail-on: none
+      - name: the action installed pgbot and it runs
+        run: pgbot --version
+
   static-check:
     name: no EXPLAIN ANALYZE
     runs-on: ubuntu-latest

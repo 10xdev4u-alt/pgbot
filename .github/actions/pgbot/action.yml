@@ -35,11 +35,15 @@ runs:
     - name: Install pgbot
       shell: bash
       env:
-        PGBOT_VERSION: ${{ inputs.version }}
+        # 'latest' is the installer's default anyway, so pass it as empty rather
+        # than as a literal tag the installer would try to download verbatim.
+        PGBOT_VERSION: ${{ inputs.version != 'latest' && inputs.version || '' }}
       run: |
         if command -v pgbot >/dev/null 2>&1; then
           echo "pgbot already on PATH: $(pgbot --version)"
         else
+          # Install where we then add to PATH, so the two agree.
+          export PGBOT_INSTALL_DIR="$HOME/.local/bin"
           curl -fsSL https://pgbot.dev/install | sh
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
         fi

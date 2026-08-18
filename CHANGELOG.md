@@ -7,6 +7,14 @@ separately by `model.SchemaVersion` (currently 1.1.0).
 
 ## [Unreleased]
 
+### Fixed
+- The GitHub Action's default `version: latest` no longer 404s. `install.sh`
+  treated `latest` as a literal release tag (`pgbot_latest_..._.tar.gz`, a 404);
+  it now resolves `latest` via the releases API like an empty value, and the
+  Action passes an empty version rather than the literal string. The Action also
+  installs into the same `~/.local/bin` it adds to `PATH` instead of disagreeing
+  with the installer's default.
+
 ### Added
 - **npm distribution**: `npx pgbot inspect "$DATABASE_URL"` runs with no prior
   install. The prebuilt binary ships as a per-platform `optionalDependency`

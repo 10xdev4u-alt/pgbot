@@ -40,7 +40,9 @@ fetch() { # url dest
 }
 
 version="${PGBOT_VERSION:-}"
-if [ -z "$version" ]; then
+# "latest" is a convenience alias, not a real tag — resolve it via the API like an
+# empty value. (The GitHub Action passes latest by default.)
+if [ -z "$version" ] || [ "$version" = "latest" ]; then
   api="https://api.github.com/repos/$REPO/releases/latest"
   version="$(fetch "$api" /dev/stdout | grep -m1 '"tag_name"' | cut -d'"' -f4)"
   [ -n "$version" ] || die "could not determine latest version; set PGBOT_VERSION"
