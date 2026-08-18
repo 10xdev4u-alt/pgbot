@@ -7,6 +7,34 @@ separately by `model.SchemaVersion` (currently 1.1.0).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-18
+
+### Fixed
+- **pgbot no longer measures its own footprint as the database's** (from external
+  PR #1 by @mishafyi, measured against a real remote PG18). Several places where
+  the read path counted, timed, or reported pgbot's own sessions and session pins:
+  - Settings reported pgbot's own session pins (`statement_timeout=15s`, etc.) as
+    the server's non-default parameters; now reads the server's real values via a
+    transaction-local unpin.
+  - Connection count now counts only client backends (not autovacuum/checkpointer/
+    walwriter/IO workers), and never pgbot's own pool.
+  - The Aurora probe called `aurora_version()`, which errored and booked a rollback
+    on every non-Aurora server each run; now detected from `pg_proc`.
+  - pg_stat_statements reads no longer spill to temp files (transaction-local
+    `work_mem`), so pgbot doesn't report its own `temp_bytes`.
+  - The wait sampler's per-poll deadline was too short for a remote link (every
+    poll timed out); a fixed budget makes the wait profile work over the internet.
+  - `low_cache_hit` requires enough block traffic before grading (a thin sample was
+    flipping the finding and the exit code on noise); `vacuum` grades "due?" against
+    the actual autovacuum knobs and per-table reloptions; the real index count is
+    reported (not the LIMIT-200 scan); idle `Client` waits aren't counted as
+    "waiting"; and TPS excludes pgbot's own transactions.
+
+### Added
+- **npm distribution is live**: `npx pgbot inspect "$DATABASE_URL"`.
+- Release self-checks: the published image must be anonymously pullable and the
+  cosign signature must verify, both asserted after every release.
+
 ## [0.3.0] - 2026-08-17
 
 ### Added
@@ -137,6 +165,7 @@ separately by `model.SchemaVersion` (currently 1.1.0).
   1.25.13, and golang.org/x/text to v0.39.0; `govulncheck` now runs in CI and
   reports no vulnerabilities.
 
+[0.3.1]: https://github.com/pgrundev/pgbot/releases/tag/v0.3.1
 [0.3.0]: https://github.com/pgrundev/pgbot/releases/tag/v0.3.0
 [0.2.1]: https://github.com/pgrundev/pgbot/releases/tag/v0.2.1
 [0.2.0]: https://github.com/pgrundev/pgbot/releases/tag/v0.2.0
