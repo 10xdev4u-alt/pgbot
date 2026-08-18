@@ -113,6 +113,30 @@ func TestTerminal_cleanGroupedScoresHighAndListsGood(t *testing.T) {
 	}
 }
 
+// DoD 13: a schema-profile report states it is a schema check and makes no claim
+// about a running database's health — no GOOD list (it infers health from a
+// finding's absence), and the score is relabeled.
+func TestTerminal_schemaProfileIsHonest(t *testing.T) {
+	c := sampleContext()
+	c.Profile = "schema"
+	var buf bytes.Buffer
+	if err := Terminal(&buf, c, Options{Color: false}); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{"SCHEMA CHECK", "health of a running database", "Schema check:"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("schema-profile header missing %q", want)
+		}
+	}
+	if strings.Contains(out, "GOOD") {
+		t.Error("schema profile must not print a GOOD list (it never ran those checks)")
+	}
+	if strings.Contains(out, "Database health:") {
+		t.Error("schema profile must relabel the score, not claim overall database health")
+	}
+}
+
 func TestSparkline(t *testing.T) {
 	if s := sparkline(nil); s != "" {
 		t.Errorf("empty series -> empty spark, got %q", s)

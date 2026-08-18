@@ -52,8 +52,15 @@ func renderGrouped(b *strings.Builder, st styler, c *model.Context, width int) {
 	fmt.Fprintf(b, "%s %s\n\n", st.dim(scoreLabel), paintScore(fmt.Sprintf("%d/100", score)))
 
 	var crit, warn, note []model.Finding
-	hidden := 0 // suppressed non-criticals: counted in the footer, not listed
+	hidden := 0      // suppressed non-criticals: counted in the footer, not listed
+	preexisting := 0 // --fail-on-new: already in base, not this change's regressions
 	for _, f := range c.Findings {
+		// --fail-on-new (D3-2): show only what this change introduced. Preexisting
+		// findings drop to a footer count (they remain in --json).
+		if f.Preexisting {
+			preexisting++
+			continue
+		}
 		// A suppressed CRITICAL still renders (visibly marked) — a config must never
 		// be able to make checksum_failures vanish from the screen (B2-2). Lesser
 		// suppressed findings drop to the footer / --full.
@@ -100,6 +107,10 @@ func renderGrouped(b *strings.Builder, st styler, c *model.Context, width int) {
 
 	if hidden > 0 {
 		fmt.Fprintln(b, st.dim(fmt.Sprintf("%d finding(s) suppressed by config (see --full)", hidden)))
+		fmt.Fprintln(b)
+	}
+	if preexisting > 0 {
+		fmt.Fprintln(b, st.dim(fmt.Sprintf("%d finding(s) already present in the base — not introduced by this change (see --json)", preexisting)))
 		fmt.Fprintln(b)
 	}
 

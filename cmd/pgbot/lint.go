@@ -34,6 +34,7 @@ func newLintCmd() *cobra.Command {
 	fl.StringVar(&f.format, "format", "text", "output format: text|json|sarif|junit|prometheus")
 	fl.StringVar(&f.config, "config", "", "path to .pgbot.toml (default: discover)")
 	fl.StringArrayVar(&f.ignore, "ignore", nil, "suppress a finding for this run: finding[:object] (repeatable)")
+	fl.StringVar(&f.failOnNew, "fail-on-new", "", "path to a base report (JSON); act only on findings new vs it")
 	fl.DurationVar(&f.timeout, "timeout", 30*time.Second, "total wall-clock budget for the run")
 	fl.BoolVar(&f.noColor, "no-color", false, "disable ANSI color")
 	return cmd

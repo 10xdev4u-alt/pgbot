@@ -27,6 +27,13 @@ func SARIF(w io.Writer, c *model.Context) error {
 	seenRule := map[string]bool{}
 	for i := range c.Findings {
 		f := &c.Findings[i]
+		// --fail-on-new (D3-2): a finding already in the base isn't a regression
+		// this change introduced. Excluded from SARIF so the Security tab annotates
+		// only what the PR added (it stays in --json). Suppressed criticals still
+		// surface via their suppression below.
+		if f.Preexisting {
+			continue
+		}
 		if !seenRule[f.ID] {
 			seenRule[f.ID] = true
 			rule := run.AddRule(f.ID).

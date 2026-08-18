@@ -581,6 +581,12 @@ type Finding struct {
 	// connected database. In an --all-databases run it is reported once, on the
 	// first database, and omitted from the rest (B3) — this flag says so.
 	ClusterScoped bool `json:"cluster_scoped,omitempty"`
+	// Preexisting is set by --fail-on-new (D3-2): this finding (or all of an
+	// aggregate's rows) was already present in the base report, so it is NOT a
+	// regression this change introduced. Preexisting findings stay in --json (so
+	// nothing is hidden) but are excluded from SARIF and the exit code, and not
+	// annotated — only what the change newly introduced is acted on.
+	Preexisting bool `json:"preexisting,omitempty"`
 }
 
 // Impact is why a finding matters and how much, in ONE dimension. Two findings

@@ -53,6 +53,15 @@ func computeFindings(c *model.Context, f inspectFlags) error {
 		}
 		c.Findings = kept
 	}
+
+	// --fail-on-new: mark findings already in the base report as preexisting, so
+	// only what this change introduced moves the exit code and the annotations
+	// (D3-2). Runs last, over the final finding set.
+	if f.failOnNew != "" {
+		if err := applyFailOnNew(c, f.failOnNew); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
