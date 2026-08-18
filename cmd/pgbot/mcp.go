@@ -340,10 +340,11 @@ func vacuumHealthTool(ctx context.Context, args json.RawMessage) (string, error)
 	}
 	tbls := append([]model.TableStat(nil), c.Tables.Top...)
 	sort.SliceStable(tbls, func(i, j int) bool { return tbls[i].DeadTuples > tbls[j].DeadTuples })
+	gThreshold, gScale := avVacThreshold(c), avVacScale(c)
 	past := 0
 	rows := make([]map[string]any, 0, len(tbls))
 	for _, t := range tbls {
-		due := expectAutovacuum(t.LiveTuples, t.DeadTuples)
+		due := expectAutovacuum(t, gThreshold, gScale)
 		if due {
 			past++
 		}

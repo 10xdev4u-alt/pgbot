@@ -603,11 +603,15 @@ func newTab(b *strings.Builder) *tabwriter.Writer {
 }
 
 func truncate(s string, n int) string {
-	s = strings.ReplaceAll(strings.TrimSpace(s), "\n", " ")
-	if len(s) <= n {
+	// Collapse all internal whitespace and truncate by RUNE so a multibyte
+	// character is never split (which misaligns columns and prints a replacement
+	// glyph). PR#1.
+	s = strings.Join(strings.Fields(s), " ")
+	r := []rune(s)
+	if len(r) <= n || n < 1 {
 		return s
 	}
-	return s[:n-1] + "…"
+	return string(r[:n-1]) + "…"
 }
 
 func humanBytes2(v float64) string { return humanBytes(int64(v)) }

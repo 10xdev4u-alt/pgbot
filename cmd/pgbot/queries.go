@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -120,8 +121,13 @@ func humanCount(n int64) string {
 }
 
 func truncStr(s string, n int) string {
-	if len(s) <= n {
+	// Collapse internal whitespace (multi-line SQL) and truncate by RUNE, so a
+	// multibyte character is never split — a split rune misaligns tabwriter
+	// columns and prints a replacement glyph (PR#1).
+	s = strings.Join(strings.Fields(s), " ")
+	r := []rune(s)
+	if len(r) <= n || n < 1 {
 		return s
 	}
-	return s[:n-1] + "…"
+	return string(r[:n-1]) + "…"
 }

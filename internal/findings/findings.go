@@ -922,6 +922,12 @@ func lowCacheHit(c *model.Context, add func(model.Finding)) {
 	if c.Window.ColdWindow() {
 		return
 	}
+	// A ratio over a few hundred blocks is noise, not a signal — a few cold reads
+	// swing it by tens of points between runs (the same reasoning as
+	// rollbackMinTxns for high_rollback_ratio). PR#1.
+	if !c.Health.CacheHitUsable() {
+		return
+	}
 	if *c.Health.CacheHitRatio >= cacheHitWarn {
 		return
 	}
