@@ -523,6 +523,9 @@
         "cache_hit_ratio": {
           "type": "number"
         },
+        "cache_blocks_sampled": {
+          "type": "integer"
+        },
         "deadlocks_per_min": {
           "type": "number"
         },
@@ -671,6 +674,9 @@
         "total": {
           "type": "integer"
         },
+        "scanned": {
+          "type": "integer"
+        },
         "unused": {
           "items": {
             "$ref": "#/$defs/IndexStat"
@@ -700,7 +706,8 @@
       "type": "object",
       "required": [
         "exactness",
-        "total"
+        "total",
+        "scanned"
       ]
     },
     "Limits": {

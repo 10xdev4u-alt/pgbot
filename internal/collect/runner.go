@@ -52,18 +52,14 @@ func Run(ctx context.Context, t *conn.Target, opts Options) (*model.Context, err
 	results := make(map[string]*sampled, len(registry))
 
 	// The sampler never fails the run — a dead sampler just yields an unavailable
-	// profile. Launch it before phase 1 so its window brackets the counters.
+	// profile. It is launched right after health's sample A (below) so its polls
+	// are the only pgbot traffic inside the window [A, B]; that poll count is then
+	// subtracted from health's commit delta (sampled.OwnTxns), so pgbot's own
+	// commits aren't read back as the database's TPS (PR#1).
 	var (
 		ash     ashResult
 		ashDone chan struct{}
 	)
-	if ashOn {
-		ashDone = make(chan struct{})
-		go func() {
-			defer close(ashDone)
-			ash = sampleWaits(ctx, t, caps, opts.ashHz(), opts.ashWindow())
-		}()
-	}
 	// Guarantee the sampler goroutine has fully exited before Run returns — on
 	// EVERY path, including the mid-run cancellation returns below. sampleWaits
 	// watches ctx.Done(), so cancel first (idempotent with the deferred cancel
@@ -76,13 +72,20 @@ func Run(ctx context.Context, t *conn.Target, opts Options) (*model.Context, err
 		}
 	}()
 
-	// Phase 1: sample A for every available collector (counters and gauges),
-	// concurrently and bounded to the pool.
-	tA := nowUTC()
+	// health is a counter that brackets the sample window; the schema profile
+	// skips it (it isn't a schema collector) and needs no window at all.
+	healthRuns := !opts.SchemaOnly
+
+	// Phase 1: sample A for every available collector EXCEPT health — gauges and
+	// the other counters, concurrently and bounded to the pool. Pool connections
+	// get established (and pinned) here, before the window opens.
 	g1, gctx := errgroup.WithContext(ctx)
 	g1.SetLimit(4)
 	for _, c := range registry {
 		c := c
+		if c.Name() == healthName {
+			continue
+		}
 		if !c.Available(caps) || (opts.SchemaOnly && !schemaCollectors[c.Name()]) {
 			mu.Lock()
 			results[c.Name()] = &sampled{}
@@ -99,20 +102,47 @@ func Run(ctx context.Context, t *conn.Target, opts Options) (*model.Context, err
 	}
 	_ = g1.Wait()
 
-	// Wait out the sample interval, then re-read the counters (sample B).
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-time.After(iv):
+	// Open the window with health's sample A, launch the sampler, wait out the
+	// interval (letting an in-flight poll finish), then close with sample B — so
+	// every counted poll lands inside [A, B].
+	var tA, tB time.Time
+	var dt time.Duration
+	health := healthCollector{}
+	if healthRuns {
+		hA, hErr := health.Sample(ctx, t, caps)
+		tA = nowUTC()
+		if ashOn {
+			ashDone = make(chan struct{})
+			go func() {
+				defer close(ashDone)
+				ash = sampleWaits(ctx, t, caps, opts.ashHz(), opts.ashWindow())
+			}()
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(iv):
+		}
+		if ashOn {
+			<-ashDone
+		}
+		hB, hErrB := health.Sample(ctx, t, caps)
+		tB = nowUTC()
+		dt = tB.Sub(tA)
+		if hErr == nil {
+			hErr = hErrB
+		}
+		results[healthName] = &sampled{A: hA, B: hB, Err: hErr, OwnTxns: int64(ash.attempts - ash.failures)}
+	} else {
+		tB = nowUTC() // no window; newContext still needs a timestamp
 	}
-	tB := nowUTC()
-	dt := tB.Sub(tA)
 
+	// Phase 2: the second sample for the remaining counters — after the window.
 	g2, gctx2 := errgroup.WithContext(ctx)
 	g2.SetLimit(4)
 	for _, c := range registry {
 		c := c
-		if c.Kind() != KindCounter || !c.Available(caps) || (opts.SchemaOnly && !schemaCollectors[c.Name()]) {
+		if c.Kind() != KindCounter || c.Name() == healthName || !c.Available(caps) || (opts.SchemaOnly && !schemaCollectors[c.Name()]) {
 			continue
 		}
 		g2.Go(func() error {
@@ -142,14 +172,12 @@ func Run(ctx context.Context, t *conn.Target, opts Options) (*model.Context, err
 		c.Assemble(out, caps, *s, dt, opts)
 	}
 
-	// Fold in the active-session profile once the sampler has finished its window
-	// (it started before phase 1, so this rarely blocks). Query text for per-query
-	// attribution comes from the queries collector's already-scrubbed normals.
+	// Fold in the active-session profile. Query text for per-query attribution
+	// comes from the queries collector's already-scrubbed normals.
 	if ashOn {
-		<-ashDone
 		out.WaitProfile = profileFrom(ash, queryTexts(out))
 	} else {
-		out.WaitProfile = &model.WaitProfile{Available: false, Reason: "sampler disabled (--ash-hz 0)"}
+		out.WaitProfile = &model.WaitProfile{Available: false, Reason: model.WaitSamplerDisabledReason}
 	}
 	return out, nil
 }

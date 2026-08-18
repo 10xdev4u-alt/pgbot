@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/pgrundev/pgbot/internal/conn"
 	"github.com/pgrundev/pgbot/internal/model"
 )
@@ -46,10 +47,22 @@ type ashResult struct {
 	failures int
 }
 
-// sampleWaits polls active backends at hz for the window, each poll its own
-// short read-only transaction. A poll that errors or times out is dropped and
-// sampling continues — the sampler must never fail the run or queue behind a
-// lock storm.
+// ashPollBudget is the per-poll deadline. It is deliberately NOT the tick
+// interval: at the default 10 Hz that would be 100 ms, and a poll over a
+// normal-latency link (a laptop or CI reaching RDS/Neon/Supabase at 30–100 ms
+// RTT) cannot complete in that — every poll timed out, every timeout tore down
+// its pool connection (pgx closes a connection whose context expires mid-query)
+// and the profile came back "all N polls errored" while the report said nothing.
+// With a fixed budget the sampler runs at min(hz, what the round trip allows)
+// instead of 0 (PR#1).
+const ashPollBudget = time.Second
+
+// sampleWaits polls active backends at hz for the window. Each poll is one round
+// trip (a bare SELECT — every pgbot session is default_transaction_read_only=on
+// and pg_stat_activity is live, so an explicit transaction only adds two more
+// round trips and an idle-in-transaction gap). A poll that errors or times out is
+// dropped and sampling continues — the sampler must never fail the run or queue
+// behind a lock storm. A tick that fires while a poll is in flight is skipped.
 func sampleWaits(ctx context.Context, t *conn.Target, caps conn.Capabilities, hz int, window time.Duration) ashResult {
 	if hz <= 0 || window <= 0 {
 		return ashResult{}
@@ -62,15 +75,20 @@ func sampleWaits(ctx context.Context, t *conn.Target, caps conn.Capabilities, hz
 	res := ashResult{}
 	poll := func() {
 		// Each poll gets its own budget so a stalled read is abandoned, not queued.
-		pctx, cancel := context.WithTimeout(ctx, interval)
+		pctx, cancel := context.WithTimeout(ctx, ashPollBudget)
 		defer cancel()
 		res.attempts++
-		rows, err := queryMany[WaitSample](pctx, t, sql)
+		rows, err := t.Pool.Query(pctx, sql)
 		if err != nil {
 			res.failures++ // drop this poll, keep going
 			return
 		}
-		res.samples = append(res.samples, rows...)
+		got, err := pgx.CollectRows(rows, pgx.RowToStructByNameLax[WaitSample])
+		if err != nil {
+			res.failures++
+			return
+		}
+		res.samples = append(res.samples, got...)
 	}
 
 	ticker := time.NewTicker(interval)

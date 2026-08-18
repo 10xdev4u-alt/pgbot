@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/pgrundev/pgbot/internal/conn"
 	"github.com/pgrundev/pgbot/internal/model"
 	"github.com/pgrundev/pgbot/internal/rate"
@@ -32,12 +33,25 @@ type healthSample struct {
 	StatsReset   *time.Time `db:"stats_reset"`
 }
 
-func (healthCollector) Name() string                     { return "health" }
+// healthName is the registry name the runner uses to sequence this collector
+// around the sample window (see Run).
+const healthName = "health"
+
+func (healthCollector) Name() string                     { return healthName }
 func (healthCollector) Kind() Kind                       { return KindCounter }
 func (healthCollector) Available(conn.Capabilities) bool { return true }
 
 func (healthCollector) Sample(ctx context.Context, t *conn.Target, _ conn.Capabilities) (any, error) {
-	return queryOne[healthSample](ctx, t, sqlHealth)
+	// A single-row read on an already-read-only session — run it directly on the
+	// pool (one round trip) rather than wrapping it in BEGIN/COMMIT (three). The
+	// window is bracketed by two of these serially (runner.go), so the round trips
+	// are on the critical path; the saved transactions are also two fewer of
+	// pgbot's own commits per run (PR#1).
+	rows, err := t.Pool.Query(ctx, sqlHealth)
+	if err != nil {
+		return healthSample{}, err
+	}
+	return pgx.CollectExactlyOneRow(rows, pgx.RowToStructByNameLax[healthSample])
 }
 
 func (healthCollector) Assemble(c *model.Context, _ conn.Capabilities, s sampled, dt time.Duration, _ Options) {
@@ -56,14 +70,23 @@ func (healthCollector) Assemble(c *model.Context, _ conn.Capabilities, s sampled
 		}
 		return v
 	}
-	h.TPS = mark(rate.PerSecond(a.XactCommit+a.XactRollback, b.XactCommit+b.XactRollback, dt))
-	h.CommitsPerSec = mark(rate.PerSecond(a.XactCommit, b.XactCommit, dt))
+	// pgbot's own commits inside the window (the wait sampler's polls) are not the
+	// database's throughput: take them off sample B's commit counter before
+	// computing rates. Clamped so a reset (b < a) is still detected as such (PR#1).
+	commitsB := b.XactCommit
+	if own := s.OwnTxns; own > 0 && commitsB-own >= a.XactCommit {
+		commitsB -= own
+	}
+	h.TPS = mark(rate.PerSecond(a.XactCommit+a.XactRollback, commitsB+b.XactRollback, dt))
+	h.CommitsPerSec = mark(rate.PerSecond(a.XactCommit, commitsB, dt))
 	h.RollbacksPerSec = mark(rate.PerSecond(a.XactRollback, b.XactRollback, dt))
-	if rr, ok := rate.Ratio(a.XactRollback, b.XactRollback, a.XactCommit, b.XactCommit); ok {
+	if rr, ok := rate.Ratio(a.XactRollback, b.XactRollback, a.XactCommit, commitsB); ok {
 		h.RollbackRatio = round4p(rr)
 	}
 	if chr, ok := rate.Ratio(a.BlksHit, b.BlksHit, a.BlksRead, b.BlksRead); ok {
 		h.CacheHitRatio = round4p(chr)
+		blocks := (b.BlksHit + b.BlksRead) - (a.BlksHit + a.BlksRead)
+		h.CacheBlocks = &blocks
 	}
 	if d, ok := rate.PerSecond(a.Deadlocks, b.Deadlocks, dt); ok {
 		h.DeadlocksPerMin = rate.Ptr(round2(*d * 60))
