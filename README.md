@@ -7,10 +7,20 @@ service, no write privilege anywhere in the path.
 
 ![pgbot inspect — a read-only vital-signs read: headline gauges with a status, then the checks that came back clean](docs/img/dashboard.png)
 
-```
+```sh
 curl -fsSL https://pgbot.dev/install | sh
 pgbot inspect "postgres://pgbot_ro@host:5432/db"
 ```
+
+Or set the connection once in the environment and drop the argument — handy for
+CI and shells, and it keeps the password out of your history and `ps`:
+
+```sh
+export DATABASE_URL="postgres://pgbot_ro@host:5432/db"
+pgbot inspect
+```
+
+pgbot reads the argument first, then `$DATABASE_URL`, then `$PGBOT_DATABASE_URL`.
 
 ```
 connected · db.example.com · postgres 17.4 · read-only · 6h20m window
