@@ -83,6 +83,25 @@ jobs:
       - name: the action's SARIF is valid
         run: |
           python3 -c "import json,sys; d=json.load(open('pgbot-report.sarif')); assert d['version']=='2.1.0' and d['runs'], 'bad SARIF'; print('valid SARIF,', len(d['runs'][0]['results']), 'results')"
+      # D3-3: exercise the schema profile through the action, capture a base
+      # report, then re-run with base-report — the migration-PR wiring end to end.
+      - name: action profile=schema → base report
+        uses: ./.github/actions/pgbot
+        with:
+          dsn: postgres://pgbot_ro:ro@127.0.0.1:5432/postgres
+          profile: schema
+          format: json
+          fail-on: none
+          upload-sarif: "false"
+      - run: cp pgbot-report.json base.json
+      - name: action profile=schema with --fail-on-new (no change → passes)
+        uses: ./.github/actions/pgbot
+        with:
+          dsn: postgres://pgbot_ro:ro@127.0.0.1:5432/postgres
+          profile: schema
+          base-report: base.json
+          fail-on: warn
+          upload-sarif: "false"
 
   # action-smoke pre-builds pgbot onto PATH, so it never runs install.sh. This job
   # deliberately does NOT, so the action must install via `install.sh` with the

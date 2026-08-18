@@ -601,6 +601,47 @@ GRANT CONNECT ON DATABASE yourdb TO pgbot_ci;
 `pg_monitor` grants read access to the statistics views pgbot needs and nothing
 else — no table data. The job that uploads SARIF needs `security-events: write`.
 
+### Reviewing a migration PR: schema profile + fail-on-new
+
+An empty CI database has never been queried, so the full profile fires
+`unused_indexes` and `stale_statistics` on everything and buries the one change
+that matters. `--profile=schema` runs only the findings derivable from the catalog
+(invalid/redundant indexes, unindexed FKs, a narrow `int4`/`serial` identity
+column, autovacuum disabled on a table) — valid on an empty, freshly-migrated
+database. Pair it with `--fail-on-new` so the check fails **only on what the PR
+introduced**, not pre-existing findings:
+
+```yaml
+# .github/workflows/pr.yml — runs on every pull request
+- run: |                      # 1. base branch, migrated → base report
+    git checkout ${{ github.base_ref }} && ./migrate.sh
+- uses: pgrundev/pgbot@v1
+  with: { dsn: "${{ env.CI_DSN }}", profile: schema, format: json }
+- run: mv pgbot-report.json base.json
+- run: |                      # 2. PR branch, migrated
+    git checkout ${{ github.sha }} && ./migrate.sh
+- uses: pgrundev/pgbot@v1     # fails only on findings new vs base
+  with: { dsn: "${{ env.CI_DSN }}", profile: schema, base-report: base.json, fail-on: warn }
+```
+
+(Or skip step 1 and download a `base.json` artifact your `main` CI already
+produced.) This is deliberately **quiet when correct** — no PR comment, SARIF
+annotations for new findings only, and the exit code carries the verdict. A check
+that speaks on every PR is a check nobody reads.
+
+The two profiles answer different questions and you want both: the schema check on
+`pull_request` above, and the **full profile against production on a schedule** —
+
+```yaml
+# .github/workflows/nightly.yml
+on: { schedule: [{ cron: "0 7 * * *" }] }
+# ... uses: pgrundev/pgbot@v1 with a read-only DSN to the production replica
+```
+
+— which sees backups, replication, bloat, and wraparound that a schema check
+never can. A clean `--profile=schema` report says nothing about a running
+database's health; its own header says so.
+
 ### Prometheus
 
 `--format=prometheus` writes the [node_exporter textfile

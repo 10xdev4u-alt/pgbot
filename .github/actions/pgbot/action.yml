@@ -20,6 +20,14 @@ inputs:
     description: "Path to a .pgbot.toml (optional)."
     required: false
     default: ""
+  profile:
+    description: "full (a live database) | schema (catalog-only, safe on an empty CI database — use for PR checks)."
+    required: false
+    default: full
+  base-report:
+    description: "Path to a base pgbot --json report. When set, only findings NOT already in it fail the check (--fail-on-new)."
+    required: false
+    default: ""
   version:
     description: "pgbot version to install (e.g. v0.2.0), or 'latest'. Ignored if pgbot is already on PATH."
     required: false
@@ -58,10 +66,14 @@ runs:
         PGBOT_FAIL_ON: ${{ inputs.fail-on }}
         PGBOT_FORMAT: ${{ inputs.format }}
         PGBOT_CONFIG_PATH: ${{ inputs.config }}
+        PGBOT_PROFILE: ${{ inputs.profile }}
+        PGBOT_BASE_REPORT: ${{ inputs.base-report }}
       run: |
         out="pgbot-report.${PGBOT_FORMAT}"
-        args=(inspect "$PGBOT_DSN" --no-store --no-color --format="$PGBOT_FORMAT" --fail-on="$PGBOT_FAIL_ON")
+        args=(inspect "$PGBOT_DSN" --no-store --no-color --format="$PGBOT_FORMAT" --fail-on="$PGBOT_FAIL_ON" --profile="$PGBOT_PROFILE")
         if [ -n "$PGBOT_CONFIG_PATH" ]; then args+=(--config "$PGBOT_CONFIG_PATH"); fi
+        # base-report set → fail only on findings this change introduced (D3-2).
+        if [ -n "$PGBOT_BASE_REPORT" ]; then args+=(--fail-on-new "$PGBOT_BASE_REPORT"); fi
         set +e
         pgbot "${args[@]}" > "$out"
         code=$?
