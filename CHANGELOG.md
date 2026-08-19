@@ -7,6 +7,24 @@ separately by `model.SchemaVersion` (currently 1.1.0).
 
 ## [Unreleased]
 
+### Fixed
+- **`pg_stat_statements` installed outside `public` was detected but unreadable
+  (#10).** Supabase (and any `CREATE EXTENSION … SCHEMA x`) puts the extension's
+  objects in `extensions`; pgbot's probe saw it in `pg_extension` but every read
+  used the bare relation name, so `queries` came back
+  `unavailable: relation "pg_stat_statements" does not exist` while the server
+  capability list still said `pg_stat_statements` — a silent loss of the report's
+  highest-value section for a dedicated read-only role whose `search_path` doesn't
+  include the schema. The probe now records the namespace of every installed
+  extension (`Capabilities.ExtensionSchemas`) and the fixed, allowlisted object
+  names — the `pg_stat_statements` view, the `pg_stat_statements(showtext)` SRF,
+  `pg_stat_statements_info`, and hypopg's `hypopg_create_index` /
+  `hypopg_relation_size` / `hypopg_reset` used by `advise` — are addressed
+  schema-qualified and identifier-quoted (`"extensions"."pg_stat_statements"`),
+  independent of `search_path`. When the schema can't be read the bare name is
+  used, i.e. the previous behaviour. Covered by an integration test that
+  relocates the extension and runs the read-only role against it.
+
 ## [0.4.0] - 2026-08-19
 
 ### Added
