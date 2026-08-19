@@ -132,6 +132,15 @@ func Build(c *model.Context, verdicts map[string]PriorVerdict) Report {
 	r.ReplicationActive = replicationActive(c)
 	winDays := c.Window.StatsWindowDays
 	r.StatsWindowDays = winDays
+	// effWinDays is the effective observation window for staleness: the stats
+	// window if reset is known, else the age since postmaster start. It is (almost)
+	// always available on a live server, so a verdict's staleness can be judged even
+	// when stats were never reset (StatsWindowDays would be nil there).
+	effWinDays := winDays
+	if effWinDays == nil && c.Window.WindowAgeSeconds != nil {
+		d := float64(*c.Window.WindowAgeSeconds) / 86400
+		effWinDays = &d
+	}
 	resetAt := c.Window.StatsResetAt
 	if c.Indexes == nil {
 		return r
@@ -168,7 +177,7 @@ func Build(c *model.Context, verdicts map[string]PriorVerdict) Report {
 		default:
 			classifyStats(&ir, r.ColdWindow, winDays)
 		}
-		attachVerdict(&ir, verdicts, k, winDays, c.CollectedAt)
+		attachVerdict(&ir, verdicts, k, winDays, effWinDays, c.CollectedAt)
 		out = append(out, ir)
 	}
 	// 2) Redundant indexes not already emitted (they may have scans).
@@ -183,7 +192,7 @@ func Build(c *model.Context, verdicts map[string]PriorVerdict) Report {
 			fillFromStat(&ir, s)
 		}
 		markCatalog(&ir, redundantReason(rd), redundantSafety(rd))
-		attachVerdict(&ir, verdicts, k, winDays, c.CollectedAt)
+		attachVerdict(&ir, verdicts, k, winDays, effWinDays, c.CollectedAt)
 		out = append(out, ir)
 	}
 	// 3) Invalid indexes not already emitted.
@@ -327,7 +336,7 @@ func windowStr(winDays *float64) string {
 // and a stale verdict must never increase confidence — it only ever adds context.
 // The strengthened wording states that observation continued; it never authorizes
 // a drop, and the precondition guard stays attached regardless.
-func attachVerdict(ir *IndexReport, verdicts map[string]PriorVerdict, k string, winDays *float64, now time.Time) {
+func attachVerdict(ir *IndexReport, verdicts map[string]PriorVerdict, k string, winDays, effWinDays *float64, now time.Time) {
 	v, ok := verdicts[k]
 	if !ok {
 		return
@@ -338,9 +347,10 @@ func attachVerdict(ir *IndexReport, verdicts map[string]PriorVerdict, k string, 
 	}
 	vv := v
 	vv.AgeDays = int(ageDays + 0.5)
-	// Stale once older than the current window. With an unknown window we cannot
-	// establish that the verdict is the fresher signal, so treat it as stale.
-	vv.Stale = winDays == nil || ageDays > *winDays
+	// Stale once older than the effective observation window (since reset, else
+	// since postmaster start). Only if that window is truly unknowable do we fall
+	// back to treating the verdict as stale (we can't confirm it's the fresher signal).
+	vv.Stale = effWinDays == nil || ageDays > *effWinDays
 	ir.PriorVerdict = &vv
 
 	// Only a fresh "not found in code" verdict on a needs_code_check index adds
