@@ -21,6 +21,22 @@ pgbot inspect
 ```
 
 pgbot reads the argument first, then `$DATABASE_URL`, then `$PGBOT_DATABASE_URL`.
+(Shell note: `export DATABASE_URL="…"` — no `$` on the left, no spaces around `=`.)
+
+Everything pgbot takes from the environment fits in one block — the connection,
+and (only if you want the optional `ask`/`explain` AI layer) one model key:
+
+```sh
+export DATABASE_URL="postgres://pgbot_ro:…@host:5432/db?sslmode=require"
+
+# optional, for `pgbot ask` / `pgbot explain` — one of:
+export OPENAI_API_KEY=sk-…        # → OpenAI (gpt-4o-mini by default)
+export GEMINI_API_KEY=…           # → Google Gemini (AI Studio key)
+```
+
+Everything else — `inspect`, `queries`, `indexes`, MCP, CI — is fully
+deterministic and needs **no key**; nothing leaves your machine. Provider
+pinning and model/endpoint overrides: [the AI layer](#explain--optional-ai-layer).
 
 ```
 connected · db.example.com · postgres 17.4 · read-only · 6h20m window
