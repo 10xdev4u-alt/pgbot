@@ -128,6 +128,11 @@ func runExplain(cmd *cobra.Command, args []string, f inspectFlags, yes bool) err
 	// unavailable and exit on the findings' code.
 	explanation, aiErr := ai.Explain(ctx, client, c)
 	printAISection(color, client.ModelName(), explanation, aiErr)
+	// The destructive-action guards, reasserted by code AFTER the model text — so a
+	// reworded or truncated explanation can never be the thing that drops them.
+	if aiErr == nil {
+		printSafetyFooter(color, c)
+	}
 
 	os.Exit(exitCode(c.Findings, f.failOn))
 	return nil

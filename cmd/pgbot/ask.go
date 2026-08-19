@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/pgrundev/pgbot/internal/ai"
+	"github.com/pgrundev/pgbot/internal/model"
 	"github.com/pgrundev/pgbot/internal/render"
 	"github.com/spf13/cobra"
 )
@@ -67,7 +68,47 @@ func runAsk(cmd *cobra.Command, question, url string, f inspectFlags, yes bool) 
 
 	answer, aiErr := ai.Ask(ctx, client, c, question)
 	printAnswer(useColor(false), client.ModelName(), answer, aiErr)
+	if aiErr == nil {
+		// `ask` prints only the model's prose, so a destructive-action guard that
+		// the model may have reworded away must be reasserted here, verbatim from
+		// the deterministic findings — never at the model's discretion.
+		printSafetyFooter(useColor(false), c)
+	}
 	return nil
+}
+
+// printSafetyFooter reasserts, from code, every destructive-action guard attached
+// to a non-suppressed finding — the warnings a summarizing model must not lose. It
+// is rendered outside the model's output so the model has no way to omit or reword
+// it. Deduped by guard ID.
+func printSafetyFooter(color bool, c *model.Context) {
+	var lines []string
+	seen := map[string]bool{}
+	for _, f := range c.Findings {
+		if f.Suppressed || f.Safety == nil {
+			continue
+		}
+		for _, g := range f.Safety.BlockingCaveats {
+			if seen[g.ID] {
+				continue
+			}
+			seen[g.ID] = true
+			line := "[" + g.Action + "] " + g.Text
+			if g.Verify != nil {
+				line += " Only after: " + *g.Verify
+			}
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) == 0 {
+		return
+	}
+	st := render.NewStyler(color)
+	fmt.Println()
+	fmt.Println(st.Warn("⚠ Safety (from pgbot, not the model) — a destructive action is in scope for this database:"))
+	for _, l := range lines {
+		fmt.Println(st.Dim("  • " + l))
+	}
 }
 
 // printAnswer renders `ask` cleanly: the answer itself, then one dim line making

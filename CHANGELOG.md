@@ -7,6 +7,66 @@ separately by `model.SchemaVersion` (currently 1.1.0).
 
 ## [Unreleased]
 
+### Added
+- **Index/code correlation (`pgbot indexes --correlate`, MCP `index_code_correlation`).**
+  pgbot grades every unused / redundant / invalid index by how the drop can be
+  *proven*, and hands an agent exactly what to search for — without ever reading
+  your repository:
+  - `catalog_proven` — invalid or redundant/duplicate; provable from the catalog
+    alone, no code check, no stats-window caveat.
+  - `needs_code_check` — a zero-scan plain btree over bare columns. pgbot emits the
+    identifiers to grep in every case convention (camelCase, snake_case,
+    PascalCase, CONSTANT_CASE) plus the load-bearing instruction: search *filter*
+    positions only (WHERE / JOIN / ORDER BY / GROUP BY / ORM filters), never SELECT
+    lists — and how to read a hit vs. a miss.
+  - `inconclusive` — GIN/GiST/BRIN, expression, partial, or a cold window. These
+    can serve a query shape that simply hasn't run, so they keep "do not DROP INDEX
+    on this evidence" and are **never** promoted to actionable by an empty code
+    search. pgbot never reads the repo and never drops anything.
+- **Verdict write-back (MCP `record_index_verdict`).** An agent records what its
+  repo search found (`found_in_code` / `not_found_in_code` / `inconclusive`),
+  stored locally per database. On a later run the same still-unused index carries
+  the prior verdict forward and notes when the zero-scan window has since grown —
+  a one-off grep becomes compounding evidence. New `index_verdicts` store table
+  only; no existing table changes.
+- **Replica-identity indexes are never reported as unused.** A `REPLICA IDENTITY
+  USING INDEX` index shows zero scans on the primary but dropping it breaks logical
+  replication and UPDATE/DELETE row identity — now excluded alongside PK / unique /
+  exclusion / FK-backing indexes.
+- **Destructive-action guards are now structured and guaranteed (`finding.safety`).**
+  Every finding whose remediation involves a destructive or irreversible action
+  (DROP INDEX, VACUUM FULL, REINDEX, DROP REPLICATION SLOT, a table rewrite) now
+  carries machine-actionable guards — `{id, kind: prohibition|precondition, action,
+  text, verify}` — instead of leaving the warning to free-form prose a summarizing
+  model could drop. They are emitted deterministically in code and guaranteed in
+  `--json`, SARIF, the MCP payloads, and both terminal views. Two guards that
+  previously existed **only** in docs pages are now on the finding itself: the
+  wraparound "don't VACUUM FULL / don't consume XIDs" guard, and the "don't drop a
+  replication slot a live standby still depends on" guard (whose remediation no
+  longer nudges toward the drop before the check). `pgbot ask` / `explain` reassert
+  these guards from code, after the model's text, so the model cannot omit them. A
+  build-failing regression test fails CI if a destructive remediation ships without
+  a guard. The guards are also carried by SARIF, JUnit (`<failure>` text), and a
+  Prometheus `destructive="true"` label; a test AST-scans the render package and
+  fails the build if a new output surface ships without carrying them. **For a
+  database with a destructive finding, the default and `--full` terminal views now
+  add a `⚠` guard line — clean databases are byte-identical.**
+- **Verdict strengthening is bounded (index/code correlation).** A stored code
+  search plus a growing window is the one place confidence could rise on its own,
+  so: a verdict older than the current stats window is marked **stale** (`stale`,
+  `age_days`), its age is stated in output ("code check is 47 days old — the
+  repository may have changed since"), and a stale verdict never strengthens. The
+  strengthened wording reads as corroboration, never authorization (the phrases
+  "safe to drop" / "confirmed unused" are never generated), and the `precondition`
+  guard persists through any verdict. An `inconclusive` index is never promoted by
+  any verdict at any window length. The `if_not_found` caveat now always names
+  monthly/quarterly/annual jobs a long window still can't see.
+
+### Changed
+- `model.IndexStat` gains `columns`, `method`, `unique`, and `primary` (additive).
+  JSON contract `SchemaVersion` → **1.2.0**; a 1.1.0 consumer still parses 1.2.0
+  output unchanged.
+
 ## [0.3.3] - 2026-08-18
 
 ### Changed

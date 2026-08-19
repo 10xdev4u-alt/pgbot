@@ -382,6 +382,7 @@ pgbot baselines prune <fingerprint> # delete a database's snapshots
 pgbot baselines export <fingerprint># dump stored snapshots as JSON
 
 pgbot indexes <connection-string>   # zero-scan indexes + what NOT to drop
+  --correlate            grade each index (catalog_proven/needs_code_check/inconclusive) + what to grep in code
 pgbot queries <connection-string>   # top pg_stat_statements by total time (--by-calls to re-rank)
 pgbot tables  <connection-string>   # largest tables + row counts + seq-vs-index scan pattern
 pgbot vacuum <connection-string>    # autovacuum health per table — dead tuples + whether it's due
@@ -401,6 +402,13 @@ on stdio, so an AI agent can call pgbot as a read-only tool. It exposes
 - `inspect` — full findings as JSON
 - `unused_indexes`, `top_queries`, `vacuum_health` — the CLI's focused views
 - `suggest_indexes` — planner-validated index recommendations (hypopg)
+- `index_code_correlation` — grades each unused/redundant/invalid index
+  (`catalog_proven` / `needs_code_check` / `inconclusive`) and, for the actionable
+  ones, the exact identifiers to grep (all case conventions) with the instruction
+  to search *filters* (WHERE/JOIN/ORDER BY), never SELECT lists. pgbot never reads
+  your repo; it says what to search for. Also `pgbot indexes --correlate [--json]`.
+- `record_index_verdict` — store what the repo search found, so a later run over a
+  longer window carries strengthening evidence (no DB connection needed)
 - `explain_plan` — the planner's plan for a SELECT (plain EXPLAIN, never executed)
 - `schema_of` — a table's columns/indexes/constraints + row estimate, **no data**
 - `compare_to_baseline` — the `diff`, with its interval-honesty and reset caveats

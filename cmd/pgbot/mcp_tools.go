@@ -11,12 +11,15 @@ import (
 	"github.com/pgrundev/pgbot/docs"
 	"github.com/pgrundev/pgbot/internal/advisor"
 	"github.com/pgrundev/pgbot/internal/conn"
+	"github.com/pgrundev/pgbot/internal/store"
 )
 
 // B8 MCP tools. Every one either produces no findings (explain_plan, schema_of,
 // explain_finding) or reuses a path that already honors B2 suppression
-// (compare_to_baseline over stored snapshots); responses carry exactness/caveat
-// labels so an agent can't strip the "estimate, not measurement" qualifier.
+// (compare_to_baseline over stored snapshots). Responses carry exactness/caveat
+// labels in the PAYLOAD: the guarantee is that the "estimate, not measurement"
+// qualifier is present in the response, not that the consuming model preserves it
+// — a third-party client can still reword or drop it on its side.
 
 // explainPlanTool runs a PLAIN EXPLAIN (the plan-only form) of an agent-supplied query
 // through the same guard as the advisor: SanitizeSelect (single plain SELECT, no
@@ -163,6 +166,62 @@ func explainFindingTool(_ context.Context, args json.RawMessage) (string, error)
 		return "", fmt.Errorf("no catalogue page for %q — pass a finding id from a report", a.ID)
 	}
 	return stripFrontMatter(string(data)), nil
+}
+
+// indexCorrelationTool runs a read-only collection and returns the index/code
+// correlation payload — confidence levels plus, for the actionable ones, the
+// identifiers to grep and how to interpret the result. pgbot never reads the repo.
+func indexCorrelationTool(ctx context.Context, args json.RawMessage) (string, error) {
+	dsn, err := dsnFromArgs(args)
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	c, _, err := gather(ctx, dsn, inspectFlags{interval: time.Second, ashHz: 0, noStore: true})
+	if err != nil {
+		return "", err
+	}
+	// Default store path for verdict read-back; a missing store just means no history.
+	return marshal(buildCorrelation(c, ""))
+}
+
+// recordIndexVerdictTool persists an agent's code-search verdict for one index.
+// It writes only the local store — no database connection — so the agent can
+// record what its repo grep found after index_code_correlation told it what to look for.
+func recordIndexVerdictTool(_ context.Context, args json.RawMessage) (string, error) {
+	var a struct {
+		Fingerprint     string   `json:"fingerprint"`
+		Index           string   `json:"index"`
+		Verdict         string   `json:"verdict"`
+		Source          string   `json:"source"`
+		RepoRef         string   `json:"repo_ref"`
+		StatsWindowDays *float64 `json:"stats_window_days"`
+	}
+	_ = json.Unmarshal(args, &a)
+	if a.Fingerprint == "" || a.Index == "" || a.Verdict == "" {
+		return "", fmt.Errorf("fingerprint, index, and verdict are required")
+	}
+	switch a.Verdict {
+	case "found_in_code", "not_found_in_code", "inconclusive":
+	default:
+		return "", fmt.Errorf("verdict must be one of: found_in_code, not_found_in_code, inconclusive")
+	}
+	st, err := store.Open("")
+	if err != nil {
+		return "", err
+	}
+	defer st.Close()
+	if err := st.SaveIndexVerdict(a.Fingerprint, store.IndexVerdict{
+		IndexID: a.Index, Verdict: a.Verdict, Source: a.Source, RepoRef: a.RepoRef,
+		CheckedAt: time.Now(), StatsWindowDays: a.StatsWindowDays,
+	}); err != nil {
+		return "", fmt.Errorf("record verdict: %w", err)
+	}
+	return marshal(map[string]any{
+		"recorded": true, "fingerprint": a.Fingerprint, "index": a.Index, "verdict": a.Verdict,
+		"note": "stored locally; a later index_code_correlation over a longer window will carry this forward as strengthening evidence.",
+	})
 }
 
 // scanRows runs a query with one bind arg and returns its rows as []map, column

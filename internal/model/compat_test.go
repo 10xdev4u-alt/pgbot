@@ -25,11 +25,12 @@ type v100Consumer struct {
 	} `json:"findings"`
 }
 
-// TestV100ConsumerParsesV110 asserts a v1.0.0-shaped consumer still parses the
-// current (1.1.0) output: additive-only means the fields it depends on are intact
-// and the new keys are simply ignored.
-func TestV100ConsumerParsesV110(t *testing.T) {
-	// A realistic 1.1.0 Context carrying every additive surface.
+// TestV100ConsumerParsesCurrent asserts a v1.0.0-shaped consumer still parses the
+// current output: additive-only means the fields it depends on are intact and the
+// newer keys (events, wait_profile, and the 1.2.0 IndexStat columns/method) are
+// simply ignored.
+func TestV100ConsumerParsesCurrent(t *testing.T) {
+	// A realistic Context carrying every additive surface, including 1.2.0's.
 	reset := time.Now().UTC()
 	age := int64(4 * 3600)
 	c := &Context{
@@ -39,6 +40,10 @@ func TestV100ConsumerParsesV110(t *testing.T) {
 		Window:        Window{WindowAgeSeconds: &age, StatsResetAt: &reset},
 		Events:        []Event{{Kind: "config.changed", Object: "work_mem", Confidence: 0.5}},
 		WaitProfile:   &WaitProfile{Available: true, Samples: 50, Buckets: []WaitBucket{{Type: "Lock", Share: 0.6}}},
+		Indexes: &Indexes{Unused: []IndexStat{{
+			Schema: "public", Table: "a", Name: "a_idx", Bytes: 1 << 20,
+			Columns: []string{"customer_id"}, Method: "btree", Unique: false, Primary: false,
+		}}},
 		Findings: []Finding{{
 			ID: "unused_indexes", Severity: SeverityWarn, Title: "3 unused indexes", Detail: "…",
 			Evidence: []string{"public.a.idx"}, Remediation: "drop it",
@@ -53,10 +58,10 @@ func TestV100ConsumerParsesV110(t *testing.T) {
 	}
 	var got v100Consumer
 	if err := json.Unmarshal(blob, &got); err != nil {
-		t.Fatalf("a v1.0.0 consumer must parse v1.1.0 output, got: %v", err)
+		t.Fatalf("a v1.0.0 consumer must parse current output, got: %v", err)
 	}
-	if got.SchemaVersion != "1.1.0" {
-		t.Errorf("schema_version = %q, want 1.1.0", got.SchemaVersion)
+	if got.SchemaVersion != SchemaVersion {
+		t.Errorf("schema_version = %q, want %q", got.SchemaVersion, SchemaVersion)
 	}
 	if got.Server.Database != "production" || got.Server.VersionNum != 170002 {
 		t.Errorf("server fields did not survive: %+v", got.Server)

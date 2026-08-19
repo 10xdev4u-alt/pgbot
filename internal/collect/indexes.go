@@ -23,18 +23,21 @@ var sqlUnindexedFKs string
 type indexesCollector struct{}
 
 type indexRow struct {
-	Schema          string `db:"schema"`
-	Table           string `db:"table"`
-	Index           string `db:"index"`
-	Scans           int64  `db:"scans"`
-	Bytes           int64  `db:"bytes"`
-	Definition      string `db:"definition"`
-	IsPrimary       bool   `db:"is_primary"`
-	IsUnique        bool   `db:"is_unique"`
-	IsExclusion     bool   `db:"is_exclusion"`
-	IsPartial       bool   `db:"is_partial"`
-	IsExpression    bool   `db:"is_expression"`
-	BacksConstraint bool   `db:"backs_constraint"`
+	Schema          string   `db:"schema"`
+	Table           string   `db:"table"`
+	Index           string   `db:"index"`
+	Scans           int64    `db:"scans"`
+	Bytes           int64    `db:"bytes"`
+	Definition      string   `db:"definition"`
+	Method          string   `db:"method"`
+	IsPrimary       bool     `db:"is_primary"`
+	IsUnique        bool     `db:"is_unique"`
+	IsExclusion     bool     `db:"is_exclusion"`
+	IsReplident     bool     `db:"is_replident"`
+	IsPartial       bool     `db:"is_partial"`
+	IsExpression    bool     `db:"is_expression"`
+	BacksConstraint bool     `db:"backs_constraint"`
+	Columns         []string `db:"columns"`
 }
 
 func (indexesCollector) Name() string                     { return "indexes" }
@@ -106,13 +109,17 @@ func (indexesCollector) Assemble(c *model.Context, _ conn.Capabilities, s sample
 	for _, r := range rows {
 		st := model.IndexStat{
 			Schema: r.Schema, Table: r.Table, Name: r.Index, Scans: r.Scans, Bytes: r.Bytes,
-			Definition: r.Definition, Partial: r.IsPartial, Expression: r.IsExpression,
+			Definition: r.Definition, Columns: r.Columns, Method: r.Method,
+			Unique: r.IsUnique, Primary: r.IsPrimary, Partial: r.IsPartial, Expression: r.IsExpression,
 		}
 		// An index that enforces ANY constraint (PK, UNIQUE, EXCLUSION, or a FK's
-		// referenced key) can't be dropped, so it is never "unused" no matter its
-		// scan count. backs_constraint (pg_constraint.conindid) covers all of them;
-		// is_primary/is_unique/is_exclusion are belt-and-suspenders.
-		constraintBacked := r.BacksConstraint || r.IsPrimary || r.IsUnique || r.IsExclusion
+		// referenced key), or that is the table's REPLICA IDENTITY, can't be dropped,
+		// so it is never "unused" no matter its scan count. backs_constraint
+		// (pg_constraint.conindid) covers the constraints; is_primary/is_unique/
+		// is_exclusion are belt-and-suspenders; is_replident guards logical
+		// replication + UPDATE/DELETE row identity (a replica-identity index shows
+		// zero scans on the primary but dropping it breaks replication).
+		constraintBacked := r.BacksConstraint || r.IsPrimary || r.IsUnique || r.IsExclusion || r.IsReplident
 		if r.Scans == 0 && r.Bytes > 16384 && !constraintBacked && len(idx.Unused) < 50 {
 			idx.Unused = append(idx.Unused, st)
 		}

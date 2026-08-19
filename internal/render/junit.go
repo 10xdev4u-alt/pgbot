@@ -28,10 +28,14 @@ func JUnit(w io.Writer, c *model.Context, failOn string) error {
 		case f.Suppressed:
 			tc.Skipped = &junitSkipped{Message: "suppressed by config: " + f.SuppressionReason}
 		case failOn != "none" && junitRank(f.Severity) >= threshold:
+			text := strings.TrimSpace(f.Detail + "\n" + f.Remediation)
+			if s := safetyText(f); s != "" {
+				text = strings.TrimSpace(text + "\n" + s)
+			}
 			tc.Failure = &junitFailure{
 				Message: f.Title,
 				Type:    f.Severity,
-				Text:    strings.TrimSpace(f.Detail + "\n" + f.Remediation),
+				Text:    text,
 			}
 			suite.Failures++
 		}

@@ -7,4 +7,7 @@ package model
 // 1.1.0 (Phase 1): additive only — Events, WaitProfile, the T2 window/suppression
 // fields, and Finding.Impact/Confidence/Caveats. No v1.0.0 field changed type or
 // meaning, so a 1.0.0 consumer still parses 1.1.0 output (it ignores the new keys).
-const SchemaVersion = "1.1.0"
+//
+// 1.2.0: additive only — IndexStat gains columns/method/unique/primary (feeding
+// index/code correlation). A 1.1.0 consumer still parses 1.2.0 output.
+const SchemaVersion = "1.2.0"

@@ -251,6 +251,7 @@ func renderFindings(b *strings.Builder, st styler, fs []model.Finding, width int
 				fmt.Fprintf(b, "     %s\n", st.dim(prefix+line))
 			}
 		}
+		renderSafetyGuards(b, st, f, width, "     ")
 		// Every finding references its catalogue page — offline via the subcommand.
 		fmt.Fprintf(b, "     %s\n", st.dim("docs: pgbot explain-finding "+f.ID))
 	}
