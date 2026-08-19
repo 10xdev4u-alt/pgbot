@@ -5,7 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/fs"
+	"os"
 	"strings"
 	"testing"
 )
@@ -68,42 +68,48 @@ func TestSafety_everySurfaceCarriesGuards(t *testing.T) {
 // is not in coveredSurfaces. Add a new output format, and this fails until it is
 // exercised by the guard-coverage test above.
 func TestSafety_noUndiscoveredSurface(t *testing.T) {
+	// Parse each non-test .go file in the render package (ParseFile, not the
+	// deprecated ParseDir).
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, ".", func(fi fs.FileInfo) bool {
-		return !strings.HasSuffix(fi.Name(), "_test.go")
-	}, 0)
+	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
 	}
 	discovered := 0
-	for _, pkg := range pkgs {
-		for _, file := range pkg.Files {
-			for _, decl := range file.Decls {
-				fn, ok := decl.(*ast.FuncDecl)
-				if !ok || fn.Recv != nil || !fn.Name.IsExported() {
-					continue
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Recv != nil || !fn.Name.IsExported() {
+				continue
+			}
+			if fn.Type.Params == nil || len(fn.Type.Params.List) == 0 {
+				continue
+			}
+			if typeString(fn.Type.Params.List[0].Type) != "io.Writer" {
+				continue
+			}
+			refsContext := false
+			for _, p := range fn.Type.Params.List {
+				if strings.Contains(typeString(p.Type), "model.Context") {
+					refsContext = true
 				}
-				if fn.Type.Params == nil || len(fn.Type.Params.List) == 0 {
-					continue
-				}
-				if typeString(fn.Type.Params.List[0].Type) != "io.Writer" {
-					continue
-				}
-				refsContext := false
-				for _, p := range fn.Type.Params.List {
-					if strings.Contains(typeString(p.Type), "model.Context") {
-						refsContext = true
-					}
-				}
-				if !refsContext {
-					continue
-				}
-				discovered++
-				if !coveredSurfaces[fn.Name.Name] {
-					t.Errorf("output surface %q renders a model.Context but is not covered by the safety-guard "+
-						"coverage test — add it to coveredSurfaces and assert its guard in "+
-						"TestSafety_everySurfaceCarriesGuards, or a destructive warning can ship dropped here.", fn.Name.Name)
-				}
+			}
+			if !refsContext {
+				continue
+			}
+			discovered++
+			if !coveredSurfaces[fn.Name.Name] {
+				t.Errorf("output surface %q renders a model.Context but is not covered by the safety-guard "+
+					"coverage test — add it to coveredSurfaces and assert its guard in "+
+					"TestSafety_everySurfaceCarriesGuards, or a destructive warning can ship dropped here.", fn.Name.Name)
 			}
 		}
 	}

@@ -561,8 +561,6 @@ type Settings struct {
 	Params    map[string]string `json:"params,omitempty"` // tuning-relevant params (display values), always present
 }
 
-// Finding is deterministic, rule-based analysis computed in Go — never by the
-// LLM. The model layer explains and prioritises Findings; it does not create them.
 // SafetyGuard is one machine-actionable guard against a destructive action. An
 // agent about to run Action matches it directly; ID is the stable key tests and
 // consumers branch on (never the Text — wording can improve without breaking a
@@ -600,6 +598,8 @@ const (
 	ActionAlterColumnType     = "ALTER TABLE ... TYPE"
 )
 
+// Finding is deterministic, rule-based analysis computed in Go — never by the
+// LLM. The model layer explains and prioritises Findings; it does not create them.
 type Finding struct {
 	ID string `json:"id"` // stable slug, e.g. "unused_indexes"
 	// Object is a STABLE, human-writable identity for suppression keying (B2-0):
