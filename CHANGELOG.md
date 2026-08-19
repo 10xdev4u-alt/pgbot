@@ -43,6 +43,23 @@ separately by `model.SchemaVersion` (currently 1.1.0).
   in-progress-build downgrade (warn, confidence 0.5, do-not-drop guard) is
   unchanged. Not a JSON contract change: the classification rides on the
   existing `severity` / `evidence` / `impact` fields.
+- **`brew install pgrundev/tap/pgbot` works (#8).** The README advertised the tap
+  since 0.3.0, but the `pgrundev/homebrew-tap` repository was never created and
+  the release's formula push was gated on a `HOMEBREW_TAP_TOKEN` that was never
+  set — so every release stayed green while the documented install failed with
+  "Repository not found". The tap now exists with a formula for the current
+  release (macOS Intel/Apple Silicon, Linux x86_64/arm64, SHA-256 pinned to the
+  signed release archives), and GoReleaser pushes the regenerated formula on
+  every tag over git+SSH with a **deploy key scoped to the tap repo**
+  (`HOMEBREW_TAP_DEPLOY_KEY`) instead of a personal access token. A new
+  post-release `brew-smoke` job `brew install`s the tag on a fresh macOS runner
+  and **fails the release run** if the formula wasn't published, so this can't
+  silently regress again. Release procedure documented in `docs/release.md`.
+- **`npx pgbot` → `E404` is documented, not a bug to chase (#9).** npm's
+  name-similarity policy blocks creating the bare `pgbot` package (too close to
+  `got`); the wrapper has been `@pgbot/cli` since 0.3.3. The README now says so
+  explicitly next to the npx row, and the 0.3.0 release notes that advertised
+  `npx pgbot` carry a correction.
 
 ## [0.4.0] - 2026-08-19
 

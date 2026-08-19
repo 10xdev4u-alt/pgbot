@@ -36,10 +36,12 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Push access to the separate pgrundev/homebrew-tap repo. Empty until the
-          # secret is added — the brews block skips the push in that case, so the
-          # release still succeeds. Set it to publish the Homebrew formula.
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          # Write access to the separate pgrundev/homebrew-tap repo: the PRIVATE
+          # half of a deploy key registered (write-enabled) on that repo. Empty
+          # until the secret is added — the brews block skips the push in that
+          # case, so the release still succeeds, and brew-smoke below fails to
+          # say so. See docs/release.md → Homebrew.
+          HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
 
       # npm distribution: assemble the wrapper + per-platform packages from the
       # binaries goreleaser just built, and publish them (platform packages first,
@@ -92,6 +94,37 @@ jobs:
             sleep 20
           done
           echo "FAILED: npx @pgbot/cli@${VERSION} --version never succeeded"
+          exit 1
+
+  # Issue #8 was `brew install pgrundev/tap/pgbot` 404ing for months while every
+  # release stayed green, because the tap push was silently skipped. Prove the
+  # published formula installs THIS tag on a fresh mac, the way a user does it.
+  brew-smoke:
+    needs: goreleaser
+    name: brew install pgrundev/tap/pgbot
+    runs-on: macos-latest
+    env:
+      HAS_TAP_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY != '' }}
+    steps:
+      - name: brew install the tap formula and check the version
+        run: |
+          if [ "$HAS_TAP_KEY" != "true" ]; then
+            echo "::error::HOMEBREW_TAP_DEPLOY_KEY is not set — the Homebrew formula was NOT published for this release (brew install pgrundev/tap/pgbot will 404 or lag)."
+            exit 1
+          fi
+          VERSION="${GITHUB_REF_NAME#v}"
+          export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1
+          for i in $(seq 1 10); do
+            brew untap pgrundev/tap >/dev/null 2>&1 || true
+            if brew install pgrundev/tap/pgbot && [ "$(pgbot --version)" = "pgbot version ${VERSION}" ]; then
+              echo "brew install pgrundev/tap/pgbot → $(pgbot --version) ✓"
+              brew test pgbot
+              exit 0
+            fi
+            echo "tap formula not at ${VERSION} yet (attempt $i) — waiting"
+            sleep 20
+          done
+          echo "FAILED: brew install pgrundev/tap/pgbot never yielded pgbot ${VERSION}"
           exit 1
 
   # The container image must be ANONYMOUSLY pullable. ghcr packages default to
