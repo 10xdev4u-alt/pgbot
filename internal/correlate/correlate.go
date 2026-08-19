@@ -7,7 +7,8 @@
 // Three confidence levels, and the boundary between them is load-bearing:
 //
 //   - catalog_proven  — provable from the catalog alone (invalid or
-//     redundant/duplicate). No stats window, no code check; safe to drop.
+//     redundant/duplicate). No stats window, no code check; the catalog justifies
+//     the drop, still subject to the guard (covering-index / no-running-build).
 //   - needs_code_check — zero scans, plain btree over bare columns. Actionable
 //     ONLY in combination with the code: grep the search terms, apply if_found /
 //     if_not_found.
@@ -59,6 +60,11 @@ type PriorVerdict struct {
 	RepoRef         string    `json:"repo_ref,omitempty"`
 	CheckedAt       time.Time `json:"checked_at"`
 	StatsWindowDays *float64  `json:"stats_window_days_then,omitempty"`
+	// Stale is set when the verdict is older than the current stats window — the
+	// code may have changed since, so it is no longer the fresher signal. A stale
+	// verdict is kept as context but must never increase confidence.
+	Stale   bool `json:"stale"`
+	AgeDays int  `json:"age_days"`
 }
 
 // IndexReport is one index's correlation entry.
@@ -107,8 +113,8 @@ type Report struct {
 }
 
 const reportNote = "pgbot never reads your repository and never drops anything. " +
-	"catalog_proven = safe to drop from the catalog alone (no code check). " +
-	"needs_code_check = search the terms per the instruction, then apply if_found/if_not_found. " +
+	"catalog_proven = the catalog alone justifies the drop, still subject to the guard. " +
+	"needs_code_check = search the terms per the instruction, then apply if_found/if_not_found, subject to the guard. " +
 	"inconclusive = do NOT drop on this evidence, and an empty code search does not change that."
 
 func key(schema, name string) string { return schema + "." + name }
@@ -162,7 +168,7 @@ func Build(c *model.Context, verdicts map[string]PriorVerdict) Report {
 		default:
 			classifyStats(&ir, r.ColdWindow, winDays)
 		}
-		attachVerdict(&ir, verdicts, k, winDays)
+		attachVerdict(&ir, verdicts, k, winDays, c.CollectedAt)
 		out = append(out, ir)
 	}
 	// 2) Redundant indexes not already emitted (they may have scans).
@@ -177,7 +183,7 @@ func Build(c *model.Context, verdicts map[string]PriorVerdict) Report {
 			fillFromStat(&ir, s)
 		}
 		markCatalog(&ir, redundantReason(rd), redundantSafety(rd))
-		attachVerdict(&ir, verdicts, k, winDays)
+		attachVerdict(&ir, verdicts, k, winDays, c.CollectedAt)
 		out = append(out, ir)
 	}
 	// 3) Invalid indexes not already emitted.
@@ -298,9 +304,11 @@ func inconclusive(ir *IndexReport, reason string) {
 }
 
 func ifNotFound(winDays *float64) string {
-	return fmt.Sprintf("Dead weight confirmed by two independent sources (zero scans + absent from code filters). "+
-		"Remaining caveats: (1) stats window is %s; (2) the index may be used by cron jobs, analytics tools, "+
-		"BI dashboards, or a different repository not searched here.", windowStr(winDays))
+	return fmt.Sprintf("Two independent signals agree (zero scans + absent from code filters), but neither is proof: "+
+		"(1) the stats window is %s; (2) a MONTHLY, QUARTERLY, or ANNUAL job — billing cycles, compliance exports, "+
+		"year-end batches — will not appear in it; a 40-day window does not see a quarterly job; (3) cron, analytics, "+
+		"or BI tools, or a repository not searched here, may still use it. The precondition to drop still applies.",
+		windowStr(winDays))
 }
 
 func windowStr(winDays *float64) string {
@@ -313,28 +321,66 @@ func windowStr(winDays *float64) string {
 	return fmt.Sprintf("%.0f days", *winDays)
 }
 
-// attachVerdict carries a stored code-search verdict forward. When a prior
-// "not found in code" verdict meets a still-zero-scan needs_code_check index over
-// a window that has since grown, that is the compounding signal — surface it.
-func attachVerdict(ir *IndexReport, verdicts map[string]PriorVerdict, k string, winDays *float64) {
+// attachVerdict carries a stored code-search verdict forward. A verdict records
+// what one repository looked like at one commit, at one moment: it is STALE once
+// older than the current stats window (the observation is now the fresher signal),
+// and a stale verdict must never increase confidence — it only ever adds context.
+// The strengthened wording states that observation continued; it never authorizes
+// a drop, and the precondition guard stays attached regardless.
+func attachVerdict(ir *IndexReport, verdicts map[string]PriorVerdict, k string, winDays *float64, now time.Time) {
 	v, ok := verdicts[k]
 	if !ok {
 		return
 	}
+	ageDays := now.Sub(v.CheckedAt).Hours() / 24
+	if ageDays < 0 {
+		ageDays = 0
+	}
 	vv := v
+	vv.AgeDays = int(ageDays + 0.5)
+	// Stale once older than the current window. With an unknown window we cannot
+	// establish that the verdict is the fresher signal, so treat it as stale.
+	vv.Stale = winDays == nil || ageDays > *winDays
 	ir.PriorVerdict = &vv
+
+	// Only a fresh "not found in code" verdict on a needs_code_check index adds
+	// corroboration. Everything else just carries the structured verdict.
 	if ir.Confidence != NeedsCodeCheck || v.Verdict != "not_found_in_code" {
 		return
 	}
-	note := fmt.Sprintf("Evidence has strengthened: absent from code filters as of %s", v.CheckedAt.Format("2006-01-02"))
+	if vv.Stale {
+		ir.Note = stalenessNote(v, vv.AgeDays)
+		return
+	}
+	ir.Note = corroborationNote(v, winDays)
+}
+
+// stalenessNote states the verdict's age and that the repo may have changed —
+// explicitly, in output, never as clearance.
+func stalenessNote(v PriorVerdict, ageDays int) string {
+	ref := ""
 	if v.RepoRef != "" {
-		note += " (" + v.RepoRef + ")"
+		ref = " (commit " + v.RepoRef + ")"
 	}
+	return fmt.Sprintf("A prior code search found no filter references, but that check is %d days old%s — "+
+		"the repository may have changed since, so it is no longer the fresher signal. It stays as context, not corroboration.",
+		ageDays, ref)
+}
+
+// corroborationNote states that observation continued and the code check still
+// holds — corroboration, not authorization. Must not contain any go-ahead phrasing.
+func corroborationNote(v PriorVerdict, winDays *float64) string {
+	ref := ""
+	if v.RepoRef != "" {
+		ref = ", commit " + v.RepoRef
+	}
+	grew := ""
 	if v.StatsWindowDays != nil && winDays != nil && *winDays > *v.StatsWindowDays {
-		note += fmt.Sprintf("; the zero-scan window has grown from %.0fd to %.0fd since", *v.StatsWindowDays, *winDays)
+		grew = fmt.Sprintf(" over a window that has grown from %.0fd to %.0fd", *v.StatsWindowDays, *winDays)
 	}
-	note += "."
-	ir.Note = note
+	return fmt.Sprintf("A prior code search (recorded %s%s) found no filter references, and the index has stayed "+
+		"zero-scan since%s. This is corroboration, not clearance — the precondition below still applies.",
+		v.CheckedAt.Format("2006-01-02"), ref, grew)
 }
 
 // searchTermsFor emits, for each bare column, the camelCase / snake_case /

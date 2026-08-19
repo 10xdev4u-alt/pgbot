@@ -91,8 +91,23 @@ func renderCorrelation(w io.Writer, st render.Styler, rep correlate.Report) {
 				fmt.Fprintf(w, "    %s %v\n", st.Dim("search:"), ix.SearchTerms)
 				fmt.Fprintf(w, "    %s\n", st.Dim("in filters only (WHERE/JOIN/ORDER BY/GROUP BY), never SELECT lists"))
 			}
-			if ix.PriorVerdict != nil {
-				fmt.Fprintf(w, "    %s %s\n", st.Dim("prior:"), ix.Note)
+			if ix.IfNotFound != "" {
+				fmt.Fprintf(w, "    %s %s\n", st.Dim("if absent:"), st.Dim(ix.IfNotFound))
+			}
+			if v := ix.PriorVerdict; v != nil {
+				stale := ""
+				if v.Stale {
+					stale = st.AI(" — STALE")
+				}
+				ref := ""
+				if v.RepoRef != "" {
+					ref = ", commit " + v.RepoRef
+				}
+				fmt.Fprintf(w, "    %s %s (%dd old%s)%s\n", st.Dim("prior code search:"), v.Verdict, v.AgeDays, ref, stale)
+				// The corroboration/staleness sentence only rides a needs_code_check note.
+				if ix.Note != "" && ix.Confidence == correlate.NeedsCodeCheck {
+					fmt.Fprintf(w, "    %s\n", st.Dim(ix.Note))
+				}
 			}
 		}
 		fmt.Fprintln(w)

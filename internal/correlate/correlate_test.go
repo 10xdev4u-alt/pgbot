@@ -188,20 +188,108 @@ func TestInvalidIndex_isCatalogProven(t *testing.T) {
 	}
 }
 
-func TestVerdict_strengthensNeedsCodeCheck(t *testing.T) {
+// forbiddenPhrases must never appear in any correlation output, at any confidence.
+var forbiddenPhrases = []string{"safe to drop", "confirmed unused", "you can now remove", "you can remove", "go ahead and drop", "ok to drop"}
+
+func assertNoAuthorization(t *testing.T, ix *IndexReport) {
+	t.Helper()
+	blob := strings.ToLower(ix.Reason + " " + ix.Note + " " + ix.IfFound + " " + ix.IfNotFound)
+	if ix.Safety != nil {
+		for _, g := range ix.Safety.BlockingCaveats {
+			blob += " " + strings.ToLower(g.Text)
+			if g.Verify != nil {
+				blob += " " + strings.ToLower(*g.Verify)
+			}
+		}
+	}
+	for _, p := range forbiddenPhrases {
+		if strings.Contains(blob, p) {
+			t.Errorf("output for %s contains authorization phrase %q — must never read as a go-ahead", ix.Index, p)
+		}
+	}
+}
+
+// B2/B3: a FRESH not_found verdict corroborates (states observation continued,
+// shows window growth) but never authorizes, and the precondition guard persists.
+func TestVerdict_freshCorroboratesNeverAuthorizes(t *testing.T) {
+	checked := time.Unix(1_700_000_000, 0)
 	c := ctxWith([]model.IndexStat{
 		{Schema: "public", Table: "t", Name: "t_a_idx", Method: "btree", Columns: []string{"a"}, Bytes: 1 << 21},
-	}, nil)
+	}, func(c *model.Context) {
+		c.Window.StatsWindowDays = f64(45)
+		c.CollectedAt = checked.Add(20 * 24 * time.Hour) // 20d old vs 45d window → fresh
+	})
 	verdicts := map[string]PriorVerdict{
-		"public.t_a_idx": {Verdict: "not_found_in_code", RepoRef: "abc123", CheckedAt: time.Unix(1_700_000_000, 0), StatsWindowDays: f64(12)},
+		"public.t_a_idx": {Verdict: "not_found_in_code", RepoRef: "abc123", CheckedAt: checked, StatsWindowDays: f64(12)},
 	}
 	ix := find(Build(c, verdicts), "t_a_idx")
 	if ix == nil || ix.PriorVerdict == nil {
 		t.Fatalf("prior verdict should be attached, got %+v", ix)
 	}
-	if !strings.Contains(ix.Note, "strengthened") || !strings.Contains(ix.Note, "12d") || !strings.Contains(ix.Note, "45d") {
-		t.Errorf("note should show window growth 12d -> 45d: %q", ix.Note)
+	if ix.PriorVerdict.Stale {
+		t.Error("a 20-day-old verdict against a 45-day window must not be stale")
 	}
+	if !strings.Contains(ix.Note, "12d to 45d") || !strings.Contains(ix.Note, "corroboration") {
+		t.Errorf("fresh note should show growth + read as corroboration: %q", ix.Note)
+	}
+	if ix.Safety == nil || ix.Safety.BlockingCaveats[0].Kind != model.GuardPrecondition {
+		t.Errorf("precondition guard must persist through the verdict: %+v", ix.Safety)
+	}
+	assertNoAuthorization(t, ix)
+}
+
+// B2: a verdict older than the window is STALE — stated in output, no strengthening.
+func TestVerdict_staleStatedAndDoesNotStrengthen(t *testing.T) {
+	checked := time.Unix(1_700_000_000, 0)
+	c := ctxWith([]model.IndexStat{
+		{Schema: "public", Table: "t", Name: "t_a_idx", Method: "btree", Columns: []string{"a"}, Bytes: 1 << 21},
+	}, func(c *model.Context) {
+		c.Window.StatsWindowDays = f64(30)
+		c.CollectedAt = checked.Add(47 * 24 * time.Hour) // 47d old vs 30d window → stale
+	})
+	verdicts := map[string]PriorVerdict{
+		"public.t_a_idx": {Verdict: "not_found_in_code", RepoRef: "abc123", CheckedAt: checked, StatsWindowDays: f64(12)},
+	}
+	ix := find(Build(c, verdicts), "t_a_idx")
+	if ix == nil || ix.PriorVerdict == nil || !ix.PriorVerdict.Stale {
+		t.Fatalf("verdict older than the window must be stale: %+v", ix.PriorVerdict)
+	}
+	if ix.PriorVerdict.AgeDays != 47 {
+		t.Errorf("age = %dd, want 47", ix.PriorVerdict.AgeDays)
+	}
+	if !strings.Contains(ix.Note, "47 days old") || !strings.Contains(strings.ToLower(ix.Note), "may have changed") {
+		t.Errorf("staleness must be stated in output: %q", ix.Note)
+	}
+	if strings.Contains(ix.Note, "corroboration,") || strings.Contains(ix.Note, "grown") {
+		t.Errorf("a stale verdict must not strengthen: %q", ix.Note)
+	}
+	assertNoAuthorization(t, ix)
+}
+
+// B4 hard invariant: inconclusive is NEVER promoted, at the extreme — 365-day
+// window + not_found verdict → still inconclusive, prohibition guard intact.
+func TestVerdict_inconclusiveNeverPromoted_365d(t *testing.T) {
+	checked := time.Unix(1_700_000_000, 0)
+	c := ctxWith([]model.IndexStat{
+		{Schema: "public", Table: "t", Name: "gin_idx", Method: "gin", Columns: []string{"tags"}, Bytes: 1 << 21},
+	}, func(c *model.Context) {
+		c.Window.StatsWindowDays = f64(365)
+		c.CollectedAt = checked.Add(10 * 24 * time.Hour)
+	})
+	verdicts := map[string]PriorVerdict{
+		"public.gin_idx": {Verdict: "not_found_in_code", CheckedAt: checked, StatsWindowDays: f64(360)},
+	}
+	ix := find(Build(c, verdicts), "gin_idx")
+	if ix == nil || ix.Confidence != Inconclusive {
+		t.Fatalf("inconclusive must stay inconclusive at 365d with a not_found verdict, got %+v", ix)
+	}
+	if !ix.DoNotDrop {
+		t.Error("still do-not-drop")
+	}
+	if ix.Safety == nil || ix.Safety.BlockingCaveats[0].Kind != model.GuardProhibition {
+		t.Errorf("prohibition guard must remain: %+v", ix.Safety)
+	}
+	assertNoAuthorization(t, ix)
 }
 
 func TestSort_catalogFirstInconclusiveLast(t *testing.T) {

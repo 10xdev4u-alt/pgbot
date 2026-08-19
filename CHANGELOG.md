@@ -46,7 +46,21 @@ separately by `model.SchemaVersion` (currently 1.1.0).
   longer nudges toward the drop before the check). `pgbot ask` / `explain` reassert
   these guards from code, after the model's text, so the model cannot omit them. A
   build-failing regression test fails CI if a destructive remediation ships without
-  a guard.
+  a guard. The guards are also carried by SARIF, JUnit (`<failure>` text), and a
+  Prometheus `destructive="true"` label; a test AST-scans the render package and
+  fails the build if a new output surface ships without carrying them. **For a
+  database with a destructive finding, the default and `--full` terminal views now
+  add a `⚠` guard line — clean databases are byte-identical.**
+- **Verdict strengthening is bounded (index/code correlation).** A stored code
+  search plus a growing window is the one place confidence could rise on its own,
+  so: a verdict older than the current stats window is marked **stale** (`stale`,
+  `age_days`), its age is stated in output ("code check is 47 days old — the
+  repository may have changed since"), and a stale verdict never strengthens. The
+  strengthened wording reads as corroboration, never authorization (the phrases
+  "safe to drop" / "confirmed unused" are never generated), and the `precondition`
+  guard persists through any verdict. An `inconclusive` index is never promoted by
+  any verdict at any window length. The `if_not_found` caveat now always names
+  monthly/quarterly/annual jobs a long window still can't see.
 
 ### Changed
 - `model.IndexStat` gains `columns`, `method`, `unique`, and `primary` (additive).
