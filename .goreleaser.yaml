@@ -117,15 +117,20 @@ docker_manifests:
       - "ghcr.io/pgrundev/pgbot:{{ .Version }}-arm64"
 
 # Homebrew formula, pushed to the pgrundev/homebrew-tap repo so
-# `brew install pgrundev/tap/pgbot` works (issue #8). The push authenticates with
-# a DEPLOY KEY scoped to the tap repo (git mode), not a personal access token:
-# the release workflow's GITHUB_TOKEN can't write to another repo, and a deploy
-# key can write to exactly one. $HOMEBREW_TAP_DEPLOY_KEY holds the private key
-# contents (release.yml passes the secret). skip_upload is templated on it: when
-# the secret is unset the formula is still generated (dist/homebrew) but NOT
-# pushed, so a release never fails for a missing tap credential — and the
-# release's brew-smoke job then fails loudly instead of the install silently
-# 404ing for users.
+# `brew install pgrundev/tap/pgbot` works (issue #8). The workflow's GITHUB_TOKEN
+# can't write to another repo, so the push needs one of two credentials, both
+# passed by release.yml (empty when the secret is absent — both env vars MUST be
+# defined or the templates error):
+#   HOMEBREW_TAP_DEPLOY_KEY — private half of a write deploy key on the tap repo
+#     → git+SSH push (preferred: scoped to exactly one repo, no expiry). Note the
+#     org must allow deploy keys (new orgs disable them by default).
+#   HOMEBREW_TAP_TOKEN — a fine-grained PAT, repository access = homebrew-tap
+#     only, Contents: read/write → GitHub Contents API. Used when no deploy key.
+# The git URL is templated on the key: empty URL makes goreleaser fall through
+# to the token client. skip_upload is templated on both: with neither set the
+# formula is still generated (dist/homebrew) but NOT pushed, so a release never
+# fails for a missing tap credential — and the release's brew-smoke job then
+# fails loudly instead of the install silently 404ing for users.
 brews:
   - name: pgbot
     repository:
@@ -133,9 +138,10 @@ brews:
       name: homebrew-tap
       branch: main
       git:
-        url: "git@github.com:pgrundev/homebrew-tap.git"
+        url: "{{ if .Env.HOMEBREW_TAP_DEPLOY_KEY }}git@github.com:pgrundev/homebrew-tap.git{{ end }}"
         private_key: "{{ .Env.HOMEBREW_TAP_DEPLOY_KEY }}"
-    skip_upload: '{{ if .Env.HOMEBREW_TAP_DEPLOY_KEY }}false{{ else }}true{{ end }}'
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    skip_upload: '{{ if or .Env.HOMEBREW_TAP_DEPLOY_KEY .Env.HOMEBREW_TAP_TOKEN }}false{{ else }}true{{ end }}'
     commit_author:
       name: pgbot-release
       email: hello@pgrun.dev

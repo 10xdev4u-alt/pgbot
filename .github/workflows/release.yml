@@ -36,12 +36,14 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Write access to the separate pgrundev/homebrew-tap repo: the PRIVATE
-          # half of a deploy key registered (write-enabled) on that repo. Empty
-          # until the secret is added — the brews block skips the push in that
-          # case, so the release still succeeds, and brew-smoke below fails to
-          # say so. See docs/release.md → Homebrew.
+          # Write access to the separate pgrundev/homebrew-tap repo — EITHER the
+          # private half of a write deploy key on that repo (preferred) OR a
+          # fine-grained PAT scoped to it (Contents: write). Both are passed (empty
+          # when absent — the goreleaser templates need them defined); with
+          # neither, the brews block skips the push, the release still succeeds,
+          # and brew-smoke below fails to say so. See docs/release.md → Homebrew.
           HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
       # npm distribution: assemble the wrapper + per-platform packages from the
       # binaries goreleaser just built, and publish them (platform packages first,
@@ -104,12 +106,12 @@ jobs:
     name: brew install pgrundev/tap/pgbot
     runs-on: macos-latest
     env:
-      HAS_TAP_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY != '' }}
+      HAS_TAP_CRED: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY != '' || secrets.HOMEBREW_TAP_TOKEN != '' }}
     steps:
       - name: brew install the tap formula and check the version
         run: |
-          if [ "$HAS_TAP_KEY" != "true" ]; then
-            echo "::error::HOMEBREW_TAP_DEPLOY_KEY is not set — the Homebrew formula was NOT published for this release (brew install pgrundev/tap/pgbot will 404 or lag)."
+          if [ "$HAS_TAP_CRED" != "true" ]; then
+            echo "::error::neither HOMEBREW_TAP_DEPLOY_KEY nor HOMEBREW_TAP_TOKEN is set — the Homebrew formula was NOT published for this release (brew install pgrundev/tap/pgbot will lag behind). See docs/release.md."
             exit 1
           fi
           VERSION="${GITHUB_REF_NAME#v}"

@@ -25,14 +25,20 @@ Before tagging: `CHANGELOG.md` has the section, `scripts/gate.sh` is green, and
 [`pgrundev/homebrew-tap`](https://github.com/pgrundev/homebrew-tap), which
 holds `Formula/pgbot.rb`. GoReleaser's `brews` block (`.goreleaser.yaml`)
 regenerates that file on every tag — download URLs and SHA-256s for all four
-macOS/Linux archives — and pushes it over **git+SSH with a deploy key**
-(`repository.git`), not a personal access token: the workflow's `GITHUB_TOKEN`
-cannot write to another repository, and a deploy key grants write access to
-exactly one.
+macOS/Linux archives — and pushes it to the tap. The workflow's `GITHUB_TOKEN`
+cannot write to another repository, so the push needs **one** of two
+credentials, read from `release.yml` secrets (first one found wins):
 
-One-time setup (repeat only to rotate the key):
+| Secret on `pgrundev/pgbot` | Mechanism | Notes |
+|---|---|---|
+| `HOMEBREW_TAP_DEPLOY_KEY` | git+SSH push with a write **deploy key** registered on the tap repo | Preferred: scoped to exactly one repo, no expiry, not tied to a person. **The org must allow deploy keys** — [new organizations disable them by default](https://github.blog/changelog/2024-10-23-repository-deploy-keys-are-controlled-by-enterprise-and-organization-policy-ga/); enable at `https://github.com/organizations/pgrundev/settings/deploy_keys`. |
+| `HOMEBREW_TAP_TOKEN` | GitHub Contents API with a **fine-grained PAT** | Resource owner `pgrundev`, repository access **only `homebrew-tap`**, permission **Contents: read and write**. Tied to the creating account and it expires (≤ 1 year) — when it lapses the push skips and `brew-smoke` fails the release, so it's visible. |
+
+### Option A — deploy key (one-time; repeat only to rotate)
 
 ```bash
+# 0. Org policy: https://github.com/organizations/pgrundev/settings/deploy_keys → allow.
+
 # 1. A fresh ed25519 key pair, no passphrase (GoReleaser can't prompt).
 ssh-keygen -t ed25519 -N "" -C "pgbot release → homebrew-tap" -f /tmp/pgbot-tap-key
 
@@ -46,6 +52,13 @@ gh secret set HOMEBREW_TAP_DEPLOY_KEY --repo pgrundev/pgbot < /tmp/pgbot-tap-key
 # 4. Don't leave the private key on disk.
 rm -f /tmp/pgbot-tap-key /tmp/pgbot-tap-key.pub
 ```
+
+### Option B — fine-grained PAT
+
+1. <https://github.com/settings/personal-access-tokens/new> → Resource owner
+   **pgrundev** → Repository access: *Only select repositories* →
+   `homebrew-tap` → Permissions → Repository → **Contents: Read and write**.
+2. `gh secret set HOMEBREW_TAP_TOKEN --repo pgrundev/pgbot` (paste the token).
 
 **Known follow-up.** GoReleaser (v2.16+) marks the `brews` (formula) section
 deprecated in favour of `homebrew_casks`; it still works on every v2.x and the
