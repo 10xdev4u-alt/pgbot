@@ -1,6 +1,10 @@
 package conn
 
-import "time"
+import (
+	"time"
+
+	"github.com/jackc/pgx/v5"
+)
 
 // Capabilities is built once at connect from server_version_num + a probe of
 // installed extensions and the current role. Collectors declare what they need
@@ -19,7 +23,36 @@ type Capabilities struct {
 	InRecovery        bool // pg_is_in_recovery(): true on a standby (A15-0)
 	RecoveryChecked   bool // the probe succeeded, so InRecovery is trustworthy (distinguishes "false" from "unknown")
 	Extensions        []string
+	// ExtensionSchemas maps an installed extension to the namespace its objects
+	// live in (pg_extension.extnamespace). Supabase installs pg_stat_statements
+	// (and hypopg) in "extensions", not public, and a dedicated read-only role
+	// rarely has that on its search_path — so pgbot must address extension
+	// objects by qualified name, never rely on resolution. Nil/absent → unknown.
+	ExtensionSchemas map[string]string
 }
+
+// ExtensionSchema returns the namespace an installed extension's objects live
+// in, or "" when the extension is absent or the probe could not read it.
+func (c Capabilities) ExtensionSchema(ext string) string { return c.ExtensionSchemas[ext] }
+
+// ExtObject returns the schema-qualified, identifier-quoted name of a fixed,
+// allowlisted object (view / function / table) belonging to an extension —
+// e.g. "extensions"."pg_stat_statements" — so a read works whatever the
+// session's search_path is. The schema comes from the catalog, never user input,
+// but it is quoted anyway (pgx.Identifier) so an unusual namespace name can't
+// break the statement. When the schema is unknown it degrades to the bare name,
+// i.e. exactly the pre-discovery behaviour.
+func (c Capabilities) ExtObject(ext, object string) string {
+	schema := c.ExtensionSchema(ext)
+	if schema == "" {
+		return object
+	}
+	return pgx.Identifier{schema, object}.Sanitize()
+}
+
+// Pgss is ExtObject for pg_stat_statements' objects: the view, the
+// pg_stat_statements(showtext) set-returning function, and pg_stat_statements_info.
+func (c Capabilities) Pgss(object string) string { return c.ExtObject("pg_stat_statements", object) }
 
 // Standby reports whether this node is a physical standby (in recovery). Only
 // meaningful when RecoveryChecked; when unknown, returns false so primary-side

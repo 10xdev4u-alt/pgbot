@@ -83,7 +83,7 @@ var catalog = map[string]Meta{
 		Related: []string{"long_running_transaction", "idle_in_transaction"},
 	},
 	"index_invalid": {
-		Severity: "critical", CriticalWhen: "downgraded to warn while a CREATE INDEX CONCURRENTLY is still building",
+		Severity: "critical", CriticalWhen: "an invalid index is still indisready (maintained on every write); failed-build debris (indisready = false, typically 0 bytes) is warn, and any state is warn while a CREATE INDEX CONCURRENTLY is still building",
 		Dimension: "risk", ObjectClass: "relation",
 		Scope:   "schema",
 		Related: []string{"unused_indexes"},
@@ -496,7 +496,7 @@ func ObjectClass(object string) string {
 // README.md), grouped by dimension. Kept terse — the page has the depth.
 var summaries = map[string]string{
 	"blocking_chains":              "one session is blocked waiting on locks held by another",
-	"index_invalid":                "a failed CREATE INDEX CONCURRENTLY left an index that's maintained but never used",
+	"index_invalid":                "a failed CREATE INDEX CONCURRENTLY left an invalid index — critical if it's still maintained on writes, warn if it's failed-build debris",
 	"unused_indexes":               "indexes with zero scans — storage and write cost, no reads served",
 	"table_bloat":                  "dead tuples make a table far larger on disk than its live rows",
 	"redundant_indexes":            "an index whose columns are a leading prefix of another",

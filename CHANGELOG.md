@@ -7,6 +7,60 @@ separately by `model.SchemaVersion` (currently 1.1.0).
 
 ## [Unreleased]
 
+### Fixed
+- **`pg_stat_statements` installed outside `public` was detected but unreadable
+  (#10).** Supabase (and any `CREATE EXTENSION … SCHEMA x`) puts the extension's
+  objects in `extensions`; pgbot's probe saw it in `pg_extension` but every read
+  used the bare relation name, so `queries` came back
+  `unavailable: relation "pg_stat_statements" does not exist` while the server
+  capability list still said `pg_stat_statements` — a silent loss of the report's
+  highest-value section for a dedicated read-only role whose `search_path` doesn't
+  include the schema. The probe now records the namespace of every installed
+  extension (`Capabilities.ExtensionSchemas`) and the fixed, allowlisted object
+  names — the `pg_stat_statements` view, the `pg_stat_statements(showtext)` SRF,
+  `pg_stat_statements_info`, and hypopg's `hypopg_create_index` /
+  `hypopg_relation_size` / `hypopg_reset` used by `advise` — are addressed
+  schema-qualified and identifier-quoted (`"extensions"."pg_stat_statements"`),
+  independent of `search_path`. When the schema can't be read the bare name is
+  used, i.e. the previous behaviour. Covered by an integration test that
+  relocates the extension and runs the read-only role against it.
+- **`index_invalid` no longer overstates failed-build debris as critical write
+  overhead (#11).** A `CREATE INDEX CONCURRENTLY` that fails during the build
+  (a duplicate key on a unique build, a timeout, a cancelled session) leaves
+  `indisvalid = false, indisready = false` and a 0-byte relation — an index
+  PostgreSQL **ignores on INSERT/UPDATE**. pgbot graded every invalid index
+  `critical` (impact 85) with the blanket claim "still maintained on every write",
+  ranking that debris above live operational problems. The schema fingerprint
+  now carries `indisready`, `indislive`, and `pg_relation_size` for invalid
+  indexes, and each one is classified: `indisready = true` → maintained on every
+  write, never read → **critical** (unchanged); `indisready = false` →
+  failed-build debris, not maintained on writes → **warn** (impact 45) with
+  cleanup guidance ("the index you meant to have does not exist"), never a
+  write-cost claim; `indislive = false` → being dropped → warn. Evidence lines
+  carry the state and size (`… indisready = false: failed-build debris, NOT
+  maintained on writes (0 B)`), the impact estimate says how many are actually
+  maintained, and the finding page's verify query shows both flags. The
+  in-progress-build downgrade (warn, confidence 0.5, do-not-drop guard) is
+  unchanged. Not a JSON contract change: the classification rides on the
+  existing `severity` / `evidence` / `impact` fields.
+- **`brew install pgrundev/tap/pgbot` works (#8).** The README advertised the tap
+  since 0.3.0, but the `pgrundev/homebrew-tap` repository was never created and
+  the release's formula push was gated on a `HOMEBREW_TAP_TOKEN` that was never
+  set — so every release stayed green while the documented install failed with
+  "Repository not found". The tap now exists with a formula for the current
+  release (macOS Intel/Apple Silicon, Linux x86_64/arm64, SHA-256 pinned to the
+  signed release archives), and GoReleaser pushes the regenerated formula on
+  every tag over git+SSH with a **deploy key scoped to the tap repo**
+  (`HOMEBREW_TAP_DEPLOY_KEY`) instead of a personal access token. A new
+  post-release `brew-smoke` job `brew install`s the tag on a fresh macOS runner
+  and **fails the release run** if the formula wasn't published, so this can't
+  silently regress again. Release procedure documented in `docs/release.md`.
+- **`npx pgbot` → `E404` is documented, not a bug to chase (#9).** npm's
+  name-similarity policy blocks creating the bare `pgbot` package (too close to
+  `got`); the wrapper has been `@pgbot/cli` since 0.3.3. The README now says so
+  explicitly next to the npx row, and the 0.3.0 release notes that advertised
+  `npx pgbot` carry a correction.
+
 ## [0.4.0] - 2026-08-19
 
 ### Added

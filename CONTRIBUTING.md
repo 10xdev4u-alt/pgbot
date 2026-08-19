@@ -47,6 +47,11 @@ CI also runs `gofmt -l`, `go vet`, `go test -race`, `golangci-lint`, and
   (`internal/findings/catalog.go`) and a `docs/findings/<id>.md`; a CI test
   enforces the pairing and that the page's verify query actually runs.
 
+## Releasing
+
+See [docs/release.md](docs/release.md) — tag → GoReleaser → per-channel smoke
+jobs, and which secret each distribution channel (npm, Homebrew) needs.
+
 ## Commits
 
 Conventional-commit prefixes (`feat:`, `fix:`, `docs:`, `test:`, `chore:`, `ci:`)

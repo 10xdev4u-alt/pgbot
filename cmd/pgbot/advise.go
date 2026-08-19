@@ -84,7 +84,7 @@ func adviseRun(ctx context.Context, connString string, top int, minImpr float64)
 	// One READ ONLY transaction for the whole loop: hypopg state is per-connection,
 	// so the hypothetical indexes and their reset must share a single connection.
 	err = target.ReadOnlyTx(ctx, func(tx pgx.Tx) error {
-		p := pgxPlanner{tx: tx}
+		p := pgxPlanner{tx: tx, caps: target.Caps}
 		defer p.ResetHypo(context.Background()) //nolint:errcheck // belt-and-braces cleanup
 		res.Recs, res.Stats = advisor.Advise(ctx, p, inputs, advisor.Options{
 			MinImprovement: minImpr, StaleRelations: stale, WriteHeavy: writeHeavy,
@@ -189,15 +189,18 @@ func topSlowSelects(ctx context.Context, t *conn.Target, top int) ([]advisor.Que
 		top = 15
 	}
 	col := t.Caps.StatStatementsTotalCol()
-	// col comes from a fixed allowlist (StatStatementsTotalCol), never user input.
+	// col comes from a fixed allowlist (StatStatementsTotalCol), never user input;
+	// the view is addressed by its schema-qualified name (Pgss) so a
+	// pg_stat_statements installed outside public (Supabase's "extensions") is
+	// found regardless of the role's search_path (issue #10).
 	sql := fmt.Sprintf(`
 		SELECT queryid, left(query, 4000) AS q, calls,
 		       100.0 * %[1]s / nullif(sum(%[1]s) OVER (), 0) AS share
-		FROM pg_stat_statements
+		FROM %[2]s
 		WHERE queryid IS NOT NULL AND calls > 0
 		  AND query ~* '^\s*select\M'
 		ORDER BY %[1]s DESC
-		LIMIT $1`, col)
+		LIMIT $1`, col, t.Caps.Pgss("pg_stat_statements"))
 
 	rows, err := t.Pool.Query(ctx, sql, top)
 	if err != nil {
@@ -261,7 +264,16 @@ func relationStats(ctx context.Context, t *conn.Target) (stale, writeHeavy map[s
 // clears the error and lets the loop continue to the next query. hypopg indexes
 // live in backend memory, not transaction state, so they survive a savepoint
 // rollback — only hypopg_reset drops them.
-type pgxPlanner struct{ tx pgx.Tx }
+type pgxPlanner struct {
+	tx   pgx.Tx
+	caps conn.Capabilities // for hypopg's schema — its functions are called by qualified name
+}
+
+// hypo returns the schema-qualified name of a hypopg function. Like
+// pg_stat_statements, hypopg lands in Supabase's "extensions" schema (issue #10)
+// — off a read-only role's search_path — so the fixed function names are
+// qualified with the namespace the probe read from pg_extension.
+func (p pgxPlanner) hypo(fn string) string { return p.caps.ExtObject("hypopg", fn) }
 
 func (p pgxPlanner) GenericPlan(ctx context.Context, query string) ([]byte, error) {
 	// GENERIC_PLAN plans a normalized $N query without values; FORMAT JSON gives one
@@ -293,18 +305,18 @@ func (p pgxPlanner) CreateHypoIndex(ctx context.Context, ddl string) (string, in
 	var estBytes int64
 	err := p.inSavepoint(ctx, func() error {
 		// The DDL is passed as a bind parameter to hypopg_create_index — not spliced.
-		if err := p.tx.QueryRow(ctx, "SELECT indexrelid, indexname FROM hypopg_create_index($1)", ddl).Scan(&oid, &name); err != nil {
+		if err := p.tx.QueryRow(ctx, "SELECT indexrelid, indexname FROM "+p.hypo("hypopg_create_index")+"($1)", ddl).Scan(&oid, &name); err != nil {
 			return err
 		}
 		// hypopg's size estimate for the index that would be built (best-effort).
-		_ = p.tx.QueryRow(ctx, "SELECT hypopg_relation_size($1)", oid).Scan(&estBytes)
+		_ = p.tx.QueryRow(ctx, "SELECT "+p.hypo("hypopg_relation_size")+"($1)", oid).Scan(&estBytes)
 		return nil
 	})
 	return name, estBytes, err
 }
 
 func (p pgxPlanner) ResetHypo(ctx context.Context) error {
-	_, err := p.tx.Exec(ctx, "SELECT hypopg_reset()")
+	_, err := p.tx.Exec(ctx, "SELECT "+p.hypo("hypopg_reset")+"()")
 	return err
 }
 

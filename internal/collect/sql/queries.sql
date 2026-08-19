@@ -1,7 +1,10 @@
 -- Top of pg_stat_statements by total execution time. Cumulative since stats
 -- reset — the temporal view comes from the baseline diff, not a short sample.
--- %s is the version-appropriate total-time column (total_exec_time / total_time),
--- substituted from a fixed allowlist in Go (never user input). query text is
+-- %[1]s is the version-appropriate total-time column (total_exec_time / total_time),
+-- substituted from a fixed allowlist in Go (never user input). %[2]s is the
+-- schema-qualified, quoted pg_stat_statements view (the extension's namespace,
+-- discovered from pg_extension — Supabase installs it in "extensions", not
+-- public, so an unqualified name fails for a read-only role). query text is
 -- normalized ($1) for DML — but pgss stores UTILITY statements verbatim (with
 -- literals), so the collector runs it through conn.ScrubQueryText, not verbatim.
 SELECT queryid,
@@ -17,7 +20,7 @@ SELECT queryid,
        -- window sum runs before LIMIT, so this is total exec time across ALL
        -- statements (not just the top 20) — the denominator for prop_exec_time.
        sum(%[1]s) OVER ()  AS total_exec_all
-FROM pg_stat_statements
+FROM %[2]s
 WHERE queryid IS NOT NULL AND calls > 0
   AND query NOT ILIKE '%%pg_stat_statements%%'
   -- Drop transaction-control and session GUC statements. They dominate a quiet

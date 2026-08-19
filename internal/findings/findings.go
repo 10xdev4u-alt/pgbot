@@ -345,29 +345,77 @@ func blockingChains(c *model.Context, add func(model.Finding)) {
 }
 
 // invalidIndexes flags indexes with indisvalid=false — a failed CREATE INDEX
-// CONCURRENTLY. It costs write throughput, serves no reads, and almost nobody
-// notices. This is a gauge (valid immediately, even on a cold window).
+// CONCURRENTLY (or REINDEX CONCURRENTLY). This is a gauge (valid immediately,
+// even on a cold window). What an invalid index COSTS depends on the rest of its
+// pg_index state (issue #11), so each one is classified, and the severity
+// follows the worst class present:
+//
+//   - indisready = true  → PostgreSQL still maintains it on every INSERT/UPDATE/
+//     DELETE and never reads it: full write + WAL cost for nothing → critical.
+//   - indisready = false → the build failed BEFORE the index was populated
+//     (typically 0 bytes); INSERT/UPDATE ignore it, so there is NO write cost.
+//     It is failed-build debris: it occupies the name, wastes whatever was written,
+//     and the index you meant to have doesn't exist → warn.
+//   - indislive = false  → being dropped, ignored for all purposes → warn.
 func invalidIndexes(c *model.Context, add func(model.Finding)) {
 	if c.Schema == nil {
 		return
 	}
 	var ev, objs []string
+	var maintained, debris, dying int
+	var maintainedBytes, debrisBytes int64
 	for _, o := range c.Schema.Objects {
-		if o.Kind == "index" && o.Invalid {
-			ev = append(ev, o.Identity)
-			objs = append(objs, o.Identity)
+		if o.Kind != "index" || !o.Invalid {
+			continue
+		}
+		objs = append(objs, o.Identity)
+		switch {
+		case !o.IndexLive:
+			dying++
+			ev = append(ev, fmt.Sprintf("%s — indisvalid = false, indislive = false: being dropped, ignored for all purposes (%s)", o.Identity, humanBytes(o.Bytes)))
+		case o.IndexReady:
+			maintained++
+			maintainedBytes += o.Bytes
+			ev = append(ev, fmt.Sprintf("%s — indisvalid = false, indisready = true: maintained on every write, never read (%s)", o.Identity, humanBytes(o.Bytes)))
+		default:
+			debris++
+			debrisBytes += o.Bytes
+			ev = append(ev, fmt.Sprintf("%s — indisvalid = false, indisready = false: failed-build debris, NOT maintained on writes (%s)", o.Identity, humanBytes(o.Bytes)))
 		}
 	}
 	if len(ev) == 0 {
 		return
 	}
+
+	// Detail states the cost the catalog actually supports — never a blanket
+	// "maintained on every write" for an index Postgres ignores on writes.
+	const maintainedText = "An invalid index that is still indisready is maintained on every write (INSERT/UPDATE/DELETE, plus WAL) but never used to serve reads — full write cost for zero benefit. It's the leftover of a CREATE INDEX CONCURRENTLY that failed after the build phase (or a REINDEX CONCURRENTLY that failed after the swap)."
+	const debrisText = "An invalid index with indisready = false is failed-build debris: it is not maintained on writes (INSERT/UPDATE ignore it, per indisready), so it costs no write overhead — a CREATE INDEX CONCURRENTLY that failed before or during the build (a duplicate key on a unique build, a timeout, a cancelled session). It still needs cleanup: it occupies the index name (a retry with the same name fails), wastes any pages written before the failure, and — most importantly — the index you meant to have does not exist, so the queries it was for run unindexed."
+	var detail string
+	switch {
+	case maintained > 0 && debris+dying > 0:
+		detail = fmt.Sprintf("%d maintained on writes (indisready = true) and %d not maintained (failed-build debris or being dropped). %s %s",
+			maintained, debris+dying, maintainedText, debrisText)
+	case maintained > 0:
+		detail = maintainedText
+	default:
+		detail = debrisText
+	}
+	sev := model.SeverityWarn
+	score := 45.0
+	estimate := fmt.Sprintf("%d invalid index(es), none maintained on writes, %s of debris", len(ev), humanBytes(debrisBytes))
+	if maintained > 0 {
+		sev = model.SeverityCritical
+		score = 85
+		estimate = fmt.Sprintf("%d invalid index(es), %d maintained on every write (%s)", len(ev), maintained, humanBytes(maintainedBytes))
+	}
+
 	// A CREATE INDEX CONCURRENTLY still RUNNING shows an invalid index too — but
 	// it's building, not failed. If pg_stat_progress_create_index has a row, don't
 	// cry wolf: caveat it and drop confidence rather than telling the user to drop
 	// an index that's about to become valid.
 	var caveats []string
 	conf := 1.0
-	sev := model.SeverityCritical
 	guard := precondition("invalid_index.no_build_running", model.ActionDropIndex,
 		"An invalid index left by a stopped build can be dropped and rebuilt — but a plain DROP INDEX takes an ACCESS EXCLUSIVE lock.",
 		"no CREATE INDEX build is running, then DROP INDEX CONCURRENTLY and rebuild")
@@ -381,13 +429,12 @@ func invalidIndexes(c *model.Context, add func(model.Finding)) {
 	add(model.Finding{
 		ID: "index_invalid", Severity: sev,
 		Title:       fmt.Sprintf("%d invalid index(es) — failed CREATE INDEX CONCURRENTLY", len(ev)),
-		Detail:      "An invalid index is never used to serve reads but is still maintained on every write. It's the leftover of a CREATE INDEX CONCURRENTLY that failed partway.",
+		Detail:      detail,
 		Evidence:    ev,
 		Objects:     objs,
 		Remediation: "If no build is running, drop and recreate it: DROP INDEX CONCURRENTLY <name>; then rebuild.",
-		Impact: impact(model.DimRisk, 85,
-			fmt.Sprintf("%d invalid index(es)", len(ev)),
-			"pg_index.indisvalid = false"),
+		Impact: impact(model.DimRisk, score, estimate,
+			"pg_index.indisvalid = false, classified by indisready / indislive + pg_relation_size"),
 		Confidence: conf,
 		Caveats:    caveats,
 		Safety:     safety(guard),

@@ -157,6 +157,17 @@ type SchemaObject struct {
 	Definition     string
 	DefinitionHash string
 	Invalid        bool // indexes only: indisvalid = false (a failed CREATE INDEX CONCURRENTLY)
+	// Indexes only. Together with Invalid these decide what an invalid index
+	// actually costs (issue #11): IndexReady = pg_index.indisready — false means
+	// PostgreSQL ignores it for INSERT/UPDATE, i.e. it is NOT maintained on
+	// writes (a build that failed before the index was populated); IndexLive =
+	// pg_index.indislive — false means it is being dropped and is ignored for all
+	// purposes. Bytes = pg_relation_size, populated only for invalid indexes (a
+	// build that never ran is 0 bytes). Valid indexes carry IndexReady/IndexLive
+	// = true and Bytes = 0.
+	IndexReady bool
+	IndexLive  bool
+	Bytes      int64
 }
 
 // Limits holds cluster-wide saturation gauges: connection slots and the oldest

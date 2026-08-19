@@ -60,20 +60,26 @@ func (queriesCollector) Sample(ctx context.Context, t *conn.Target, caps conn.Ca
 	// run — landing inside pgbot's own sample window, where the health collector
 	// reads it back as temp_bytes_per_sec and the tune rule recommends raising
 	// work_mem for it. A transaction-local work_mem keeps this read in memory.
+	//
+	// Every pg_stat_statements object is addressed by its schema-qualified name
+	// (caps.Pgss — discovered from pg_extension at connect). Supabase installs the
+	// extension in "extensions", off a read-only role's search_path; the bare
+	// name there raised 42P01 while the capability list still said "present"
+	// (issue #10). The names are the fixed allowlisted objects, quoted by pgx.
 	rows, err := queryManyLocal[queryRow](ctx, t, []string{"SET LOCAL work_mem = '64MB'"},
-		fmt.Sprintf(sqlQueries, caps.StatStatementsTotalCol()))
+		fmt.Sprintf(sqlQueries, caps.StatStatementsTotalCol(), caps.Pgss("pg_stat_statements")))
 	if err != nil {
 		return nil, err
 	}
 	out := queriesSample{Rows: rows}
 	// pg_stat_statements(false) — showtext=false, so the count doesn't materialize
 	// every row WITH its query text (the same temp-file cost as above, for a count).
-	out.Count, _ = scalar[int](ctx, t, `SELECT count(*)::int FROM pg_stat_statements(false)`)
+	out.Count, _ = scalar[int](ctx, t, `SELECT count(*)::int FROM `+caps.Pgss("pg_stat_statements")+`(false)`)
 	if m, err := scalar[int](ctx, t, `SELECT current_setting('pg_stat_statements.max')::int`); err == nil {
 		out.Max = m
 	}
 	if caps.VersionNum >= 140000 { // pg_stat_statements_info (dealloc) is PG14+
-		out.Dealloc, _ = scalar[int64](ctx, t, `SELECT dealloc FROM pg_stat_statements_info`)
+		out.Dealloc, _ = scalar[int64](ctx, t, `SELECT dealloc FROM `+caps.Pgss("pg_stat_statements_info"))
 	}
 	return out, nil
 }

@@ -234,9 +234,22 @@ func probe(ctx context.Context, cc *pgx.ConnConfig) (Capabilities, PoolerInfo, e
 		caps.SystemIdentifier = fmt.Sprintf("%d", sysID)
 	}
 
-	if rows, err := c.Query(ctx, `SELECT extname FROM pg_extension ORDER BY extname`, mode...); err == nil {
-		if exts, err := pgx.CollectRows(rows, pgx.RowTo[string]); err == nil {
-			caps.Extensions = exts
+	// Installed extensions WITH the namespace each lives in. The schema is what
+	// lets every extension read (pg_stat_statements, hypopg) address its objects
+	// by qualified name — Supabase and friends install them in "extensions", off
+	// the read-only role's search_path (issue #10). Best-effort: on failure the
+	// map stays empty and callers fall back to bare names.
+	if rows, err := c.Query(ctx, `SELECT e.extname, n.nspname FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace ORDER BY e.extname`, mode...); err == nil {
+		type extRow struct {
+			Name   string
+			Schema string
+		}
+		if exts, err := pgx.CollectRows(rows, pgx.RowToStructByPos[extRow]); err == nil {
+			caps.ExtensionSchemas = make(map[string]string, len(exts))
+			for _, e := range exts {
+				caps.Extensions = append(caps.Extensions, e.Name)
+				caps.ExtensionSchemas[e.Name] = e.Schema
+			}
 		}
 	}
 	return caps, pooler, nil
