@@ -33,6 +33,20 @@ separately by `model.SchemaVersion` (currently 1.1.0).
   USING INDEX` index shows zero scans on the primary but dropping it breaks logical
   replication and UPDATE/DELETE row identity — now excluded alongside PK / unique /
   exclusion / FK-backing indexes.
+- **Destructive-action guards are now structured and guaranteed (`finding.safety`).**
+  Every finding whose remediation involves a destructive or irreversible action
+  (DROP INDEX, VACUUM FULL, REINDEX, DROP REPLICATION SLOT, a table rewrite) now
+  carries machine-actionable guards — `{id, kind: prohibition|precondition, action,
+  text, verify}` — instead of leaving the warning to free-form prose a summarizing
+  model could drop. They are emitted deterministically in code and guaranteed in
+  `--json`, SARIF, the MCP payloads, and both terminal views. Two guards that
+  previously existed **only** in docs pages are now on the finding itself: the
+  wraparound "don't VACUUM FULL / don't consume XIDs" guard, and the "don't drop a
+  replication slot a live standby still depends on" guard (whose remediation no
+  longer nudges toward the drop before the check). `pgbot ask` / `explain` reassert
+  these guards from code, after the model's text, so the model cannot omit them. A
+  build-failing regression test fails CI if a destructive remediation ships without
+  a guard.
 
 ### Changed
 - `model.IndexStat` gains `columns`, `method`, `unique`, and `primary` (additive).

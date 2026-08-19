@@ -467,6 +467,9 @@
           },
           "type": "array"
         },
+        "safety": {
+          "$ref": "#/$defs/Safety"
+        },
         "suppressed": {
           "type": "boolean"
         },
@@ -1140,6 +1143,49 @@
         "type",
         "active",
         "retained_bytes"
+      ]
+    },
+    "Safety": {
+      "properties": {
+        "blocking_caveats": {
+          "items": {
+            "$ref": "#/$defs/SafetyGuard"
+          },
+          "type": "array"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "blocking_caveats"
+      ]
+    },
+    "SafetyGuard": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "verify": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "action",
+        "text",
+        "verify"
       ]
     },
     "SequenceUsage": {

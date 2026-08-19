@@ -98,6 +98,9 @@ func renderGrouped(b *strings.Builder, st styler, c *model.Context, width int) {
 			if f.Suppressed { // a rendered-but-suppressed critical
 				fmt.Fprintf(b, "  %s\n", st.dim("suppressed by config: "+suppReason(f)))
 			}
+			// A destructive-action guard travels even in the compact view — a
+			// prohibition or precondition is exactly what must not be dropped for space.
+			renderSafetyGuards(b, st, f, width, "  ")
 		}
 		fmt.Fprintln(b)
 	}
@@ -130,6 +133,30 @@ func renderGrouped(b *strings.Builder, st styler, c *model.Context, width int) {
 
 	fmt.Fprintln(b, st.dim("Details: pgbot inspect --full   ·   Machine-readable: --json"))
 	fmt.Fprintln(b, st.dim(`Ask it: pgbot ask "what's wrong?"`))
+}
+
+// renderSafetyGuards prints a finding's structured destructive-action guards
+// compactly — a prohibition as "do NOT <ACTION>", a precondition as "before
+// <ACTION>, confirm: <verify>". Guaranteed from the structured field, never
+// summary prose, and shared by the grouped view and the --full findings list.
+func renderSafetyGuards(b *strings.Builder, st styler, f model.Finding, width int, indent string) {
+	if f.Safety == nil {
+		return
+	}
+	for _, g := range f.Safety.BlockingCaveats {
+		var line string
+		switch {
+		case g.Kind == model.GuardProhibition:
+			line = "⚠ do NOT " + g.Action + " — " + g.Text
+		case g.Verify != nil:
+			line = "⚠ before " + g.Action + ", confirm: " + *g.Verify
+		default:
+			line = "⚠ " + g.Action + ": " + g.Text
+		}
+		for _, l := range wrapText(line, width-len(indent)-2) {
+			fmt.Fprintf(b, "%s%s\n", indent, st.warn(l))
+		}
+	}
 }
 
 // computeHealthScore is a coarse 0–100 grade: full marks minus a penalty per

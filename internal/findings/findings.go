@@ -270,6 +270,24 @@ func impact(dim string, score float64, estimate, basis string) model.Impact {
 	return model.Impact{Score: score, Dimension: dim, Estimate: estimate, Basis: basis}
 }
 
+// safety, prohibition, and precondition build the structured guards for a finding
+// whose remediation involves a destructive or irreversible action. Emitted here,
+// in code — never left to a summarizing model — so they are guaranteed in --json,
+// SARIF, and MCP, and asserted by model-free tests keyed on guard ID.
+func safety(guards ...model.SafetyGuard) *model.Safety {
+	return &model.Safety{BlockingCaveats: guards}
+}
+
+// prohibition: never do Action while the finding's state holds (Verify is nil).
+func prohibition(id, action, text string) model.SafetyGuard {
+	return model.SafetyGuard{ID: id, Kind: model.GuardProhibition, Action: action, Text: text}
+}
+
+// precondition: Action is permitted only after the Verify check passes.
+func precondition(id, action, text, verify string) model.SafetyGuard {
+	return model.SafetyGuard{ID: id, Kind: model.GuardPrecondition, Action: action, Text: text, Verify: &verify}
+}
+
 // sizeScore maps a byte count onto 0..100 on a log scale: ~1 MiB scores near 0,
 // ~100 GiB scores near 100. Storage wins are naturally logarithmic — the gap
 // between 8 KB and 12 GB should dwarf the gap between 12 GB and 20 GB.
@@ -350,10 +368,15 @@ func invalidIndexes(c *model.Context, add func(model.Finding)) {
 	var caveats []string
 	conf := 1.0
 	sev := model.SeverityCritical
+	guard := precondition("invalid_index.no_build_running", model.ActionDropIndex,
+		"An invalid index left by a stopped build can be dropped and rebuilt — but a plain DROP INDEX takes an ACCESS EXCLUSIVE lock.",
+		"no CREATE INDEX build is running, then DROP INDEX CONCURRENTLY and rebuild")
 	if createIndexInProgress(c) {
 		caveats = append(caveats, "a CREATE INDEX CONCURRENTLY is currently running (see progress) — an index invalid because it's still building is normal; only a build that has stopped needs the drop-and-rebuild")
 		conf = 0.5
 		sev = model.SeverityWarn
+		guard = prohibition("invalid_index.build_in_progress", model.ActionDropIndex,
+			"A CREATE INDEX CONCURRENTLY is still building this index — dropping it now kills a build seconds before it goes valid.")
 	}
 	add(model.Finding{
 		ID: "index_invalid", Severity: sev,
@@ -367,6 +390,7 @@ func invalidIndexes(c *model.Context, add func(model.Finding)) {
 			"pg_index.indisvalid = false"),
 		Confidence: conf,
 		Caveats:    caveats,
+		Safety:     safety(guard),
 	})
 }
 
@@ -483,6 +507,9 @@ func unusedIndexes(c *model.Context, add func(model.Finding), tun Tunables) {
 		Impact:      impact(model.DimStorage, found[0].score, estimate, basis),
 		Confidence:  confidence,
 		Caveats:     caveats,
+		Safety: safety(precondition("unused_index.per_node", model.ActionDropIndex,
+			"These are zero scans in ONE window on THIS node — a rarely-run or replica-only query still needs the index.",
+			"the index is unused on EVERY node in the cluster (including replicas) and by any periodic/off-window job, then DROP INDEX CONCURRENTLY")),
 	})
 }
 
@@ -563,6 +590,9 @@ func redundantIndexes(c *model.Context, add func(model.Finding)) {
 		Impact:      impact(model.DimStorage, sizeScore(total), "≈"+humanBytes(total)+" reclaimable", fmt.Sprintf("%d prefix-redundant indexes (indkey/indclass containment)", len(ev))),
 		Confidence:  0.75,
 		Caveats:     caveats,
+		Safety: safety(precondition("redundant_index.covering_equivalent", model.ActionDropIndex,
+			"A leading-prefix match can still miss a difference the covering index does not cover (extra INCLUDE columns, a different opclass or collation), and index choice is per-node.",
+			"the covering index has the same INCLUDE columns, opclass, and collation, and is the one used on any replicas, then DROP INDEX CONCURRENTLY")),
 	})
 }
 
@@ -1116,6 +1146,8 @@ func txidWraparound(c *model.Context, add func(model.Finding)) {
 			fmt.Sprintf("age %s / 2.1B", human(age)),
 			"max(age(datfrozenxid)) across databases"),
 		Confidence: 1.0,
+		Safety: safety(prohibition("wraparound.no_vacuum_full", model.ActionVacuumFull,
+			"VACUUM FULL / CLUSTER / pg_repack take ACCESS EXCLUSIVE and CONSUME transaction IDs — exactly what is running out. Use VACUUM (FREEZE) only.")),
 	})
 }
 
@@ -1159,6 +1191,9 @@ func sequenceExhaustion(c *model.Context, add func(model.Finding)) {
 		Remediation: "Migrate the owning column to bigint (ALTER TABLE … ALTER COLUMN … TYPE bigint — plan for the table rewrite). If the column is already bigint, exhaustion is astronomically far off.",
 		Impact:      impact(model.DimRisk, worst*100, fmt.Sprintf("%.0f%% of range used", worst*100), "last_value / min(max_value, column type max)"),
 		Confidence:  0.9,
+		Safety: safety(precondition("narrow_column.table_rewrite", model.ActionAlterColumnType,
+			"ALTER ... TYPE bigint rewrites the whole table under an ACCESS EXCLUSIVE lock.",
+			"you have planned for the lock/downtime (or use a phased add-column/backfill/swap), and widen any int4 foreign-key columns that reference it in the same change")),
 	})
 }
 
@@ -1196,6 +1231,9 @@ func int4IdentityColumn(c *model.Context, add func(model.Finding)) {
 		Remediation: "Define identity/serial columns as bigint. To widen an existing one: ALTER TABLE … ALTER COLUMN … TYPE bigint (a table rewrite — plan for it, and widen any int4 foreign-key columns that reference it in the same change).",
 		Impact:      impact(model.DimRisk, 55, fmt.Sprintf("%d column(s)", len(ev)), "column type of sequence-backed columns (pg_attribute)"),
 		Confidence:  0.95,
+		Safety: safety(precondition("narrow_column.table_rewrite", model.ActionAlterColumnType,
+			"ALTER ... TYPE bigint rewrites the whole table under an ACCESS EXCLUSIVE lock.",
+			"you have planned for the lock/downtime (or use a phased add-column/backfill/swap), and widen any int4 foreign-key columns that reference it in the same change")),
 	})
 }
 
@@ -1222,6 +1260,8 @@ func mxidWraparound(c *model.Context, add func(model.Finding)) {
 			fmt.Sprintf("mxid age %s / 2.1B", human(age)),
 			"max(mxid_age(datminmxid)) across databases"),
 		Confidence: 1.0,
+		Safety: safety(prohibition("mxid_wraparound.no_vacuum_full", model.ActionVacuumFull,
+			"VACUUM FULL / CLUSTER / pg_repack take ACCESS EXCLUSIVE and make the wraparound race worse, not better. Use VACUUM (FREEZE) only to advance datminmxid.")),
 	})
 }
 
@@ -1471,6 +1511,12 @@ func checksumFindings(c *model.Context, add func(model.Finding)) {
 			Caveats:    []string{"Do NOT VACUUM FULL or REINDEX the affected relation — rewriting the pages destroys the evidence and can propagate the damage. Preserve state, then restore from backup."},
 			Impact:     impact(model.DimRisk, 96, fmt.Sprintf("%d checksum failures", total), "pg_stat_database.checksum_failures > 0"),
 			Confidence: 1.0,
+			Safety: safety(
+				prohibition("checksum.no_vacuum_full", model.ActionVacuumFull,
+					"Rewriting the pages (VACUUM FULL / CLUSTER / pg_repack) destroys the evidence and can turn a recoverable incident into an unrecoverable one. Preserve state, then restore from a known-good backup."),
+				prohibition("checksum.no_reindex", model.ActionReindex,
+					"REINDEX rewrites index pages over corrupt data — it destroys evidence and can propagate the damage. Preserve state, then restore from a known-good backup."),
+			),
 		})
 	}
 	if settingParam(c, "ignore_checksum_failure") == "on" {
@@ -1687,9 +1733,11 @@ func replicationSlotRisk(c *model.Context, add func(model.Finding)) {
 			Title:       fmt.Sprintf("Inactive replication slot %q pinning %s of WAL", s.Name, humanBytes(s.RetainedBytes)),
 			Detail:      "An inactive replication slot holds back WAL removal from its restart point. The retained WAL grows until the slot's consumer reconnects or the slot is dropped — a classic way to fill the data disk and take the primary down.",
 			Evidence:    ev,
-			Remediation: fmt.Sprintf("If the standby/subscriber is gone for good, drop it: SELECT pg_drop_replication_slot('%s'). If it should be connected, restart its consumer. Set max_slot_wal_keep_size to cap the retention.", s.Name),
+			Remediation: fmt.Sprintf("First find the slot's consumer: if it should be connected, restart it, and set max_slot_wal_keep_size to cap retention. Only once you've confirmed no standby or subscriber still depends on it, drop it: SELECT pg_drop_replication_slot('%s').", s.Name),
 			Impact:      impact(model.DimRisk, score, humanBytes(s.RetainedBytes)+" WAL retained", "pg_replication_slots"),
 			Confidence:  0.9,
+			Safety: safety(prohibition("replication_slot.live_consumer", model.ActionDropReplicationSlot,
+				"Dropping a slot a live standby or logical subscriber still depends on permanently breaks its replication and forces a full resync. Confirm the consumer is truly gone before pg_drop_replication_slot.")),
 		})
 	}
 }

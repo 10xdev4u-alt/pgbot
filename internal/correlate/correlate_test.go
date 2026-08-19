@@ -222,6 +222,38 @@ func TestSort_catalogFirstInconclusiveLast(t *testing.T) {
 	}
 }
 
+// TestSafety_correlateGuards asserts every correlation entry carries a structured
+// drop guard, keyed on a stable ID — including the catalog_proven redundant entry,
+// which must carry the per-node/INCLUDE guard (Step 5) that lives on the finding.
+func TestSafety_correlateGuards(t *testing.T) {
+	c := ctxWith([]model.IndexStat{
+		{Schema: "public", Table: "t", Name: "plain", Method: "btree", Columns: []string{"a"}, Bytes: 1 << 21},
+		{Schema: "public", Table: "t", Name: "gin", Method: "gin", Columns: []string{"tags"}, Bytes: 1 << 21},
+	}, func(c *model.Context) {
+		c.Indexes.Redundant = []model.RedundantIndex{{Schema: "public", Table: "t", Name: "dup", CoveredBy: "cov"}}
+	})
+	r := Build(c, nil)
+	check := func(name, guardID, kind string) {
+		ix := find(r, name)
+		if ix == nil || ix.Safety == nil || len(ix.Safety.BlockingCaveats) == 0 {
+			t.Fatalf("%s is missing a structured safety guard: %+v", name, ix)
+		}
+		g := ix.Safety.BlockingCaveats[0]
+		if g.ID != guardID {
+			t.Errorf("%s guard id = %q, want %q", name, g.ID, guardID)
+		}
+		if g.Action != model.ActionDropIndex {
+			t.Errorf("%s guard action = %q, want DROP INDEX", name, g.Action)
+		}
+		if g.Kind != kind {
+			t.Errorf("%s guard kind = %q, want %q", name, g.Kind, kind)
+		}
+	}
+	check("plain", "correlate.needs_code_check", model.GuardPrecondition)
+	check("gin", "correlate.inconclusive", model.GuardProhibition)
+	check("dup", "correlate.redundant_covering", model.GuardPrecondition)
+}
+
 func contains(ss []string, s string) bool {
 	for _, x := range ss {
 		if x == s {

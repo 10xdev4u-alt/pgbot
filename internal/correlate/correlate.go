@@ -87,7 +87,11 @@ type IndexReport struct {
 	InconclusiveIf string   `json:"inconclusive_if,omitempty"`
 
 	// DoNotDrop is set on every inconclusive entry (never on the others).
-	DoNotDrop    bool          `json:"do_not_drop,omitempty"`
+	DoNotDrop bool `json:"do_not_drop,omitempty"`
+	// Safety carries the deterministic drop guard as structured data (the same
+	// contract as model.Finding.Safety) so a consumer of the correlation payload
+	// can't lose it — DROP INDEX is destructive on every entry here.
+	Safety       *model.Safety `json:"safety,omitempty"`
 	PriorVerdict *PriorVerdict `json:"prior_verdict,omitempty"`
 	Note         string        `json:"note,omitempty"`
 }
@@ -152,9 +156,9 @@ func Build(c *model.Context, verdicts map[string]PriorVerdict) Report {
 		ir := base(ix, winDays, resetAt)
 		switch {
 		case invalid[k] != "":
-			markCatalog(&ir, "invalid index (indisvalid = false — likely a failed CREATE INDEX CONCURRENTLY); provable from the catalog alone, no code check needed")
+			markCatalog(&ir, "invalid index (indisvalid = false — likely a failed CREATE INDEX CONCURRENTLY); provable from the catalog alone, no code check needed", invalidSafetyGuard())
 		case redundant[k].CoveredBy != "":
-			markCatalog(&ir, redundantReason(redundant[k]))
+			markCatalog(&ir, redundantReason(redundant[k]), redundantSafety(redundant[k]))
 		default:
 			classifyStats(&ir, r.ColdWindow, winDays)
 		}
@@ -172,7 +176,7 @@ func Build(c *model.Context, verdicts map[string]PriorVerdict) Report {
 		if s, ok := stByKey[k]; ok {
 			fillFromStat(&ir, s)
 		}
-		markCatalog(&ir, redundantReason(rd))
+		markCatalog(&ir, redundantReason(rd), redundantSafety(rd))
 		attachVerdict(&ir, verdicts, k, winDays)
 		out = append(out, ir)
 	}
@@ -187,7 +191,7 @@ func Build(c *model.Context, verdicts map[string]PriorVerdict) Report {
 		if s, ok := stByKey[k]; ok {
 			fillFromStat(&ir, s)
 		}
-		markCatalog(&ir, "invalid index (indisvalid = false — likely a failed CREATE INDEX CONCURRENTLY); it is not enforcing anything and can be dropped and rebuilt")
+		markCatalog(&ir, "invalid index (indisvalid = false — likely a failed CREATE INDEX CONCURRENTLY); it is not enforcing anything and can be dropped and rebuilt", invalidSafetyGuard())
 		out = append(out, ir)
 	}
 
@@ -215,14 +219,41 @@ func fillFromStat(ir *IndexReport, s model.IndexStat) {
 	}
 }
 
-func markCatalog(ir *IndexReport, reason string) {
+func markCatalog(ir *IndexReport, reason string, guards ...model.SafetyGuard) {
 	ir.Confidence = CatalogProven
 	ir.Reason = reason
+	ir.Safety = &model.Safety{BlockingCaveats: guards}
+}
+
+// guardProhibition / guardPrecondition mirror findings' helpers — DROP INDEX is
+// destructive on every correlation entry, so each carries a structured guard.
+func guardProhibition(id, action, text string) model.SafetyGuard {
+	return model.SafetyGuard{ID: id, Kind: model.GuardProhibition, Action: action, Text: text}
+}
+
+func guardPrecondition(id, action, text, verify string) model.SafetyGuard {
+	return model.SafetyGuard{ID: id, Kind: model.GuardPrecondition, Action: action, Text: text, Verify: &verify}
 }
 
 func redundantReason(rd model.RedundantIndex) string {
 	return fmt.Sprintf("redundant: its columns are a leading prefix of (or identical to) %s, "+
 		"which already serves these lookups; provable from the catalog alone", rd.CoveredBy)
+}
+
+// redundantSafety is the drop guard for a redundant index. Redundancy is a catalog
+// fact, but "prefix" can hide a difference the covering index doesn't actually
+// cover (extra INCLUDE columns, a different opclass/collation), and index CHOICE is
+// per-node — so the covering index must be confirmed before the drop.
+func redundantSafety(rd model.RedundantIndex) model.SafetyGuard {
+	return guardPrecondition("correlate.redundant_covering", model.ActionDropIndex,
+		"A leading-prefix match can hide a difference the covering index does not cover (extra INCLUDE columns, a different opclass or collation), and index choice is per-node.",
+		fmt.Sprintf("the covering index (%s) has the same INCLUDE columns, opclass, and collation, and is the one used on any replicas, then DROP INDEX CONCURRENTLY", rd.CoveredBy))
+}
+
+func invalidSafetyGuard() model.SafetyGuard {
+	return guardPrecondition("correlate.invalid_no_build", model.ActionDropIndex,
+		"An invalid index is likely a stopped CREATE INDEX CONCURRENTLY, but a build may still be running.",
+		"no CREATE INDEX build is running, then DROP INDEX CONCURRENTLY and rebuild")
 }
 
 // classifyStats grades a zero-scan index that is neither invalid nor redundant.
@@ -247,6 +278,11 @@ func classifyStats(ir *IndexReport, cold bool, winDays *float64) {
 		ir.IfFound = ifFound
 		ir.IfNotFound = ifNotFound(winDays)
 		ir.InconclusiveIf = inconclusiveIf
+		ir.Safety = &model.Safety{BlockingCaveats: []model.SafetyGuard{guardPrecondition(
+			"correlate.needs_code_check", model.ActionDropIndex,
+			"Zero scans in one window on one node; a code search is only half the evidence.",
+			"the columns are absent from query FILTERS (WHERE/JOIN/ORDER BY/GROUP BY), not just SELECT lists — and that no cron/analytics/BI job or other repository uses it (this covered one repo at one commit)",
+		)}}
 	}
 }
 
@@ -255,6 +291,10 @@ func inconclusive(ir *IndexReport, reason string) {
 	ir.Reason = reason
 	ir.DoNotDrop = true
 	ir.Note = doNotDrop
+	ir.Safety = &model.Safety{BlockingCaveats: []model.SafetyGuard{guardProhibition(
+		"correlate.inconclusive", model.ActionDropIndex,
+		doNotDrop+" "+reason+". An empty code search does not change that.",
+	)}}
 }
 
 func ifNotFound(winDays *float64) string {

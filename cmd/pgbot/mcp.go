@@ -304,6 +304,14 @@ func unusedIndexesTool(ctx context.Context, args json.RawMessage) (string, error
 	if c.Indexes != nil {
 		out["unused"] = c.Indexes.Unused
 	}
+	// Carry the deterministic drop guard structurally — dropping an index is
+	// destructive and the per-node/replica warning must not be lost to a summarizer.
+	for _, f := range c.Findings {
+		if f.ID == "unused_indexes" && f.Safety != nil {
+			out["safety"] = f.Safety
+			break
+		}
+	}
 	b, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
 		return "", err

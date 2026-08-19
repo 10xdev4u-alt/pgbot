@@ -563,6 +563,43 @@ type Settings struct {
 
 // Finding is deterministic, rule-based analysis computed in Go — never by the
 // LLM. The model layer explains and prioritises Findings; it does not create them.
+// SafetyGuard is one machine-actionable guard against a destructive action. An
+// agent about to run Action matches it directly; ID is the stable key tests and
+// consumers branch on (never the Text — wording can improve without breaking a
+// consumer). Kind separates a prohibition (never do this while the state holds;
+// Verify is nil) from a precondition (permitted only after the Verify check passes).
+type SafetyGuard struct {
+	ID     string  `json:"id"`
+	Kind   string  `json:"kind"`   // GuardProhibition | GuardPrecondition
+	Action string  `json:"action"` // one of the Action* constants below
+	Text   string  `json:"text"`   // the sentence a human reads — never the source of truth for machines
+	Verify *string `json:"verify"` // what clears a precondition; nil for a prohibition
+}
+
+// Safety is the structured, guaranteed carrier for a finding's destructive-action
+// guards — deterministic, never model-generated, present in --json / SARIF / MCP
+// and asserted by model-free tests. A non-empty BlockingCaveats IS the "this
+// finding guards a destructive action" signal; there is no separate boolean.
+type Safety struct {
+	BlockingCaveats []SafetyGuard `json:"blocking_caveats"`
+}
+
+// Guard kinds.
+const (
+	GuardProhibition  = "prohibition"  // never do this while the state holds
+	GuardPrecondition = "precondition" // permitted only after Verify passes
+)
+
+// Destructive-action vocabulary — the Action an agent matches a guard on. Defined
+// in one place so a consumer and pgbot agree on the exact strings.
+const (
+	ActionDropIndex           = "DROP INDEX"
+	ActionVacuumFull          = "VACUUM FULL"
+	ActionReindex             = "REINDEX"
+	ActionDropReplicationSlot = "DROP REPLICATION SLOT"
+	ActionAlterColumnType     = "ALTER TABLE ... TYPE"
+)
+
 type Finding struct {
 	ID string `json:"id"` // stable slug, e.g. "unused_indexes"
 	// Object is a STABLE, human-writable identity for suppression keying (B2-0):
@@ -590,6 +627,14 @@ type Finding struct {
 	Confidence float64  `json:"confidence"` // 0.0–1.0; below 0.5 renders as "possible", not an assertion
 	Caveats    []string `json:"caveats,omitempty"`
 	Related    []string `json:"related,omitempty"` // ids of findings that travel with this one (rendered adjacently)
+	// Safety carries the DETERMINISTIC, machine-actionable guards against a
+	// destructive or irreversible action (DROP INDEX, VACUUM FULL, dropping a slot,
+	// a table rewrite). Unlike Caveats (free-form context a summarizing model may
+	// reword away), these are guaranteed present in --json, SARIF, and the MCP
+	// payloads, and asserted by model-free tests keyed on guard ID. Text rendering
+	// is a view over this field, never its origin. nil when the finding guards no
+	// destructive action.
+	Safety *Safety `json:"safety,omitempty"`
 	// Suppression state, set by a matching [[ignore]] rule (B2-2). A suppressed
 	// finding is never DELETED — it stays in --json (so an agent can explain why
 	// it isn't reporting it) and does not affect the exit code. A suppressed

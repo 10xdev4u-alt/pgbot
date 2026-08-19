@@ -98,12 +98,21 @@ func securityScore(f *model.Finding) string {
 	}
 }
 
-// resultMessage is the per-result text: the title, plus the first caveat and the
-// remediation so an alert is actionable without leaving GitHub.
+// resultMessage is the per-result text: the title, the remediation, and — for a
+// destructive-action finding — its structured safety guards, so a DROP INDEX /
+// VACUUM FULL warning is never lost on the way to the GitHub Security tab.
 func resultMessage(f *model.Finding) string {
 	msg := f.Title
 	if f.Remediation != "" {
 		msg += " — " + f.Remediation
+	}
+	if f.Safety != nil {
+		for _, g := range f.Safety.BlockingCaveats {
+			msg += " SAFETY [" + g.Action + "]: " + g.Text
+			if g.Verify != nil {
+				msg += " Only after: " + *g.Verify
+			}
+		}
 	}
 	return msg
 }
