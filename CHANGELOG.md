@@ -7,6 +7,8 @@ separately by `model.SchemaVersion` (currently 1.1.0).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-19
+
 ### Added
 - **Index/code correlation (`pgbot indexes --correlate`, MCP `index_code_correlation`).**
   pgbot grades every unused / redundant / invalid index by how the drop can be
@@ -246,6 +248,7 @@ separately by `model.SchemaVersion` (currently 1.1.0).
   1.25.13, and golang.org/x/text to v0.39.0; `govulncheck` now runs in CI and
   reports no vulnerabilities.
 
+[0.4.0]: https://github.com/pgrundev/pgbot/releases/tag/v0.4.0
 [0.3.3]: https://github.com/pgrundev/pgbot/releases/tag/v0.3.3
 [0.3.2]: https://github.com/pgrundev/pgbot/releases/tag/v0.3.2
 [0.3.1]: https://github.com/pgrundev/pgbot/releases/tag/v0.3.1
