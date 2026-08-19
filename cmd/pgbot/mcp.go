@@ -152,6 +152,38 @@ func pgbotTools() []mcp.Tool {
 			},
 			Handler: explainFindingTool,
 		},
+		{
+			Name: "index_code_correlation",
+			Description: "For each unused / redundant / invalid index, return a confidence level " +
+				"(catalog_proven = safe to drop from the catalog alone; needs_code_check = actionable only with a " +
+				"code search; inconclusive = do NOT drop on this evidence) and, for needs_code_check, the exact " +
+				"identifiers to grep — camelCase, snake_case, PascalCase, CONSTANT_CASE — plus how to read the " +
+				"result: search FILTER positions only (WHERE/JOIN/ORDER BY/GROUP BY), never SELECT lists. pgbot " +
+				"never reads your repository; it tells you what to search for and how to interpret it. Also returns " +
+				"a fingerprint to pass back to record_index_verdict. Read-only.",
+			InputSchema: dsnSchema,
+			Handler:     indexCorrelationTool,
+		},
+		{
+			Name: "record_index_verdict",
+			Description: "Record an agent's code-search verdict for one index (found_in_code | not_found_in_code | " +
+				"inconclusive), keyed by the fingerprint from index_code_correlation. Stored locally so a later run " +
+				"over a longer stats window carries strengthening evidence instead of starting over. No database " +
+				"connection needed — this only writes pgbot's local store.",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"fingerprint":       map[string]any{"type": "string", "description": "Database fingerprint from index_code_correlation."},
+					"index":             map[string]any{"type": "string", "description": "Schema-qualified index, e.g. public.Job_externalIdNormalized_idx."},
+					"verdict":           map[string]any{"type": "string", "description": "found_in_code | not_found_in_code | inconclusive."},
+					"source":            map[string]any{"type": "string", "description": "Optional, e.g. agent_repo_search."},
+					"repo_ref":          map[string]any{"type": "string", "description": "Optional commit sha the search ran against."},
+					"stats_window_days": map[string]any{"type": "number", "description": "Optional: the stats_window_days you saw, so a later run can show the window has grown."},
+				},
+				"required": []string{"fingerprint", "index", "verdict"},
+			},
+			Handler: recordIndexVerdictTool,
+		},
 	}
 }
 

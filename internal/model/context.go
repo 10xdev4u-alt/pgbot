@@ -377,14 +377,18 @@ type RedundantIndex struct {
 }
 
 type IndexStat struct {
-	Schema     string `json:"schema"`
-	Table      string `json:"table"`
-	Name       string `json:"index"`
-	Scans      int64  `json:"scans"`
-	Bytes      int64  `json:"bytes"`
-	Definition string `json:"definition,omitempty"`
-	Partial    bool   `json:"partial,omitempty"`    // has a WHERE predicate — may serve a narrow but critical path
-	Expression bool   `json:"expression,omitempty"` // indexes an expression, not bare columns
+	Schema     string   `json:"schema"`
+	Table      string   `json:"table"`
+	Name       string   `json:"index"`
+	Scans      int64    `json:"scans"`
+	Bytes      int64    `json:"bytes"`
+	Definition string   `json:"definition,omitempty"`
+	Columns    []string `json:"columns,omitempty"`    // bare key columns (empty for a pure-expression index) — feeds code correlation
+	Method     string   `json:"method,omitempty"`     // access method: btree, gin, gist, brin, hash, spgist
+	Unique     bool     `json:"unique,omitempty"`     // enforces uniqueness
+	Primary    bool     `json:"primary,omitempty"`    // the table's primary-key index
+	Partial    bool     `json:"partial,omitempty"`    // has a WHERE predicate — may serve a narrow but critical path
+	Expression bool     `json:"expression,omitempty"` // indexes an expression, not bare columns
 }
 
 // WAL is pg_stat_wal (PG14+), double-sampled.

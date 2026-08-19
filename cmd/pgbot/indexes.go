@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"text/tabwriter"
@@ -13,14 +14,17 @@ import (
 
 // newIndexesCmd — `pgbot indexes`. A focused view of zero-scan indexes: what
 // they cost and, crucially, the replication caveat before anyone drops one.
+// With --correlate it emits the index/code correlation payload (confidence
+// levels + what to grep) instead — pgbot never reads the repo; the agent does.
 func newIndexesCmd() *cobra.Command {
 	var f inspectFlags
+	var doCorrelate bool
 	cmd := &cobra.Command{
 		Use:   "indexes <connection-string>",
 		Short: "List indexes with zero scans in the observed window (and what NOT to drop)",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runIndexes(cmd, args, f)
+			return runIndexes(cmd, args, f, doCorrelate)
 		},
 	}
 	fl := cmd.Flags()
@@ -28,10 +32,12 @@ func newIndexesCmd() *cobra.Command {
 	fl.BoolVar(&f.noStore, "no-store", true, "skip the local baseline store (default for a quick listing)")
 	fl.StringVar(&f.storePath, "store", "", "baseline DB path (default: XDG state dir)")
 	fl.DurationVar(&f.timeout, "timeout", 30*time.Second, "total wall-clock budget for the run (raise it for slow or remote databases)")
+	fl.BoolVar(&doCorrelate, "correlate", false, "emit the index/code correlation payload: confidence levels + identifiers to search for in code (pgbot never reads the repo)")
+	fl.BoolVar(&f.json, "json", false, "JSON output (implies --correlate; the machine-readable correlation payload)")
 	return cmd
 }
 
-func runIndexes(cmd *cobra.Command, args []string, f inspectFlags) error {
+func runIndexes(cmd *cobra.Command, args []string, f inspectFlags, doCorrelate bool) error {
 	connString := firstNonEmpty(argAt(args, 0), os.Getenv("DATABASE_URL"), os.Getenv("PGBOT_DATABASE_URL"))
 	if connString == "" {
 		return fmt.Errorf("no connection string (pass one or set $DATABASE_URL)")
@@ -48,6 +54,23 @@ func runIndexes(cmd *cobra.Command, args []string, f inspectFlags) error {
 	}
 
 	st := render.NewStyler(useColor(f.noColor))
+
+	// --correlate (or --json, which implies it) switches to the correlation
+	// payload. The default listing below is unchanged.
+	if doCorrelate || f.json {
+		rep := buildCorrelation(c, f.storePath)
+		if f.json {
+			b, err := json.MarshalIndent(rep, "", "  ")
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(b))
+			return nil
+		}
+		renderCorrelation(os.Stdout, st, rep)
+		return nil
+	}
+
 	if c.Indexes == nil || len(c.Indexes.Unused) == 0 {
 		fmt.Println(st.Good("✓ no zero-scan indexes in this window"))
 		return nil
