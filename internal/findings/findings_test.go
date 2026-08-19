@@ -101,8 +101,8 @@ func TestColdWindow_suppressesCounterFindings_keepsGauges(t *testing.T) {
 // index_invalid as a critical gauge.
 func TestIndexInvalid_firesCritical(t *testing.T) {
 	c := &model.Context{Schema: &model.SchemaFingerprint{Objects: []model.SchemaObject{
-		{Kind: "index", Identity: "public.orders.orders_uidx", Invalid: true},
-		{Kind: "index", Identity: "public.orders.orders_pkey", Invalid: false}, // valid, must be ignored
+		{Kind: "index", Identity: "public.orders.orders_uidx", Invalid: true, IndexReady: true, IndexLive: true},
+		{Kind: "index", Identity: "public.orders.orders_pkey", Invalid: false, IndexReady: true, IndexLive: true}, // valid, must be ignored
 	}}}
 	f := has(Compute(c), "index_invalid")
 	if f == nil {

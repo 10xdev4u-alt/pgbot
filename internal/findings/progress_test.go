@@ -8,7 +8,7 @@ import (
 
 func TestIndexInvalid_caveatedWhenBuilding(t *testing.T) {
 	schema := &model.SchemaFingerprint{Objects: []model.SchemaObject{
-		{Kind: "index", Identity: "public.orders_idx", Invalid: true},
+		{Kind: "index", Identity: "public.orders_idx", Invalid: true, IndexReady: true, IndexLive: true},
 	}}
 	// No build running → critical, confidence 1.
 	f := has(Compute(&model.Context{Schema: schema}), "index_invalid")

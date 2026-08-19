@@ -24,6 +24,9 @@ type schemaRow struct {
 	Identity   string `db:"identity"`
 	Definition string `db:"definition"`
 	Invalid    bool   `db:"invalid"`
+	Ready      bool   `db:"ready"` // indexes: pg_index.indisready (false → not maintained on writes)
+	Live       bool   `db:"live"`  // indexes: pg_index.indislive (false → being dropped)
+	Bytes      int64  `db:"bytes"` // indexes: pg_relation_size, invalid ones only
 }
 
 func (schemaCollector) Name() string                     { return "schema" }
@@ -48,6 +51,9 @@ func (schemaCollector) Assemble(c *model.Context, _ conn.Capabilities, s sampled
 			Definition:     r.Definition,
 			DefinitionHash: hex.EncodeToString(sum[:8]),
 			Invalid:        r.Invalid,
+			IndexReady:     r.Ready,
+			IndexLive:      r.Live,
+			Bytes:          r.Bytes,
 		})
 	}
 	c.Schema = fp

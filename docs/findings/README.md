@@ -20,7 +20,7 @@ Lost durability, corruption, wraparound, replication — things that end in an o
 - **[fsync_off](fsync_off.md)** · Critical — fsync is off — a crash can irrecoverably corrupt the database
 - **[full_page_writes_off](full_page_writes_off.md)** · Critical — full_page_writes off — a crash can leave torn pages
 - **[ignore_checksum_failure_on](ignore_checksum_failure_on.md)** · Critical — ignore_checksum_failure is on — corrupt pages are returned, not caught
-- **[index_invalid](index_invalid.md)** · Critical — a failed CREATE INDEX CONCURRENTLY left an index that's maintained but never used
+- **[index_invalid](index_invalid.md)** · Critical — a failed CREATE INDEX CONCURRENTLY left an invalid index — critical if it's still maintained on writes, warn if it's failed-build debris
 - **[sync_rep_degraded](sync_rep_degraded.md)** · Critical — fewer synchronous standbys connected than the config requires
 - **[archiving_disabled](archiving_disabled.md)** · Warn — archive_mode is off — no continuous WAL archive for PITR
 - **[connection_saturation](connection_saturation.md)** · Warn — connections approaching max_connections

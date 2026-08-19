@@ -24,6 +24,25 @@ separately by `model.SchemaVersion` (currently 1.1.0).
   independent of `search_path`. When the schema can't be read the bare name is
   used, i.e. the previous behaviour. Covered by an integration test that
   relocates the extension and runs the read-only role against it.
+- **`index_invalid` no longer overstates failed-build debris as critical write
+  overhead (#11).** A `CREATE INDEX CONCURRENTLY` that fails during the build
+  (a duplicate key on a unique build, a timeout, a cancelled session) leaves
+  `indisvalid = false, indisready = false` and a 0-byte relation — an index
+  PostgreSQL **ignores on INSERT/UPDATE**. pgbot graded every invalid index
+  `critical` (impact 85) with the blanket claim "still maintained on every write",
+  ranking that debris above live operational problems. The schema fingerprint
+  now carries `indisready`, `indislive`, and `pg_relation_size` for invalid
+  indexes, and each one is classified: `indisready = true` → maintained on every
+  write, never read → **critical** (unchanged); `indisready = false` →
+  failed-build debris, not maintained on writes → **warn** (impact 45) with
+  cleanup guidance ("the index you meant to have does not exist"), never a
+  write-cost claim; `indislive = false` → being dropped → warn. Evidence lines
+  carry the state and size (`… indisready = false: failed-build debris, NOT
+  maintained on writes (0 B)`), the impact estimate says how many are actually
+  maintained, and the finding page's verify query shows both flags. The
+  in-progress-build downgrade (warn, confidence 0.5, do-not-drop guard) is
+  unchanged. Not a JSON contract change: the classification rides on the
+  existing `severity` / `evidence` / `impact` fields.
 
 ## [0.4.0] - 2026-08-19
 
