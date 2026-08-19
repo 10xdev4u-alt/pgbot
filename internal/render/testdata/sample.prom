@@ -1,9 +1,9 @@
-# HELP pgbot_finding A pgbot finding (1 = present). suppressed="true" means muted by .pgbot.toml.
+# HELP pgbot_finding A pgbot finding (1 = present). suppressed="true" means muted by .pgbot.toml; destructive="true" means it carries a safety guard against a destructive action.
 # TYPE pgbot_finding gauge
-pgbot_finding{database="app",id="fsync_off",severity="critical",dimension="risk",object="setting:fsync",suppressed="false"} 1
-pgbot_finding{database="app",id="unused_indexes",severity="warn",dimension="storage",object="",suppressed="false"} 1
-pgbot_finding{database="app",id="io_timing_off",severity="info",dimension="throughput",object="setting:track_io_timing",suppressed="false"} 1
-pgbot_finding{database="app",id="checksums_disabled",severity="info",dimension="risk",object="setting:data_checksums",suppressed="true"} 1
+pgbot_finding{database="app",id="fsync_off",severity="critical",dimension="risk",object="setting:fsync",suppressed="false",destructive="false"} 1
+pgbot_finding{database="app",id="unused_indexes",severity="warn",dimension="storage",object="",suppressed="false",destructive="false"} 1
+pgbot_finding{database="app",id="io_timing_off",severity="info",dimension="throughput",object="setting:track_io_timing",suppressed="false",destructive="false"} 1
+pgbot_finding{database="app",id="checksums_disabled",severity="info",dimension="risk",object="setting:data_checksums",suppressed="true",destructive="false"} 1
 # HELP pgbot_findings_total Active (unsuppressed) findings by severity.
 # TYPE pgbot_findings_total gauge
 pgbot_findings_total{database="app",severity="critical"} 1

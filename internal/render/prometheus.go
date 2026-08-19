@@ -27,7 +27,7 @@ func Prometheus(w io.Writer, c *model.Context) error {
 // and make promtool (and the textfile collector) reject the file.
 func PrometheusAll(w io.Writer, contexts []*model.Context) error {
 	finding := &promFamily{name: "pgbot_finding", typ: "gauge",
-		help: `A pgbot finding (1 = present). suppressed="true" means muted by .pgbot.toml.`}
+		help: `A pgbot finding (1 = present). suppressed="true" means muted by .pgbot.toml; destructive="true" means it carries a safety guard against a destructive action.`}
 	total := &promFamily{name: "pgbot_findings_total", typ: "gauge",
 		help: "Active (unsuppressed) findings by severity."}
 
@@ -54,8 +54,9 @@ func PrometheusAll(w io.Writer, contexts []*model.Context) error {
 			if !f.Suppressed {
 				counts[f.Severity]++
 			}
-			finding.add(fmt.Sprintf("pgbot_finding{database=%q,id=%q,severity=%q,dimension=%q,object=%q,suppressed=%q} 1",
-				db, esc(f.ID), esc(f.Severity), esc(f.Impact.Dimension), esc(f.Object), boolLabel(f.Suppressed)))
+			finding.add(fmt.Sprintf("pgbot_finding{database=%q,id=%q,severity=%q,dimension=%q,object=%q,suppressed=%q,destructive=%q} 1",
+				db, esc(f.ID), esc(f.Severity), esc(f.Impact.Dimension), esc(f.Object), boolLabel(f.Suppressed),
+				boolLabel(f.Safety != nil && len(f.Safety.BlockingCaveats) > 0)))
 		}
 		for _, sev := range []string{"critical", "warn", "info"} {
 			total.add(fmt.Sprintf("pgbot_findings_total{database=%q,severity=%q} %d", db, sev, counts[sev]))

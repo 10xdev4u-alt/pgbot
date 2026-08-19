@@ -106,13 +106,8 @@ func resultMessage(f *model.Finding) string {
 	if f.Remediation != "" {
 		msg += " — " + f.Remediation
 	}
-	if f.Safety != nil {
-		for _, g := range f.Safety.BlockingCaveats {
-			msg += " SAFETY [" + g.Action + "]: " + g.Text
-			if g.Verify != nil {
-				msg += " Only after: " + *g.Verify
-			}
-		}
+	if s := safetyText(f); s != "" {
+		msg += " " + s
 	}
 	return msg
 }

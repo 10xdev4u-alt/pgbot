@@ -16,8 +16,10 @@ import (
 
 // B8 MCP tools. Every one either produces no findings (explain_plan, schema_of,
 // explain_finding) or reuses a path that already honors B2 suppression
-// (compare_to_baseline over stored snapshots); responses carry exactness/caveat
-// labels so an agent can't strip the "estimate, not measurement" qualifier.
+// (compare_to_baseline over stored snapshots). Responses carry exactness/caveat
+// labels in the PAYLOAD: the guarantee is that the "estimate, not measurement"
+// qualifier is present in the response, not that the consuming model preserves it
+// — a third-party client can still reword or drop it on its side.
 
 // explainPlanTool runs a PLAIN EXPLAIN (the plan-only form) of an agent-supplied query
 // through the same guard as the advisor: SanitizeSelect (single plain SELECT, no

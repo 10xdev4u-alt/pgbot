@@ -159,6 +159,23 @@ func renderSafetyGuards(b *strings.Builder, st styler, f model.Finding, width in
 	}
 }
 
+// safetyText renders a finding's destructive-action guards as one plain-text line,
+// for the text-message surfaces (SARIF, JUnit). Empty when there are no guards.
+func safetyText(f *model.Finding) string {
+	if f == nil || f.Safety == nil || len(f.Safety.BlockingCaveats) == 0 {
+		return ""
+	}
+	var parts []string
+	for _, g := range f.Safety.BlockingCaveats {
+		s := "SAFETY [" + g.Action + "]: " + g.Text
+		if g.Verify != nil {
+			s += " Only after: " + *g.Verify
+		}
+		parts = append(parts, s)
+	}
+	return strings.Join(parts, " ")
+}
+
 // computeHealthScore is a coarse 0–100 grade: full marks minus a penalty per
 // finding by severity. It's an at-a-glance indicator, not a precise metric.
 // suppReason renders an ignore rule's reason, or a stand-in when none was given.
