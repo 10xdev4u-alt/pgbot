@@ -1,6 +1,6 @@
 ---
 name: postgres-diagnostics
-description: Use when someone reports a slow, bloated, or unhealthy PostgreSQL database, or asks what to optimize, drop, vacuum, index, or tune. Runs read-only pgbot diagnostics and turns them into a prioritized, caveat-aware plan. Do not use for writing SQL, migrations, or app logic.
+description: Diagnose PostgreSQL health and performance using the read-only pgbot tool. Use for slow databases, expensive queries, unused indexes, disk usage, bloat, autovacuum, vacuum health, and configuration questions.
 ---
 
 # PostgreSQL diagnostics with pgbot
@@ -61,6 +61,10 @@ Add `--timeout 60s` for large or remote databases.
    statement to run themselves.
 6. **Hedge low confidence.** A finding below 0.5 confidence is a possibility
    ("may", "possibly"), not an assertion.
+7. **Label the evidence.** Keep three categories visibly distinct in your
+   answer: findings proven by pgbot's data, recommendations that still need
+   review (of code, replicas, or workload), and conclusions blocked by missing
+   statistics or permissions.
 
 ## Output shape
 
