@@ -468,8 +468,15 @@ available to the agent.
 **Pair it with the skill.** MCP gives the agent the *tools*; the
 [`postgres-diagnostics` skill](skills/postgres-diagnostics/SKILL.md) gives it the
 *playbook* — respect caveats, never `EXPLAIN ANALYZE`, prioritize by impact,
-never write. Drop it in `~/.claude/skills/` (see [`skills/`](skills/)) and your
-agent asks the right pgbot command and reads the results the way pgbot intends.
+never write. One command installs it into Claude Code, Cursor, or Codex:
+
+```bash
+npx skills add pgrundev/pgbot
+```
+
+(or `curl -fsSL https://pgbot.dev/skill | sh` — see [`skills/`](skills/)), and
+your agent asks the right pgbot command and reads the results the way pgbot
+intends.
 
 ### Claude Code plugin
 

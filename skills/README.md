@@ -13,9 +13,17 @@ Turns "why is my database slow / what should I optimize / which indexes can I
 drop" into a prioritized, caveat-aware plan backed by pgbot's deterministic
 findings.
 
-### Install (Claude Code / Claude Desktop, Skills-aware clients)
+### Install
 
-One-liner — same shape as the pgbot binary installer:
+Works in **Claude Code, Cursor, and Codex** (and any Skills-aware agent). The
+[`skills` CLI](https://github.com/vercel-labs/skills) detects which agents you
+use and installs to the right place for each:
+
+```bash
+npx skills add pgrundev/pgbot
+```
+
+Or the pgbot-style one-liner (Claude Code / Skills-aware clients):
 
 ```bash
 curl -fsSL https://pgbot.dev/skill | sh
