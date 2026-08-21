@@ -1724,12 +1724,80 @@ func archiverFailedDelta(c *model.Context) int64 {
 // archiveStallThreshold is max(archive_timeout × 3, 1h).
 func archiveStallThreshold(c *model.Context) time.Duration {
 	base := time.Duration(archiveStallFloorS) * time.Second
-	if secs, err := strconv.Atoi(strings.TrimSpace(settingParam(c, "archive_timeout"))); err == nil && secs > 0 {
-		if t := time.Duration(secs) * 3 * time.Second; t > base {
-			base = t
+	// current_setting('archive_timeout') returns a unit-suffixed string ("5min",
+	// "1h", "0"), not a bare integer — strconv.Atoi always failed on it, so this
+	// branch was dead and the threshold silently stayed at the 1h floor. Parse
+	// the real duration so a long archive_timeout actually widens the window.
+	if t, ok := parsePGDuration(settingParam(c, "archive_timeout")); ok && t > 0 {
+		if scaled := 3 * t; scaled > base {
+			base = scaled
 		}
 	}
 	return base
+}
+
+// parsePGDuration parses a PostgreSQL time-unit GUC value as returned by
+// current_setting(): an optional sign, then one or more "<number><unit>" tokens
+// ("30s", "5min", "1h 30min", "0"). Units follow the server's own table
+// (us/ms/s/min/h/d). It returns ok=false for empty or unparseable input, which
+// callers treat as "use the default" rather than an error.
+func parsePGDuration(s string) (time.Duration, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, false
+	}
+	neg := false
+	if s[0] == '-' {
+		neg, s = true, s[1:]
+	} else if s[0] == '+' {
+		s = s[1:]
+	}
+	unit := map[string]time.Duration{
+		"us": time.Microsecond, "ms": time.Millisecond, "s": time.Second,
+		"min": time.Minute, "h": time.Hour, "d": 24 * time.Hour,
+	}
+	var total time.Duration
+	matched := false
+	for len(s) > 0 {
+		// Consume the leading digits.
+		i := 0
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			i++
+		}
+		if i == 0 {
+			return 0, false // no digits where a number was expected
+		}
+		n, err := strconv.ParseInt(s[:i], 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		s = s[i:]
+		// Consume the unit letters that follow. A bare number with no unit (the
+		// server prints "0" for a disabled time GUC) is taken as seconds, the base
+		// unit for these settings.
+		j := 0
+		for j < len(s) && (s[j] < '0' || s[j] > '9') && s[j] != ' ' && s[j] != '\t' {
+			j++
+		}
+		u := time.Second
+		if unitStr := s[:j]; unitStr != "" {
+			var ok bool
+			u, ok = unit[unitStr]
+			if !ok {
+				return 0, false
+			}
+		}
+		total += time.Duration(n) * u
+		matched = true
+		s = strings.TrimLeft(s[j:], " \t")
+	}
+	if !matched {
+		return 0, false
+	}
+	if neg {
+		total = -total
+	}
+	return total, true
 }
 
 // replicationSlotRisk flags an inactive replication slot that is holding back WAL
