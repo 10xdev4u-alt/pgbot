@@ -2320,11 +2320,14 @@ func orNone(s string) string {
 	return s
 }
 
+// truncate shortens s to n runes (not bytes) so a multibyte character is never
+// split into invalid UTF-8 — a byte slice here would corrupt the JSON output.
 func truncate(s string, n int) string {
-	if len(s) <= n {
+	r := []rune(s)
+	if len(r) <= n || n < 1 {
 		return s
 	}
-	return s[:n-1] + "…"
+	return string(r[:n-1]) + "…"
 }
 
 // ioEvidence names the top specific IO wait event for the finding's evidence.
