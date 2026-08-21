@@ -1,3 +1,7 @@
+<p align="center">
+  <a href="https://pgbot.dev"><img src="docs/img/logo.png" alt="pgbot logo" width="110"></a>
+</p>
+
 <h1 align="center">pgbot</h1>
 
 <p align="center">
