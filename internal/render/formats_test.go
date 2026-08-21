@@ -179,6 +179,26 @@ func TestPrometheus_golden(t *testing.T) {
 	}
 }
 
+// A label value containing a quote or backslash must be escaped exactly once.
+// The old code ran esc() and then %q, double-escaping: a"b came out as a\\\"b,
+// which Prometheus parses as a different (wrong) label value.
+func TestPrometheus_labelEscaping(t *testing.T) {
+	c := sampleContextForFormats()
+	c.Server.Database = `a"b\c`
+	var buf bytes.Buffer
+	if err := Prometheus(&buf, c); err != nil {
+		t.Fatal(err)
+	}
+	s := buf.String()
+	want := `database="a\"b\\c"`
+	if !strings.Contains(s, want) {
+		t.Errorf("label must be single-escaped %s, got:\n%s", want, s)
+	}
+	if strings.Contains(s, `\\\"`) {
+		t.Errorf("double-escaped label value found:\n%s", s)
+	}
+}
+
 // Under --all-databases the exposition must stay valid: one # HELP/# TYPE per
 // metric name across every database, with each database's samples grouped beneath
 // (a per-database block would repeat the headers and the textfile collector would
