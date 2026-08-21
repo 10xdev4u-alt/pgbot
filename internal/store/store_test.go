@@ -278,3 +278,77 @@ func TestTrendAndSameHourYesterday(t *testing.T) {
 		t.Errorf("wrong yesterday snapshot: %+v", snap.Context.Health)
 	}
 }
+
+// enforceSizeCap must actually shrink the file. DELETE alone never reclaims
+// space in a WAL-mode SQLite database, so without the VACUUM the page count
+// stays above the cap forever and every later run evicts another 10% — eating
+// the whole history. This test lowers the cap, pushes the file over it with
+// direct inserts (bypassing Save's prune), then calls enforceSizeCap once and
+// asserts the eviction round both removes rows AND reclaims the space.
+func TestEnforceSizeCap_evictsAndVacuums(t *testing.T) {
+	st := tempStore(t)
+	fp := "cap"
+	now := time.Now().UTC()
+
+	// Lower the cap for the test and restore it after.
+	saved := maxBytes
+	maxBytes = 96 << 10 // 96 KiB
+	t.Cleanup(func() { maxBytes = saved })
+
+	// Insert rows directly (Save would prune on every call). Each carries a
+	// padded context_json so a handful of rows push the file over the cap.
+	pad := make([]byte, 8<<10) // 8 KiB of padding per row
+	for i := range pad {
+		pad[i] = 'x'
+	}
+	blob := `{"pad":"` + string(pad) + `"}`
+	for i := 0; i < 30; i++ {
+		if _, err := st.db.Exec(
+			`INSERT INTO snapshots (fingerprint, collected_at, schema_version, context_json) VALUES (?, ?, ?, ?)`,
+			fp, now.Add(time.Duration(i)*time.Minute).Unix(), model.SchemaVersion, blob); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	fileSize := func() int64 {
+		var pageCount, pageSize int64
+		if err := st.db.QueryRow(`PRAGMA page_count`).Scan(&pageCount); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.db.QueryRow(`PRAGMA page_size`).Scan(&pageSize); err != nil {
+			t.Fatal(err)
+		}
+		return pageCount * pageSize
+	}
+	before := fileSize()
+	if before <= maxBytes {
+		t.Fatalf("test setup: file should start over the cap, got %d <= %d", before, maxBytes)
+	}
+
+	if err := st.enforceSizeCap(); err != nil {
+		t.Fatal(err)
+	}
+
+	after := fileSize()
+	// The regression this guards: DELETE alone never shrinks a WAL-mode file, so
+	// the old code left `after == before` and every later run evicted again. The
+	// fix VACUUMs, so the file must actually get smaller. (Whether it lands at or
+	// just under the cap depends on SQLite's 4 KB page granularity; convergence
+	// to the cap happens across successive Saves. What must never happen is the
+	// file staying the same size after an eviction round.)
+	if after >= before {
+		t.Errorf("file did not shrink after eviction+VACUUM: before=%d after=%d (space not reclaimed)", before, after)
+	}
+
+	// Rows were evicted oldest-first, and some remain.
+	var n int
+	if err := st.db.QueryRow(`SELECT count(*) FROM snapshots WHERE fingerprint=?`, fp).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n == 0 {
+		t.Error("eviction removed every row — the cap loop over-ran")
+	}
+	if n >= 30 {
+		t.Errorf("expected some rows evicted, still have %d", n)
+	}
+}
