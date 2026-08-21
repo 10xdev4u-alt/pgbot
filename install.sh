@@ -67,7 +67,12 @@ fetch "$base/checksums.txt" "$tmp/checksums.txt" || die "checksums download fail
 # checksums.txt for the hash comparison.
 require_sig="${PGBOT_REQUIRE_SIGNATURE:-0}"
 # Identity of pgbot's release workflow (keyless signing, GitHub Actions OIDC).
-cert_id_re="^https://github.com/${REPO}/"
+# Pin to the release workflow itself, not the whole repo: a bare
+# "^https://github.com/<repo>/" would accept a signature minted by ANY workflow
+# in the repo that holds id-token: write. The release workflow verifies its own
+# output against this exact identity (release.yml), so the installer holds
+# itself to the same standard.
+cert_id_re="^https://github.com/${REPO}/\.github/workflows/release\.yml"
 oidc_issuer="https://token.actions.githubusercontent.com"
 if have cosign; then
   if fetch "$base/checksums.txt.cosign.bundle" "$tmp/checksums.txt.cosign.bundle" 2>/dev/null; then
