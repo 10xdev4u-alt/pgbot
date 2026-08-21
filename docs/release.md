@@ -11,6 +11,14 @@ install from each channel as a stranger would (`npx`, `brew`, `docker run`,
 Before tagging: `CHANGELOG.md` has the section, `scripts/gate.sh` is green, and
 `gh run list --branch main` shows CI green on the commit you're tagging.
 
+After the release is green, move the floating GitHub Action major tag so
+`uses: pgrundev/pgbot@v1` picks up the new root `action.yml`
+(`release.yml` only fires on full `vX.Y.Z` tags, so this never cuts a release):
+
+```sh
+git tag -f v1 vX.Y.Z && git push -f origin v1
+```
+
 ## Channels and the secret each one needs
 
 | Channel | Needs | If missing |

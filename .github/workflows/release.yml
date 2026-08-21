@@ -2,7 +2,9 @@ name: release
 
 on:
   push:
-    tags: ["v*"]
+    # Full semver only: the floating action major tag (v1) must NOT cut a
+    # release — it just tracks the latest root action.yml for `uses:` pins.
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
 
 permissions:
   contents: write # create the GitHub Release + upload assets

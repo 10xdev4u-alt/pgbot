@@ -8,6 +8,11 @@ separately by `model.SchemaVersion` (currently 1.1.0).
 ## [Unreleased]
 
 ### Added
+- **`uses: pgrundev/pgbot@v1` now actually resolves.** The composite GitHub
+  Action moved from `.github/actions/pgbot/` to the repository root — the
+  location the `owner/repo@tag` syntax (and the Marketplace) requires — and a
+  floating `v1` tag tracks it. `release.yml` now triggers only on full
+  `vX.Y.Z` tags so the major tag can never cut a release by accident.
 - **`pgbot init` — guided setup that never touches the database.** Generates
   the canonical read-only role SQL (`CREATE ROLE … LOGIN`, `GRANT pg_monitor`,
   `GRANT CONNECT`) plus the provider-appropriate `pg_stat_statements` step —

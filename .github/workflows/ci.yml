@@ -74,7 +74,7 @@ jobs:
             -c "CREATE EXTENSION pg_stat_statements;" \
             -c "CREATE ROLE pgbot_ro LOGIN PASSWORD 'ro'; GRANT pg_monitor TO pgbot_ro; GRANT CONNECT ON DATABASE postgres TO pgbot_ro;"
       - name: run the composite action (fail-on=none so findings don't fail the smoke)
-        uses: ./.github/actions/pgbot
+        uses: ./
         with:
           dsn: postgres://pgbot_ro:ro@127.0.0.1:5432/postgres
           format: sarif
@@ -86,7 +86,7 @@ jobs:
       # D3-3: exercise the schema profile through the action, capture a base
       # report, then re-run with base-report — the migration-PR wiring end to end.
       - name: action profile=schema → base report
-        uses: ./.github/actions/pgbot
+        uses: ./
         with:
           dsn: postgres://pgbot_ro:ro@127.0.0.1:5432/postgres
           profile: schema
@@ -95,7 +95,7 @@ jobs:
           upload-sarif: "false"
       - run: cp pgbot-report.json base.json
       - name: action profile=schema with --fail-on-new (no change → passes)
-        uses: ./.github/actions/pgbot
+        uses: ./
         with:
           dsn: postgres://pgbot_ro:ro@127.0.0.1:5432/postgres
           profile: schema
@@ -119,7 +119,7 @@ jobs:
           docker exec pg psql -U postgres -q \
             -c "CREATE ROLE pgbot_ro LOGIN PASSWORD 'ro'; GRANT pg_monitor TO pgbot_ro; GRANT CONNECT ON DATABASE postgres TO pgbot_ro;"
       - name: run the action with no pgbot on PATH (default version=latest)
-        uses: ./.github/actions/pgbot
+        uses: ./
         with:
           dsn: postgres://pgbot_ro:ro@127.0.0.1:5432/postgres
           format: text
