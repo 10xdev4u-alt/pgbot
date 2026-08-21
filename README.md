@@ -158,6 +158,7 @@ or `$PGBOT_DATABASE_URL`.
 |---|---|
 | `inspect` | the full findings-first health report (`--full` for the section tables) |
 | `lint` | schema-only check, safe on an empty CI database (`inspect --profile=schema --no-store`) |
+| `init` | generate the read-only role setup SQL — nothing is executed (`--verify` checks an existing role) |
 | `diff` | compare two baseline snapshots offline |
 | `indexes` · `queries` · `tables` · `vacuum` | drill into one signal |
 | `advise` | planner-validated missing-index suggestions (needs hypopg) |
@@ -247,6 +248,15 @@ grants:
 CREATE ROLE pgbot_ro LOGIN PASSWORD '...';
 GRANT pg_monitor TO pgbot_ro;
 GRANT CONNECT ON DATABASE yourdb TO pgbot_ro;
+```
+
+Or have `pgbot init` write exactly this for you — tailored to your provider and
+database name, including the provider-specific `pg_stat_statements` step.
+pgbot itself executes none of it (pgbot never writes); you review and run it:
+
+```sh
+pgbot init "postgres://admin@host:5432/db" | psql "postgres://admin@host:5432/db"
+pgbot init --verify "postgres://pgbot_ro:…@host:5432/db"   # confirm the role works
 ```
 
 Without `pg_monitor`, a non-superuser sees only its own sessions in

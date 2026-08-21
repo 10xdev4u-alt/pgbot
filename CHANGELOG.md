@@ -7,6 +7,20 @@ separately by `model.SchemaVersion` (currently 1.1.0).
 
 ## [Unreleased]
 
+### Added
+- **`pgbot init` — guided setup that never touches the database.** Generates
+  the canonical read-only role SQL (`CREATE ROLE … LOGIN`, `GRANT pg_monitor`,
+  `GRANT CONNECT`) plus the provider-appropriate `pg_stat_statements` step —
+  executable where the extension is preloaded (Supabase, Neon), commented
+  instructions where preload comes first (RDS, Aurora, Cloud SQL, Azure,
+  self-hosted). With a connection string it detects the database name and
+  provider; the output is pipe-safe by contract (every line is a statement, a
+  `--` comment, or blank), so `pgbot init | psql "$ADMIN_DSN"` is the intended
+  path — pgbot itself executes nothing. `pgbot init --verify` connects as the
+  monitoring role and checks the prerequisites (pg_monitor critical,
+  pg_stat_statements warn with the provider fix, standby per-node-counter
+  note), exiting non-zero when the critical one is missing.
+
 ## [0.4.1] - 2026-08-19
 
 ### Fixed
