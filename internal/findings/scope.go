@@ -16,7 +16,7 @@ var clusterWide = map[string]bool{
 	// settings
 	"fsync_off": true, "full_page_writes_off": true, "autovacuum_off": true,
 	"random_page_cost_high": true, "work_mem_overcommit": true, "statement_timeout_unset": true,
-	"io_timing_off": true, "work_mem_low": true, "checkpoints_forced": true,
+	"io_timing_off": true, "checkpoints_forced": true,
 	"connections_overprovisioned": true, "checksums_disabled": true, "ignore_checksum_failure_on": true,
 	// cluster activity (pg_stat_activity)
 	"blocking_chains": true, "idle_in_transaction": true, "long_running_transaction": true,
@@ -29,6 +29,13 @@ var clusterWide = map[string]bool{
 	"archiving_failing": true, "archiving_stalled": true, "archiving_disabled": true,
 	"sync_rep_degraded": true, "replica_lag_time": true, "replica_disconnected": true,
 	"replication_slot_inactive": true, "subscription_worker_down": true,
+	// checksum failures read ALL of pg_stat_database (its own SQL says so), so the
+	// finding is identical from every database — report it once, not N times.
+	"checksum_failures": true,
+	// NOTE: work_mem_low is deliberately NOT here. It is driven by THIS
+	// database's pg_stat_database.temp_bytes rate (health.sql filters on
+	// current_database()), so a second database that spills genuinely needs its
+	// own finding — deduping it against the first database would hide that.
 	// NOTE: the pg_stat_statements findings (query_slowdown, pgss_entries_evicted,
 	// pg_stat_statements_missing) are deliberately NOT here. The extension is
 	// created PER DATABASE, so whether it's available differs per database — a
