@@ -134,6 +134,28 @@ func TestJUnit_failOnCritical(t *testing.T) {
 	}
 }
 
+// Under --fail-on-new a Preexisting finding must not fail the test pane: the
+// exit code ignores it, so the pane must agree. It stays visible as a passing
+// testcase (unlike SARIF, which omits it entirely).
+func TestJUnit_preexistingNotAFailure(t *testing.T) {
+	c := sampleContextForFormats()
+	c.Findings[0].Preexisting = true // the critical fsync_off is old news
+	var buf bytes.Buffer
+	if err := JUnit(&buf, c, "critical"); err != nil {
+		t.Fatal(err)
+	}
+	s := buf.String()
+	if !strings.Contains(s, `failures="0"`) {
+		t.Errorf("a preexisting finding must not fail the pane:\n%s", s)
+	}
+	if !strings.Contains(s, `name="fsync_off setting:fsync"`) {
+		t.Errorf("the preexisting finding must stay visible as a testcase:\n%s", s)
+	}
+	if strings.Contains(s, "<failure") {
+		t.Errorf("no <failure> element expected when the only gated finding is preexisting:\n%s", s)
+	}
+}
+
 func TestPrometheus_golden(t *testing.T) {
 	c := sampleContextForFormats()
 	// add a gauge source so a metric line is exercised
