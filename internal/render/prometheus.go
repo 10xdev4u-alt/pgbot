@@ -54,12 +54,12 @@ func PrometheusAll(w io.Writer, contexts []*model.Context) error {
 			if !f.Suppressed {
 				counts[f.Severity]++
 			}
-			finding.add(fmt.Sprintf("pgbot_finding{database=%q,id=%q,severity=%q,dimension=%q,object=%q,suppressed=%q,destructive=%q} 1",
+			finding.add(fmt.Sprintf("pgbot_finding{database=\"%s\",id=\"%s\",severity=\"%s\",dimension=\"%s\",object=\"%s\",suppressed=\"%s\",destructive=\"%s\"} 1",
 				db, esc(f.ID), esc(f.Severity), esc(f.Impact.Dimension), esc(f.Object), boolLabel(f.Suppressed),
 				boolLabel(f.Safety != nil && len(f.Safety.BlockingCaveats) > 0)))
 		}
 		for _, sev := range []string{"critical", "warn", "info"} {
-			total.add(fmt.Sprintf("pgbot_findings_total{database=%q,severity=%q} %d", db, sev, counts[sev]))
+			total.add(fmt.Sprintf("pgbot_findings_total{database=\"%s\",severity=\"%s\"} %d", db, sev, counts[sev]))
 		}
 
 		// Underlying gauges — the numbers behind the findings, so alerts can trigger
@@ -87,7 +87,7 @@ func PrometheusAll(w io.Writer, contexts []*model.Context) error {
 					if name == "" {
 						name = rep.ClientAddr
 					}
-					replicaLag.add(fmt.Sprintf("pgbot_replica_lag_seconds{database=%q,replica=%q} %g", db, esc(name), *rep.ReplayLagSec))
+					replicaLag.add(fmt.Sprintf("pgbot_replica_lag_seconds{database=\"%s\",replica=\"%s\"} %g", db, esc(name), *rep.ReplayLagSec))
 				}
 			}
 		}
@@ -110,9 +110,10 @@ type promFamily struct {
 
 func (f *promFamily) add(sample string) { f.samples = append(f.samples, sample) }
 
-// set writes one plain database-labelled gauge sample.
+// set writes one plain database-labelled gauge sample. db arrives already
+// escaped by esc; wrapping it in %q would escape it a second time.
 func (f *promFamily) set(db string, v float64) {
-	f.add(fmt.Sprintf("%s{database=%q} %g", f.name, db, v))
+	f.add(fmt.Sprintf("%s{database=\"%s\"} %g", f.name, db, v))
 }
 
 // gauge writes a sample from an optional float pointer (skipped when nil).
