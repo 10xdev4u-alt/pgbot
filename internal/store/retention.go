@@ -12,8 +12,11 @@ import (
 const (
 	keepAllFor    = 7 * 24 * time.Hour
 	keepRollupFor = 90 * 24 * time.Hour
-	maxBytes      = 100 << 20
 )
+
+// maxBytes is a var (not const) only so the eviction test can lower the cap and
+// drive enforceSizeCap without writing 100 MB of snapshots.
+var maxBytes int64 = 100 << 20
 
 // prune enforces the policy for one fingerprint (called after each Save).
 func (s *Store) prune(fingerprint string) error {
@@ -44,23 +47,38 @@ func (s *Store) prune(fingerprint string) error {
 }
 
 func (s *Store) enforceSizeCap() error {
-	var pageCount, pageSize int64
-	if err := s.db.QueryRow(`PRAGMA page_count`).Scan(&pageCount); err != nil {
-		return err
+	// DELETE alone never shrinks a WAL-mode database file — freed pages stay
+	// in the file until a VACUUM rewrites it. Without the VACUUM below, the
+	// page count stays above the cap forever and every later run evicts
+	// another 10%, eating the whole history. So each eviction round ends
+	// with a VACUUM that actually reclaims the space.
+	for i := 0; i < 20; i++ {
+		var pageCount, pageSize int64
+		if err := s.db.QueryRow(`PRAGMA page_count`).Scan(&pageCount); err != nil {
+			return err
+		}
+		if err := s.db.QueryRow(`PRAGMA page_size`).Scan(&pageSize); err != nil {
+			return err
+		}
+		if pageCount*pageSize <= maxBytes {
+			return nil
+		}
+		res, err := s.db.Exec(`
+			DELETE FROM snapshots WHERE id IN (
+				SELECT id FROM snapshots ORDER BY collected_at ASC
+				LIMIT (SELECT max(1, count(*)/10) FROM snapshots)
+			)`)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return nil // nothing left to evict; file is irreducible
+		}
+		if _, err := s.db.Exec(`VACUUM`); err != nil {
+			return err
+		}
 	}
-	if err := s.db.QueryRow(`PRAGMA page_size`).Scan(&pageSize); err != nil {
-		return err
-	}
-	if pageCount*pageSize <= maxBytes {
-		return nil
-	}
-	// Evict the oldest 10% and let a later VACUUM reclaim space.
-	_, err := s.db.Exec(`
-		DELETE FROM snapshots WHERE id IN (
-			SELECT id FROM snapshots ORDER BY collected_at ASC
-			LIMIT (SELECT max(1, count(*)/10) FROM snapshots)
-		)`)
-	return err
+	return nil
 }
 
 // scalars are the extracted trend columns.
