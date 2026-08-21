@@ -67,3 +67,81 @@ func TestWalArchiving_deltaTrigger(t *testing.T) {
 		t.Errorf("evidence should cite the delta: %v", f.Evidence)
 	}
 }
+
+// parsePGDuration must handle the unit-suffixed strings current_setting()
+// actually returns ("5min", "1h", "0"), which the old strconv.Atoi path could
+// not parse at all.
+func TestParsePGDuration(t *testing.T) {
+	cases := []struct {
+		in   string
+		want time.Duration
+		ok   bool
+	}{
+		{"0", 0, true},
+		{"30s", 30 * time.Second, true},
+		{"5min", 5 * time.Minute, true},
+		{"1h", time.Hour, true},
+		{"1h 30min", 90 * time.Minute, true},
+		{"2d", 48 * time.Hour, true},
+		{"250ms", 250 * time.Millisecond, true},
+		{"100us", 100 * time.Microsecond, true},
+		{" 5min ", 5 * time.Minute, true},
+		{"-5min", -5 * time.Minute, true},
+		{"", 0, false},
+		{"5", 5 * time.Second, true}, // bare number = base unit (seconds); the server prints "0" for disabled
+		{"min", 0, false},            // unit without a number
+		{"5weeks", 0, false},         // unknown unit
+		{"5 min x", 0, false},
+	}
+	for _, tc := range cases {
+		got, ok := parsePGDuration(tc.in)
+		if ok != tc.ok || got != tc.want {
+			t.Errorf("parsePGDuration(%q) = %v, %v; want %v, %v", tc.in, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
+// archiveStallThreshold is max(archive_timeout×3, 1h). Before the fix the
+// setting was unparseable, so every server got the 1h floor — a false
+// archiving_stalled critical for anyone with archive_timeout above ~20min.
+func TestArchiveStallThreshold(t *testing.T) {
+	mk := func(timeout string) *model.Context {
+		return &model.Context{Settings: &model.Settings{Params: map[string]string{"archive_timeout": timeout}}}
+	}
+	cases := []struct {
+		timeout string
+		want    time.Duration
+	}{
+		{"", time.Hour},        // unknown → floor
+		{"0", time.Hour},       // disabled → floor
+		{"5min", time.Hour},    // 15min < floor → floor
+		{"1h", 3 * time.Hour},  // 3h > floor
+		{"8h", 24 * time.Hour}, // a long timeout widens the window
+	}
+	for _, tc := range cases {
+		if got := archiveStallThreshold(mk(tc.timeout)); got != tc.want {
+			t.Errorf("archiveStallThreshold(archive_timeout=%q) = %v; want %v", tc.timeout, got, tc.want)
+		}
+	}
+}
+
+// End to end: with archive_timeout=8h the stall window is 24h, so a segment
+// last archived 2h ago while WAL flows must NOT fire archiving_stalled. The old
+// dead parse used the 1h floor and fired a false critical here.
+func TestWalArchiving_stalledRespectsArchiveTimeout(t *testing.T) {
+	flow := 1024.0
+	twoHoursAgo := time.Now().Add(-2 * time.Hour)
+	base := func(timeout string) *model.Context {
+		return &model.Context{
+			Archiver: &model.Archiver{LastArchivedTime: &twoHoursAgo},
+			WAL:      &model.WAL{BytesPerSec: &flow},
+			Settings: &model.Settings{Params: map[string]string{"archive_mode": "on", "archive_timeout": timeout}},
+		}
+	}
+	if f := has(Compute(base("8h")), "archiving_stalled"); f != nil {
+		t.Errorf("archive_timeout=8h: 2h without an archive is inside the 24h window, must not fire: %+v", f)
+	}
+	if f := has(Compute(base("5min")), "archiving_stalled"); f == nil {
+		t.Error("archive_timeout=5min: 2h without an archive exceeds the 1h floor, must fire")
+	}
+}
