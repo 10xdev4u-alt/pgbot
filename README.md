@@ -1,9 +1,41 @@
-# pgbot
+<h1 align="center">pgbot</h1>
 
-**In-database observability for PostgreSQL.** One static binary connects
-read-only, reads Postgres's own statistics views, and prints a findings-first
-health report — plus what changed since last time. No agent, no external
-service, no write privilege anywhere in the path.
+<p align="center">
+  <strong>In-database observability for PostgreSQL.</strong><br>
+  One static binary connects read-only, reads Postgres's own statistics views,
+  and prints a findings-first health report — plus what changed since last time.<br>
+  No agent, no external service, no write privilege anywhere in the path.
+</p>
+
+<p align="center">
+  <a href="https://github.com/pgrundev/pgbot/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/pgrundev/pgbot/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/pgrundev/pgbot/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/pgrundev/pgbot"></a>
+  <a href="https://pkg.go.dev/github.com/pgrundev/pgbot"><img alt="Go Reference" src="https://pkg.go.dev/badge/github.com/pgrundev/pgbot.svg"></a>
+  <a href="https://goreportcard.com/report/github.com/pgrundev/pgbot"><img alt="Go Report Card" src="https://goreportcard.com/badge/github.com/pgrundev/pgbot"></a>
+  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
+  <img alt="PostgreSQL 14–18" src="https://img.shields.io/badge/postgres-14%E2%80%9318-336791">
+</p>
+
+<p align="center">
+  <a href="#quickstart">Quickstart</a> ·
+  <a href="#install">Install</a> ·
+  <a href="#setup--a-read-only-role-with-pg_monitor">Setup</a> ·
+  <a href="#commands-and-flags">Commands</a> ·
+  <a href="#ci-integration">CI</a> ·
+  <a href="#mcp--use-pgbot-as-an-agent-tool">MCP</a> ·
+  <a href="#the---json-contract">JSON contract</a> ·
+  <a href="#troubleshooting">Troubleshooting</a> ·
+  <a href="docs/providers.md">Provider notes</a>
+</p>
+
+> **Status: beta.** The `--json` contract is versioned (currently `1.2.0`, JSON
+> Schema published in [`schema/`](schema/)) and breaking changes to it are
+> treated as breaking changes to the tool. The human-readable report is **not**
+> a stable interface — parse `--json`, not the terminal output.
+
+---
+
+## Quickstart
 
 ![pgbot inspect — a read-only vital-signs read: headline gauges with a status, then the checks that came back clean](docs/img/dashboard.png)
 
@@ -84,10 +116,40 @@ Recommended:
 review an index on customer_id + created_at.
 ```
 
-Why it's not just another stats reader: **pgbot remembers.** Every run writes a
-local baseline, so from the third run on it can tell you *what changed and why
-it matters* — a query that got slower, a table that started sequential-scanning,
-an index that stopped being used.
+## Why pgbot
+
+| | |
+|---|---|
+| **Read-only by role, not by flag** | The guarantee is a `pg_monitor` login role with no write grants. Session pinning (`default_transaction_read_only`, `statement_timeout=15s`, `lock_timeout=2s`) and `BEGIN READ ONLY` are defence in depth on top of it. |
+| **It remembers** | Every run writes a local baseline, so from the third run on it tells you *what changed and why it matters* — a query that got slower, a table that started sequential-scanning, an index that stopped being used. |
+| **Findings are deterministic** | Every finding is computed in Go from SQL. The optional AI layer explains findings; it never generates them. |
+| **Nothing to deploy** | One static binary. No collector, no time-series database, no service to run. |
+| **Built for agents** | `--json` is a versioned, PII-free contract; `pgbot mcp` exposes the same findings over the Model Context Protocol, with a skill and a Claude Code plugin on top. |
+
+<details>
+<summary><strong>How it compares to pganalyze, PMM, pgwatch</strong></summary>
+
+pgbot is a **point-in-time diagnostic you run**, not a monitoring platform you
+operate. If you want dashboards, alerting, long retention, and multi-host
+rollups, run pganalyze / Percona PMM / pgwatch — pgbot doesn't replace them.
+Reach for pgbot when you want an answer in ten seconds without deploying
+anything, when you're triaging a database you don't own, or when an AI agent
+needs structured Postgres findings it can reason over.
+
+</details>
+
+## Requirements
+
+- PostgreSQL 14–18 (16–18 fully supported, 14–15 best-effort); collectors
+  degrade rather than fail on older feature sets — see
+  [Version support](#version-support).
+- A login role holding `pg_monitor` — see
+  [Setup](#setup--a-read-only-role-with-pg_monitor).
+- `pg_stat_statements` for the queries section (optional; pgbot prints the
+  provider-specific install steps when it's missing).
+- `advise` additionally needs the [hypopg](https://github.com/HypoPG/hypopg)
+  extension and PostgreSQL 16+.
+- Linux, macOS, Windows — amd64 and arm64.
 
 ## See it
 
@@ -238,6 +300,19 @@ cosign verify-blob --bundle checksums.txt.cosign.bundle \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt
 ```
 
+<details>
+<summary><strong>Uninstalling</strong></summary>
+
+```bash
+rm "$(command -v pgbot)"
+rm -rf "${XDG_STATE_HOME:-$HOME/.local/state}/pgbot"   # local baseline store
+```
+
+pgbot writes nothing else on your machine — no daemons, no launch agents — and
+nothing in the database: no extensions, no tables, no roles.
+
+</details>
+
 ## Setup — a read-only role with `pg_monitor`
 
 The read-only guarantee is **the role**, not a flag. Create a login role that
@@ -271,6 +346,19 @@ rolling them back — a read-only transaction writes nothing either way, but a
 rollback would inflate the `xact_rollback` counter pgbot itself reports. Those
 are defence in depth; the role is the boundary.
 
+### What it costs your database
+
+A run opens **one connection pool capped at 4 connections**, holds no long
+transactions (every probe is its own `BEGIN READ ONLY … COMMIT` under the
+pinned `statement_timeout=15s` / `lock_timeout=2s`), and takes no locks beyond
+the shared catalog access any `SELECT` takes. Counters are sampled twice across
+the `--interval` gap (default 1s), so a full `inspect` finishes in a few
+seconds of wall clock. It is safe to run against a busy primary — pgbot even
+excludes its own sessions, transactions, and temp usage from what it reports,
+so it never measures its own footprint as the database's. Run it against a
+replica if you prefer, noting the per-node index-scan caveat in
+[`pgbot indexes`](#see-it).
+
 ## Point pgbot at your database
 
 Pass the connection string as an argument — a URL or a libpq DSN:
@@ -297,6 +385,21 @@ pgbot diff --since 24h
 pgbot resolves the connection in this order: the argument first, then
 `$DATABASE_URL`, then `$PGBOT_DATABASE_URL`. Add `?sslmode=require` (or stricter)
 for any database reached over a network.
+
+### Environment reference
+
+| Variable | Purpose |
+|---|---|
+| `DATABASE_URL` / `PGBOT_DATABASE_URL` | Connection used when no connection string is passed (checked in that order, after the argument). |
+| `NO_COLOR` | Disables ANSI output (as does a non-TTY, or `--no-color`). |
+| `XDG_STATE_HOME` | Where the baseline store lives; defaults to `~/.local/state`. |
+| `PGBOT_CONFIG` | Path to `.pgbot.toml` (otherwise discovered from cwd upward, then `$XDG_CONFIG_HOME`). |
+| `OPENAI_API_KEY` | Enables `ask` / `explain` via OpenAI. Keys are never accepted as flags. |
+| `GEMINI_API_KEY` / `GOOGLE_API_KEY` | Enables `ask` / `explain` via Google Gemini. |
+| `PGBOT_AI_PROVIDER` | Forces `openai` or `gemini` when both keys are set. |
+| `PGBOT_OPENAI_MODEL` / `PGBOT_OPENAI_URL` | Model/endpoint override (any OpenAI-compatible endpoint works). |
+| `PGBOT_GEMINI_MODEL` / `PGBOT_GEMINI_URL` | Model/endpoint override for Gemini. |
+| `PGBOT_REQUIRE_SIGNATURE` | `install.sh` only: hard-fail unless the cosign signature verifies. |
 
 ## Connecting to managed providers
 
@@ -590,9 +693,19 @@ unused and missing indexes, and non-default settings. Counters
 (`pg_stat_database`, `pg_stat_wal`, IO) are **double-sampled** to produce live
 rates; the rest are point-in-time reads trended against the baseline.
 
-Every section in `--json` carries an `exactness` label — `sampled`,
-`cumulative`, `scraped`, or `unavailable` — so a consumer never mistakes a
-cumulative total for a live rate.
+## The `--json` contract
+
+`--json` (and `--format=json`) is the interface to build on — a versioned,
+PII-free document (`schema_version`, currently `1.2.0`) whose machine-checkable
+JSON Schema is published in [`schema/`](schema/). Every section carries an
+`exactness` label — `sampled`, `cumulative`, `scraped`, or `unavailable` — so a
+consumer never mistakes a cumulative total for a live rate.
+
+Versioning policy: additive fields bump the minor version and are not breaking —
+a `1.1.0` consumer parses `1.2.0` output unchanged; breaking changes to the
+contract are treated as breaking changes to the tool. `pgbot advise --json` has
+its own schema
+([`schema/pgbot-advise-1.0.0.json`](schema/pgbot-advise-1.0.0.json)).
 
 ## Version support
 
@@ -808,9 +921,7 @@ pgbot detects this and **degrades rather than lies**:
 If you want continuous history, disable scale-to-zero or raise the suspend
 timeout so the statistics survive between runs.
 
-## Not in scope (yet)
-
-Slice 1 is honest about its edges:
+## Roadmap and non-goals
 
 - **Host OS metrics** (CPU, disk IOPS, free memory) are **not** reachable over a
   SQL connection. On managed databases they live behind the provider's own API;
@@ -820,6 +931,53 @@ Slice 1 is honest about its edges:
   always computed deterministically in Go — no model ever generates one. Deeper
   correlation (`pgbot why`) is still future work.
 - **pgbot never writes.** It recommends indexes; it doesn't create them.
+
+## Troubleshooting
+
+<details>
+<summary><strong>Connecting to a local Docker database stalls for ~10 seconds</strong></summary>
+
+Use `127.0.0.1`, not `localhost`. `localhost` resolves to IPv6 (`::1`) first,
+which Docker Desktop doesn't forward, so the connect stalls before falling back
+to IPv4. Managed hosts (RDS, Supabase, Neon…) aren't affected. See
+[Postgres in Docker](#postgres-in-docker).
+
+</details>
+
+<details>
+<summary><strong>"queries section unavailable"</strong></summary>
+
+`pg_stat_statements` isn't installed or isn't in `shared_preload_libraries`.
+pgbot prints the steps for your specific provider; see
+[`docs/providers.md`](docs/providers.md).
+
+</details>
+
+<details>
+<summary><strong>Findings look partial or sessions are missing</strong></summary>
+
+The role is missing `pg_monitor`. See
+[Setup](#setup--a-read-only-role-with-pg_monitor) — pgbot names the exact GRANT
+at connect time.
+
+</details>
+
+<details>
+<summary><strong>Deltas are missing on a database I've inspected before</strong></summary>
+
+Statistics were reset or the server restarted; pgbot suppresses deltas rather
+than reporting a fake −99% change. On serverless Postgres this is expected —
+see [Serverless Postgres](#serverless-postgres-neon-scale-to-zero).
+
+</details>
+
+<details>
+<summary><strong><code>npx pgbot</code> returns E404</strong></summary>
+
+The bare npm name `pgbot` is blocked by npm's package-name-similarity rule; the
+package is scoped. Use `npx @pgbot/cli`.
+
+</details>
 
 ## Privacy
 
@@ -834,6 +992,22 @@ chains) is scrubbed of string/numeric literals, emails, and UUIDs before it can
 enter the Context. Connection strings are redacted in every log, error, and
 output. This holds for a reader of the source, not just as a claim.
 
+## Contributing
+
+Issues and PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for the
+invariants that are load-bearing (read-only, deterministic findings, PII-free
+output) and the dev loop: `go build ./cmd/pgbot`, `go test ./...`
+(DB-dependent tests self-skip), and `scripts/gate.sh` before pushing.
+`make matrix` runs the suite against the PostgreSQL matrix in
+`docker-compose.test.yml`.
+
+## Security
+
+pgbot handles connection strings and reads production statistics. To report a
+vulnerability, use GitHub's **private vulnerability reporting** (Security →
+Report a vulnerability) — please don't open a public issue. Scope and response
+expectations are in [SECURITY.md](SECURITY.md).
+
 ## License
 
-Apache-2.0.
+[Apache-2.0](LICENSE).

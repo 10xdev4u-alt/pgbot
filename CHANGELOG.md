@@ -3,7 +3,7 @@
 All notable changes to pgbot are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims for
 [Semantic Versioning](https://semver.org/). The `--json` contract is versioned
-separately by `model.SchemaVersion` (currently 1.1.0).
+separately by `model.SchemaVersion` (currently 1.2.0).
 
 ## [Unreleased]
 
