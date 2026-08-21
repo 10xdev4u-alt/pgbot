@@ -213,7 +213,11 @@ func pgbotPrompts() []mcp.Prompt {
 		Build: func(_ context.Context, args map[string]string) ([]mcp.PromptMessage, error) {
 			call := "Call the pgbot `inspect` tool"
 			if dsn := args["connection_string"]; dsn != "" {
-				call += " with connection_string \"" + dsn + "\""
+				// The agent supplied this DSN as the prompt argument, so it can
+				// pass it straight through to the tool call. Never re-print it
+				// here: the rendered prompt lands in transcripts and logs, and a
+				// postgres:// URL carries the password in cleartext.
+				call += " with the connection_string argument you were given"
 			}
 			text := call + ", then give me a prioritized diagnosis: a one-line health verdict, then " +
 				"each issue worst-first with a likely cause (only if the changes/events support one) and a " +
