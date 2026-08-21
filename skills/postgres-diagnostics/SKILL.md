@@ -39,6 +39,23 @@ diagnoses or act on the database.
 
 Add `--timeout 60s` for large or remote databases.
 
+## First run — when a prerequisite is missing
+
+Don't stall and don't improvise; each gap has one fix:
+
+- **`pgbot` not on PATH:** install it — `curl -fsSL https://pgbot.dev/install | sh`
+  (or `brew install pgrundev/tap/pgbot`, or run without installing via
+  `npx @pgbot/cli`). Run it through the normal permission prompt so the user
+  sees the command.
+- **No connection string:** check `$DATABASE_URL`, then ask the user for one.
+  Never guess or assemble credentials yourself.
+- **Role or extension gaps:** if the installed pgbot has `init`, run
+  `pgbot init --verify "$DSN"` — it checks pg_monitor and pg_stat_statements
+  and names each fix. Older builds report the same gaps at connect time.
+  To create the read-only role, generate the SQL with `pgbot init` (or use the
+  Setup section of the pgbot README) and **hand it to the user to run as
+  admin** — never execute it yourself: pgbot never writes, and neither do you.
+
 ## Rules — non-negotiable
 
 1. **Findings are facts.** Do not invent a number, table, index, or query id
