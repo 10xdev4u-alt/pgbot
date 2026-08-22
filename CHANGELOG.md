@@ -7,6 +7,8 @@ separately by `model.SchemaVersion` (currently 1.2.0).
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-08-22
+
 ### Fixed
 - **Eight audit fixes (#20, #21), contributed by @10xdev4u-alt.** The baseline
   store's 100 MB cap now actually reclaims space (DELETE never shrinks a
@@ -371,6 +373,7 @@ separately by `model.SchemaVersion` (currently 1.2.0).
   1.25.13, and golang.org/x/text to v0.39.0; `govulncheck` now runs in CI and
   reports no vulnerabilities.
 
+[0.4.3]: https://github.com/pgrundev/pgbot/releases/tag/v0.4.3
 [0.4.2]: https://github.com/pgrundev/pgbot/releases/tag/v0.4.2
 [0.4.1]: https://github.com/pgrundev/pgbot/releases/tag/v0.4.1
 [0.4.0]: https://github.com/pgrundev/pgbot/releases/tag/v0.4.0
