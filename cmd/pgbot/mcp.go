@@ -204,26 +204,25 @@ func dsnSchemaWith(props map[string]any, required ...string) map[string]any {
 
 // pgbotPrompts offers one-click workflows an agent can invoke.
 func pgbotPrompts() []mcp.Prompt {
+	// No connection_string argument: prompt arguments are consumed here in
+	// Build() and only the rendered text reaches the model, so the sole way an
+	// argument could ever reach the inspect tool was by printing the DSN —
+	// password included — into text that lands in transcripts and logs. The
+	// inspect tool reads the server's own $DATABASE_URL instead, and the prompt
+	// names that fix so a missing configuration doesn't turn into the model
+	// asking the user to paste the DSN into chat.
 	return []mcp.Prompt{{
 		Name:        "diagnose",
 		Description: "Inspect the database and produce a prioritized, plain-language diagnosis.",
-		Arguments: []mcp.PromptArg{
-			{Name: "connection_string", Description: "postgres:// URL or DSN (optional if $DATABASE_URL is set)", Required: false},
-		},
-		Build: func(_ context.Context, args map[string]string) ([]mcp.PromptMessage, error) {
-			call := "Call the pgbot `inspect` tool"
-			if dsn := args["connection_string"]; dsn != "" {
-				// The agent supplied this DSN as the prompt argument, so it can
-				// pass it straight through to the tool call. Never re-print it
-				// here: the rendered prompt lands in transcripts and logs, and a
-				// postgres:// URL carries the password in cleartext.
-				call += " with the connection_string argument you were given"
-			}
-			text := call + ", then give me a prioritized diagnosis: a one-line health verdict, then " +
+		Build: func(_ context.Context, _ map[string]string) ([]mcp.PromptMessage, error) {
+			text := "Call the pgbot `inspect` tool (it uses the DATABASE_URL configured on the pgbot " +
+				"MCP server), then give me a prioritized diagnosis: a one-line health verdict, then " +
 				"each issue worst-first with a likely cause (only if the changes/events support one) and a " +
 				"safe recommended step. pgbot's findings are computed deterministically — treat them as " +
 				"facts, hedge anything below 0.5 confidence, and carry every caveat into your advice. pgbot " +
-				"never writes, so recommend, don't act."
+				"never writes, so recommend, don't act. If inspect reports that no connection string is " +
+				"configured, don't ask for one in chat (a DSN carries the password) — tell the user to set " +
+				"DATABASE_URL on the pgbot MCP server instead."
 			return []mcp.PromptMessage{{Role: "user", Text: text}}, nil
 		},
 	}}

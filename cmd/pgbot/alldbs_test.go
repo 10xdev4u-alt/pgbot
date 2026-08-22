@@ -42,6 +42,33 @@ func TestDedupeClusterWide(t *testing.T) {
 	}
 }
 
+// A cluster-wide finding must survive when the FIRST database's collection
+// missed it (permissions, timeout) — dedupe keeps the first occurrence wherever
+// it is, it never assumes contexts[0] carries every cluster-wide finding.
+// checksum_failures is the stakes: a confidence-1.0 corruption report that a
+// blind strip from contexts[1..] would erase from output AND the exit code.
+func TestDedupeClusterWide_keepsFirstOccurrence(t *testing.T) {
+	dbs := []*model.Context{
+		ctxWith("app"), // checksums collection failed here
+		ctxWith("analytics", "checksum_failures"),
+		ctxWith("reports", "checksum_failures"),
+	}
+	dedupeClusterWide(dbs)
+
+	var carriers []*model.Finding
+	for _, c := range dbs {
+		if f := has(c.Findings, "checksum_failures"); f != nil {
+			carriers = append(carriers, f)
+		}
+	}
+	if len(carriers) != 1 {
+		t.Fatalf("checksum_failures must survive exactly once, found %d occurrences", len(carriers))
+	}
+	if !carriers[0].ClusterScoped {
+		t.Error("the surviving occurrence must be marked cluster_scoped")
+	}
+}
+
 func TestMergeContexts_tagsByDatabase(t *testing.T) {
 	dbs := []*model.Context{
 		ctxWith("app", "table_bloat"),

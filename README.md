@@ -297,7 +297,7 @@ pass. To verify a release by hand:
 
 ```bash
 cosign verify-blob --bundle checksums.txt.cosign.bundle \
-  --certificate-identity-regexp '^https://github.com/pgrundev/pgbot/' \
+  --certificate-identity-regexp '^https://github.com/pgrundev/pgbot/\.github/workflows/release\.yml@' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com checksums.txt
 ```
 

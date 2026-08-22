@@ -72,7 +72,9 @@ require_sig="${PGBOT_REQUIRE_SIGNATURE:-0}"
 # in the repo that holds id-token: write. The release workflow verifies its own
 # output against this exact identity (release.yml), so the installer holds
 # itself to the same standard.
-cert_id_re="^https://github.com/${REPO}/\.github/workflows/release\.yml"
+# The trailing @ anchors the workflow filename: without it, a workflow named
+# release.yml.evil.yaml in the same repo would also match the unanchored regexp.
+cert_id_re="^https://github.com/${REPO}/\.github/workflows/release\.yml@"
 oidc_issuer="https://token.actions.githubusercontent.com"
 if have cosign; then
   if fetch "$base/checksums.txt.cosign.bundle" "$tmp/checksums.txt.cosign.bundle" 2>/dev/null; then

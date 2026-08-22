@@ -99,10 +99,8 @@ func trimCost(c float64) string {
 }
 
 // oneLineTrunc flattens whitespace and truncates for a single display line.
+// Delegates to truncate (terminal.go), which cuts by rune — a byte cut here
+// split multibyte SQL text into invalid UTF-8.
 func oneLineTrunc(s string, max int) string {
-	s = strings.Join(strings.Fields(s), " ")
-	if len(s) > max {
-		return s[:max-1] + "…"
-	}
-	return s
+	return truncate(s, max)
 }

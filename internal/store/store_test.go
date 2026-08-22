@@ -352,3 +352,74 @@ func TestEnforceSizeCap_evictsAndVacuums(t *testing.T) {
 		t.Errorf("expected some rows evicted, still have %d", n)
 	}
 }
+
+// The upgrade path the fix must survive: the pre-VACUUM code let free pages
+// accumulate, so a file can be over the cap with almost no live rows. A
+// VACUUM alone reclaims that space — eviction must not fire first and delete
+// the snapshot Save just wrote (empirically: DELETE-before-VACUUM left 0 rows).
+func TestEnforceSizeCap_vacuumFirstPreservesFreshRow(t *testing.T) {
+	st := tempStore(t)
+	fp := "upgrade"
+	now := time.Now().UTC()
+
+	saved := maxBytes
+	maxBytes = 96 << 10
+	t.Cleanup(func() { maxBytes = saved })
+
+	// Bloat the file with rows, then delete all but ONE without vacuuming —
+	// exactly the state an old-code store is in after 90-day retention ran.
+	pad := make([]byte, 8<<10)
+	for i := range pad {
+		pad[i] = 'x'
+	}
+	blob := `{"pad":"` + string(pad) + `"}`
+	for i := 0; i < 30; i++ {
+		if _, err := st.db.Exec(
+			`INSERT INTO snapshots (fingerprint, collected_at, schema_version, context_json) VALUES (?, ?, ?, ?)`,
+			fp, now.Add(time.Duration(i)*time.Minute).Unix(), model.SchemaVersion, blob); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := st.db.Exec(
+		`DELETE FROM snapshots WHERE id NOT IN (SELECT max(id) FROM snapshots)`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := st.enforceSizeCap(); err != nil {
+		t.Fatal(err)
+	}
+
+	var n int
+	if err := st.db.QueryRow(`SELECT count(*) FROM snapshots`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("the one live snapshot must survive a free-page-only overage, got %d rows", n)
+	}
+}
+
+// When deleting snapshots cannot get the file under the cap (another table
+// holds the bulk), the loop must keep at least the newest snapshot rather
+// than eating the row every Save just wrote, forever.
+func TestEnforceSizeCap_neverDeletesLastRow(t *testing.T) {
+	st := tempStore(t)
+	saved := maxBytes
+	maxBytes = 1 // impossible cap: nothing can ever satisfy it
+	t.Cleanup(func() { maxBytes = saved })
+
+	if _, err := st.db.Exec(
+		`INSERT INTO snapshots (fingerprint, collected_at, schema_version, context_json) VALUES (?, ?, ?, ?)`,
+		"only", time.Now().UTC().Unix(), model.SchemaVersion, `{}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.enforceSizeCap(); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := st.db.QueryRow(`SELECT count(*) FROM snapshots`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("an unreachable cap must not delete the last snapshot, got %d rows", n)
+	}
+}

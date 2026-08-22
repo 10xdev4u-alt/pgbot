@@ -38,10 +38,20 @@ func TestExplainPlanTool_refusesNonSelect(t *testing.T) {
 // The diagnose prompt must never re-print the connection string it was given:
 // the rendered prompt lands in agent transcripts and logs, and a postgres://
 // URL carries the password in cleartext.
-func TestDiagnosePrompt_neverEchoesDSN(t *testing.T) {
+// The diagnose prompt takes NO connection_string argument: prompt arguments are
+// consumed server-side in Build() — the model only ever sees the rendered text —
+// so the only way an argument could reach the inspect tool was by printing the
+// DSN (password included) into that text. Instead the prompt directs the agent
+// to inspect, which uses the server's own $DATABASE_URL, and names that fix
+// when none is configured. A stale client that still sends the old argument
+// must have it ignored, never echoed.
+func TestDiagnosePrompt_noDSNArgumentNoEcho(t *testing.T) {
 	prompts := pgbotPrompts()
 	if len(prompts) != 1 || prompts[0].Name != "diagnose" {
 		t.Fatalf("expected the single diagnose prompt, got %+v", prompts)
+	}
+	if len(prompts[0].Arguments) != 0 {
+		t.Errorf("diagnose must declare no arguments (they can't reach the model), got %+v", prompts[0].Arguments)
 	}
 	dsn := "postgres://appuser:s3cret@db.internal:5432/appdb"
 	msgs, err := prompts[0].Build(context.Background(), map[string]string{"connection_string": dsn})
@@ -52,18 +62,13 @@ func TestDiagnosePrompt_neverEchoesDSN(t *testing.T) {
 		t.Fatalf("expected one prompt message, got %d", len(msgs))
 	}
 	if strings.Contains(msgs[0].Text, "s3cret") || strings.Contains(msgs[0].Text, dsn) {
-		t.Errorf("the rendered prompt must not contain the DSN or its password:\n%s", msgs[0].Text)
+		t.Errorf("a stale client's DSN argument must be ignored, never echoed:\n%s", msgs[0].Text)
 	}
 	if !strings.Contains(msgs[0].Text, "inspect") {
-		t.Errorf("the prompt must still direct the agent to call inspect:\n%s", msgs[0].Text)
+		t.Errorf("the prompt must direct the agent to call inspect:\n%s", msgs[0].Text)
 	}
-	// Without a DSN the prompt still renders and stays DSN-free.
-	msgs, err = prompts[0].Build(context.Background(), map[string]string{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(msgs[0].Text, "connection_string \"") {
-		t.Errorf("no DSN given, nothing about one should be mentioned:\n%s", msgs[0].Text)
+	if !strings.Contains(msgs[0].Text, "DATABASE_URL") {
+		t.Errorf("the prompt must name the DATABASE_URL fix for an unconfigured server:\n%s", msgs[0].Text)
 	}
 }
 

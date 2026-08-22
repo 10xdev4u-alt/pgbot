@@ -7,6 +7,40 @@ separately by `model.SchemaVersion` (currently 1.2.0).
 
 ## [Unreleased]
 
+### Fixed
+- **Eight audit fixes (#20, #21), contributed by @10xdev4u-alt.** The baseline
+  store's 100 MB cap now actually reclaims space (DELETE never shrinks a
+  WAL-mode SQLite file; the promised VACUUM never ran, so every run evicted
+  another 10% of history); JUnit output no longer fails the test pane on
+  `Preexisting` findings the exit code passes under `--fail-on-new`; Prometheus
+  label values are escaped exactly once (a database name with a quote or
+  backslash was double-escaped, changing the exposition bytes); the MCP
+  `diagnose` prompt no longer renders the DSN — password included — into
+  prompt text; `archiving_stalled` honors `archive_timeout` (the value is
+  unit-suffixed — `5min`, `1h` — so the old `Atoi` parse was a dead branch and
+  the threshold stuck at the 1h floor, firing false criticals);
+  `checksum_failures` is reported once under `--all-databases` while
+  `work_mem_low` correctly stays per-database; `install.sh` pins the cosign
+  signing identity to the release workflow instead of accepting any workflow
+  in the repo; finding text is truncated by rune, never mid-UTF-8-sequence.
+- **Review follow-ups on the above.** Cluster-wide dedupe keeps the first
+  occurrence of a finding instead of assuming the first database carries it
+  (a permissions failure on database one could erase a live corruption
+  report); the store VACUUMs before any eviction (an upgraded, free-page-bloated
+  file no longer costs the snapshot just saved), evicts in one sized pass
+  instead of up to twenty full-file rewrites, never deletes the last snapshot,
+  and treats VACUUM contention as best-effort so a parallel `--all-databases`
+  run can't lose its schema/events writes; the `diagnose` prompt drops its
+  `connection_string` argument entirely (prompt arguments never reach the
+  model — the rendered text was the only carrier, and that was the leak) and
+  directs agents to the server's `DATABASE_URL`; the cosign identity regexes in
+  `install.sh`, `release.yml`, and the README anchor the workflow filename
+  (`release.yml@`) so a similarly-prefixed workflow can't satisfy them; the
+  Prometheus exposition gains a `preexisting` label and stops counting
+  preexisting findings in `pgbot_findings_total`, matching the exit code; the
+  `--full` findings view marks preexisting findings and keeps them out of the
+  headline counts; the index advisor's query line truncates by rune.
+
 ## [0.4.2] - 2026-08-21
 
 ### Added

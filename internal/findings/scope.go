@@ -3,15 +3,21 @@ package findings
 // clusterWide is the set of findings whose SOURCE is cluster-wide, not the
 // connected database — so in an --all-databases run they are identical for every
 // database and should be reported once, not N times (B3). The rest read
-// per-database catalogs (pg_stat_user_tables/indexes, this database's
-// pg_stat_database, pg_sequences, its checksum/conflict counters) and genuinely
-// differ per database.
+// per-database catalogs (pg_stat_user_tables/indexes, pg_sequences, this
+// database's pg_stat_database row — health.sql filters on current_database())
+// and genuinely differ per database.
+//
+// The classification follows the finding's SQL, not the view name: pg_stat_database
+// appears on both sides. checksums.sql reads ALL of its rows (cluster-wide);
+// health.sql reads only current_database()'s row (per-database). When adding a
+// finding here, check which filter its query uses.
 //
 // Cluster-wide sources: pg_settings; pg_stat_activity (all backends, any db);
 // pg_stat_archiver; pg_stat_replication / pg_replication_slots /
 // pg_stat_subscription; pg_stat_statements (tracks all databases);
 // pg_stat_bgwriter / pg_stat_checkpointer; the max transaction/multixact age
-// across pg_database; the xmin horizon (backend_xmin + slots).
+// across pg_database; the xmin horizon (backend_xmin + slots); unfiltered
+// pg_stat_database sweeps (checksum_failures).
 var clusterWide = map[string]bool{
 	// settings
 	"fsync_off": true, "full_page_writes_off": true, "autovacuum_off": true,

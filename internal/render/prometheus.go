@@ -51,11 +51,16 @@ func PrometheusAll(w io.Writer, contexts []*model.Context) error {
 		db := esc(c.Server.Database)
 		counts := map[string]int{}
 		for _, f := range c.Findings {
-			if !f.Suppressed {
+			// Preexisting findings (--fail-on-new) don't count: the exit code
+			// passes them (inspect.go), so an alert on pgbot_findings_total must
+			// not page on a run CI declared clean. They stay visible as series
+			// with preexisting="true", the label alerting can silence by.
+			if !f.Suppressed && !f.Preexisting {
 				counts[f.Severity]++
 			}
-			finding.add(fmt.Sprintf("pgbot_finding{database=\"%s\",id=\"%s\",severity=\"%s\",dimension=\"%s\",object=\"%s\",suppressed=\"%s\",destructive=\"%s\"} 1",
+			finding.add(fmt.Sprintf("pgbot_finding{database=\"%s\",id=\"%s\",severity=\"%s\",dimension=\"%s\",object=\"%s\",suppressed=\"%s\",preexisting=\"%s\",destructive=\"%s\"} 1",
 				db, esc(f.ID), esc(f.Severity), esc(f.Impact.Dimension), esc(f.Object), boolLabel(f.Suppressed),
+				boolLabel(f.Preexisting),
 				boolLabel(f.Safety != nil && len(f.Safety.BlockingCaveats) > 0)))
 		}
 		for _, sev := range []string{"critical", "warn", "info"} {

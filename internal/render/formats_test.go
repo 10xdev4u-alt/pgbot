@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/owenrumney/go-sarif/v2/sarif"
 	"github.com/pgrundev/pgbot/internal/model"
@@ -258,5 +259,58 @@ func TestPrometheusAll_groupedHeaders(t *testing.T) {
 	// Both databases must still be present as distinct label sets.
 	if !strings.Contains(buf.String(), `database="app"`) || !strings.Contains(buf.String(), `database="analytics"`) {
 		t.Error("each database's series must be present under its own database label")
+	}
+}
+
+// The advisor's "helps:" line renders live SQL text; a byte-position cut can
+// split a multibyte rune into invalid UTF-8 (the same class fixed in
+// findings.go and terminal.go). oneLineTrunc must cut by rune.
+func TestOneLineTrunc_runeSafe(t *testing.T) {
+	got := oneLineTrunc("SELECT 'приложение' FROM таблица", 20)
+	if !utf8.ValidString(got) {
+		t.Errorf("truncated advisor line is invalid UTF-8: %q", got)
+	}
+	if r := []rune(got); len(r) != 20 {
+		t.Errorf("expected a 20-rune cut, got %d runes: %q", len(r), got)
+	}
+}
+
+// The exit code under --fail-on-new passes preexisting findings (inspect.go),
+// so the metrics surface must let alerting do the same: pgbot_findings_total
+// must not count them, and pgbot_finding needs a preexisting label to
+// distinguish (and silence) them — otherwise CI exits 0 while the exposition
+// pages on a "critical" that predates the change.
+func TestPrometheus_preexistingLabeledAndNotCounted(t *testing.T) {
+	c := sampleContextForFormats()
+	c.Findings[0].Preexisting = true // the critical fsync_off is old news
+	var buf bytes.Buffer
+	if err := Prometheus(&buf, c); err != nil {
+		t.Fatal(err)
+	}
+	s := buf.String()
+	if !strings.Contains(s, `id="fsync_off"`) || !strings.Contains(s, `preexisting="true"`) {
+		t.Errorf("the preexisting finding must stay visible with preexisting=\"true\":\n%s", s)
+	}
+	if !strings.Contains(s, `pgbot_findings_total{database="app",severity="critical"} 0`) {
+		t.Errorf("a preexisting critical must not count toward pgbot_findings_total (exit code passes it):\n%s", s)
+	}
+}
+
+// --full and --fail-on-new combine freely; the full findings view must agree
+// with the exit code and the default view: a preexisting finding stays out of
+// the headline counts and is visibly marked, never presented as live.
+func TestRenderFindings_preexistingMarkedNotCounted(t *testing.T) {
+	c := sampleContextForFormats()
+	c.Findings[0].Preexisting = true // the critical fsync_off predates the change
+	var buf bytes.Buffer
+	if err := Terminal(&buf, c, Options{Full: true, Width: 100}); err != nil {
+		t.Fatal(err)
+	}
+	s := buf.String()
+	if strings.Contains(s, "1 critical") {
+		t.Errorf("a preexisting critical must not count in the header:\n%s", s)
+	}
+	if !strings.Contains(s, "preexisting") {
+		t.Errorf("the preexisting finding must be visibly marked:\n%s", s)
 	}
 }

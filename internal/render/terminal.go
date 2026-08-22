@@ -178,8 +178,16 @@ func renderFindings(b *strings.Builder, st styler, fs []model.Finding, width int
 			visible = append(visible, f)
 		}
 	}
-	crit, warn := 0, 0
+	// Preexisting findings (--fail-on-new) render marked but never count in the
+	// headline: the exit code and the default view both treat them as old news,
+	// and the --full view of the same run must not contradict them.
+	crit, warn, preexisting, live := 0, 0, 0, 0
 	for _, f := range visible {
+		if f.Preexisting {
+			preexisting++
+			continue
+		}
+		live++
 		switch f.Severity {
 		case model.SeverityCritical:
 			crit++
@@ -187,12 +195,15 @@ func renderFindings(b *strings.Builder, st styler, fs []model.Finding, width int
 			warn++
 		}
 	}
-	summary := fmt.Sprintf("%d finding(s)", len(visible))
+	summary := fmt.Sprintf("%d finding(s)", live)
 	if crit > 0 {
 		summary += fmt.Sprintf(" · %d critical", crit)
 	}
 	if warn > 0 {
 		summary += fmt.Sprintf(" · %d warning", warn)
+	}
+	if preexisting > 0 {
+		summary += fmt.Sprintf(" · %d preexisting (not new)", preexisting)
 	}
 	if len(suppressed) > 0 {
 		summary += fmt.Sprintf(" · %d suppressed", len(suppressed))
@@ -214,6 +225,9 @@ func renderFindings(b *strings.Builder, st styler, fs []model.Finding, width int
 		fmt.Fprintf(b, "  %s %s\n", color(icon), color(title))
 		if f.Suppressed { // a suppressed critical that still renders
 			fmt.Fprintf(b, "     %s\n", st.dim("suppressed by config ("+f.SuppressionRule+"): "+suppReason(f)))
+		}
+		if f.Preexisting {
+			fmt.Fprintf(b, "     %s\n", st.dim("preexisting — already in the base report, not introduced by this change"))
 		}
 		for _, line := range wrapText(f.Detail, width-5) {
 			fmt.Fprintf(b, "     %s\n", st.dim(line))

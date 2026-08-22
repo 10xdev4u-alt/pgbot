@@ -1728,7 +1728,7 @@ func archiveStallThreshold(c *model.Context) time.Duration {
 	// "1h", "0"), not a bare integer — strconv.Atoi always failed on it, so this
 	// branch was dead and the threshold silently stayed at the 1h floor. Parse
 	// the real duration so a long archive_timeout actually widens the window.
-	if t, ok := parsePGDuration(settingParam(c, "archive_timeout")); ok && t > 0 {
+	if t, ok := parsePGDuration(settingParam(c, "archive_timeout"), time.Second); ok && t > 0 {
 		if scaled := 3 * t; scaled > base {
 			base = scaled
 		}
@@ -1736,12 +1736,15 @@ func archiveStallThreshold(c *model.Context) time.Duration {
 	return base
 }
 
-// parsePGDuration parses a PostgreSQL time-unit GUC value as returned by
-// current_setting(): an optional sign, then one or more "<number><unit>" tokens
-// ("30s", "5min", "1h 30min", "0"). Units follow the server's own table
-// (us/ms/s/min/h/d). It returns ok=false for empty or unparseable input, which
-// callers treat as "use the default" rather than an error.
-func parsePGDuration(s string) (time.Duration, bool) {
+// parsePGDuration parses a PostgreSQL time-unit GUC value: an optional sign,
+// then one or more "<number><unit>" tokens ("30s", "5min", "1h 30min", "0").
+// Units follow the server's own table (us/ms/s/min/h/d). A bare number scales
+// by base — PostgreSQL's base unit is per-GUC (ms for statement_timeout, s for
+// archive_timeout, min for autovacuum_naptime), and pg_settings.setting holds
+// exactly such raw base-unit integers, so every caller must say which GUC
+// family it is reading. It returns ok=false for empty or unparseable input,
+// which callers treat as "use the default" rather than an error.
+func parsePGDuration(s string, base time.Duration) (time.Duration, bool) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return 0, false
@@ -1774,13 +1777,13 @@ func parsePGDuration(s string) (time.Duration, bool) {
 		}
 		s = s[i:]
 		// Consume the unit letters that follow. A bare number with no unit (the
-		// server prints "0" for a disabled time GUC) is taken as seconds, the base
-		// unit for these settings.
+		// server prints "0" for a disabled time GUC; pg_settings.setting holds
+		// raw integers) scales by the caller's base unit.
 		j := 0
 		for j < len(s) && (s[j] < '0' || s[j] > '9') && s[j] != ' ' && s[j] != '\t' {
 			j++
 		}
-		u := time.Second
+		u := base
 		if unitStr := s[:j]; unitStr != "" {
 			var ok bool
 			u, ok = unit[unitStr]

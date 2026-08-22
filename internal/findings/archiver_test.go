@@ -93,8 +93,18 @@ func TestParsePGDuration(t *testing.T) {
 		{"5weeks", 0, false},         // unknown unit
 		{"5 min x", 0, false},
 	}
+	// The base unit is per-GUC in PostgreSQL (ms for statement_timeout, s for
+	// archive_timeout, min for autovacuum_naptime): a bare number must scale by
+	// the caller's base, or a raw pg_settings value like "30000" (ms) silently
+	// parses as 30000 SECONDS — the same wrong-branch family the Atoi fix closed.
+	if d, ok := parsePGDuration("30000", time.Millisecond); !ok || d != 30*time.Second {
+		t.Errorf("parsePGDuration(30000, ms base) = %v, %v; want 30s, true", d, ok)
+	}
+	if d, ok := parsePGDuration("5", time.Minute); !ok || d != 5*time.Minute {
+		t.Errorf("parsePGDuration(5, min base) = %v, %v; want 5m, true", d, ok)
+	}
 	for _, tc := range cases {
-		got, ok := parsePGDuration(tc.in)
+		got, ok := parsePGDuration(tc.in, time.Second)
 		if ok != tc.ok || got != tc.want {
 			t.Errorf("parsePGDuration(%q) = %v, %v; want %v, %v", tc.in, got, ok, tc.want, tc.ok)
 		}

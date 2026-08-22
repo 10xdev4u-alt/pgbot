@@ -47,38 +47,76 @@ func (s *Store) prune(fingerprint string) error {
 }
 
 func (s *Store) enforceSizeCap() error {
-	// DELETE alone never shrinks a WAL-mode database file — freed pages stay
-	// in the file until a VACUUM rewrites it. Without the VACUUM below, the
-	// page count stays above the cap forever and every later run evicts
-	// another 10%, eating the whole history. So each eviction round ends
-	// with a VACUUM that actually reclaims the space.
-	for i := 0; i < 20; i++ {
-		var pageCount, pageSize int64
-		if err := s.db.QueryRow(`PRAGMA page_count`).Scan(&pageCount); err != nil {
-			return err
-		}
-		if err := s.db.QueryRow(`PRAGMA page_size`).Scan(&pageSize); err != nil {
-			return err
-		}
-		if pageCount*pageSize <= maxBytes {
-			return nil
-		}
-		res, err := s.db.Exec(`
-			DELETE FROM snapshots WHERE id IN (
-				SELECT id FROM snapshots ORDER BY collected_at ASC
-				LIMIT (SELECT max(1, count(*)/10) FROM snapshots)
-			)`)
-		if err != nil {
-			return err
-		}
-		if n, _ := res.RowsAffected(); n == 0 {
-			return nil // nothing left to evict; file is irreducible
-		}
-		if _, err := s.db.Exec(`VACUUM`); err != nil {
-			return err
-		}
+	size, err := s.fileSize()
+	if err != nil {
+		return err
 	}
+	if size <= maxBytes {
+		return nil
+	}
+
+	// DELETE alone never shrinks a WAL-mode database file — freed pages stay in
+	// the file until a VACUUM rewrites it, so a store that has been pruning for
+	// months can be over the cap on free pages alone (the pre-VACUUM code never
+	// reclaimed them). Reclaim FIRST and re-measure: eviction before this VACUUM
+	// would delete live history — including the snapshot Save just wrote — to
+	// free space a rewrite alone would have recovered.
+	//
+	// VACUUM is best-effort throughout: it fails with SQLITE_BUSY when a sibling
+	// handle holds a write transaction (--all-databases opens one Store per
+	// goroutine on this same file) and with SQLITE_FULL when the disk can't hold
+	// the rewrite. Neither may fail Save — the snapshot row is already
+	// committed, and an error here would also drop the schema/events/wait
+	// writes that follow. The next run simply retries.
+	if _, err := s.db.Exec(`VACUUM`); err != nil {
+		return nil
+	}
+	if size, err = s.fileSize(); err != nil || size <= maxBytes {
+		return err
+	}
+
+	// Still over: evict oldest snapshots in ONE sized pass targeting ~90% of the
+	// cap, never touching the newest row. Proportional sizing (overage/filesize
+	// of the row count) replaces the old fixed-10%-×-20-rounds loop, which did
+	// up to 20 full-file rewrites per call. When snapshots aren't what's over
+	// the cap (events and rollups are append-heavy), deleting the history that
+	// remains wouldn't help — keeping the newest row bounds the damage and the
+	// next run's VACUUM keeps the file as small as it can get.
+	var rows int64
+	if err := s.db.QueryRow(`SELECT count(*) FROM snapshots`).Scan(&rows); err != nil {
+		return err
+	}
+	if rows <= 1 {
+		return nil
+	}
+	target := maxBytes * 9 / 10
+	evict := (rows*(size-target) + size - 1) / size // ceil(rows × overage/size)
+	if evict < 1 {
+		evict = 1
+	}
+	if evict > rows-1 {
+		evict = rows - 1
+	}
+	if _, err := s.db.Exec(`
+		DELETE FROM snapshots WHERE id IN (
+			SELECT id FROM snapshots ORDER BY collected_at ASC LIMIT ?
+		)`, evict); err != nil {
+		return err
+	}
+	_, _ = s.db.Exec(`VACUUM`) // best-effort, same reasoning as above
 	return nil
+}
+
+// fileSize reports the database file size from SQLite's own page accounting.
+func (s *Store) fileSize() (int64, error) {
+	var pageCount, pageSize int64
+	if err := s.db.QueryRow(`PRAGMA page_count`).Scan(&pageCount); err != nil {
+		return 0, err
+	}
+	if err := s.db.QueryRow(`PRAGMA page_size`).Scan(&pageSize); err != nil {
+		return 0, err
+	}
+	return pageCount * pageSize, nil
 }
 
 // scalars are the extracted trend columns.

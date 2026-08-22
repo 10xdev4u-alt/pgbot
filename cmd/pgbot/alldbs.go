@@ -146,23 +146,26 @@ func listAllDatabases(ctx context.Context, connString string) ([]string, error) 
 	return dbs, rows.Err()
 }
 
-// dedupeClusterWide marks cluster-wide findings on the first database and removes
-// them from the rest, so they're reported once (B3).
+// dedupeClusterWide keeps the FIRST occurrence of each cluster-wide finding and
+// removes the rest, so it's reported once (B3). First occurrence, not "the first
+// database's copy": if database 0's collection missed the finding (permissions,
+// a per-connection timeout), stripping it from every later context would erase
+// a live report — for checksum_failures that's a corruption finding vanishing
+// from the output and the exit code.
 func dedupeClusterWide(contexts []*model.Context) {
-	for i, c := range contexts {
-		if i == 0 {
-			for j := range c.Findings {
-				if findings.ClusterWide(c.Findings[j].ID) {
-					c.Findings[j].ClusterScoped = true
-				}
-			}
-			continue
-		}
+	seen := map[string]bool{}
+	for _, c := range contexts {
 		kept := c.Findings[:0]
-		for _, fd := range c.Findings {
-			if !findings.ClusterWide(fd.ID) {
-				kept = append(kept, fd)
+		for j := range c.Findings {
+			fd := c.Findings[j]
+			if findings.ClusterWide(fd.ID) {
+				if seen[fd.ID] {
+					continue
+				}
+				seen[fd.ID] = true
+				fd.ClusterScoped = true
 			}
+			kept = append(kept, fd)
 		}
 		c.Findings = kept
 	}
