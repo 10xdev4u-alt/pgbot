@@ -95,10 +95,13 @@ jobs:
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          for i in $(seq 1 10); do
+          # 20 x 30s: registry propagation to the Windows runner has twice taken
+          # longer than a 200s budget (0.4.2, 0.4.3 — the package was fine both
+          # times), so give it 10 minutes before calling the channel broken.
+          for i in $(seq 1 20); do
             if npx -y "@pgbot/cli@${VERSION}" --version; then exit 0; fi
             echo "@pgbot/cli@${VERSION} not installable yet (attempt $i) — waiting for npm propagation"
-            sleep 20
+            sleep 30
           done
           echo "FAILED: npx @pgbot/cli@${VERSION} --version never succeeded"
           exit 1
