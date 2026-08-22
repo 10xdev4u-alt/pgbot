@@ -7,6 +7,8 @@ separately by `model.SchemaVersion` (currently 1.2.0).
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-08-21
+
 ### Added
 - **`uses: pgrundev/pgbot@v1` now actually resolves.** The composite GitHub
   Action moved from `.github/actions/pgbot/` to the repository root — the
@@ -25,6 +27,13 @@ separately by `model.SchemaVersion` (currently 1.2.0).
   monitoring role and checks the prerequisites (pg_monitor critical,
   pg_stat_statements warn with the provider fix, standby per-node-counter
   note), exiting non-zero when the critical one is missing.
+
+### Security
+- **Every third-party GitHub Action is pinned to a commit SHA** — CI, the
+  release pipeline, and the published composite action (whose
+  `upload-sarif` step runs inside end-users' workflows). Dependabot maintains
+  the pins and gains a 14-day cooldown for gomod and github-actions version
+  updates (security advisories are not delayed). Contributed by @lpmi-13 (#14).
 
 ## [0.4.1] - 2026-08-19
 
@@ -328,6 +337,7 @@ separately by `model.SchemaVersion` (currently 1.2.0).
   1.25.13, and golang.org/x/text to v0.39.0; `govulncheck` now runs in CI and
   reports no vulnerabilities.
 
+[0.4.2]: https://github.com/pgrundev/pgbot/releases/tag/v0.4.2
 [0.4.1]: https://github.com/pgrundev/pgbot/releases/tag/v0.4.1
 [0.4.0]: https://github.com/pgrundev/pgbot/releases/tag/v0.4.0
 [0.3.3]: https://github.com/pgrundev/pgbot/releases/tag/v0.3.3
