@@ -156,6 +156,27 @@ func TestJUnit_preexistingNotAFailure(t *testing.T) {
 	}
 }
 
+// A finding that is BOTH suppressed and preexisting must render as <skipped>
+// (suppression stays visible), not fall through to the silent preexisting pass —
+// the switch order in JUnit decides this, and nothing else guards it.
+func TestJUnit_suppressedWinsOverPreexisting(t *testing.T) {
+	c := sampleContextForFormats()
+	c.Findings[0].Preexisting = true
+	c.Findings[0].Suppressed = true
+	c.Findings[0].SuppressionReason = "accepted risk"
+	var buf bytes.Buffer
+	if err := JUnit(&buf, c, "critical"); err != nil {
+		t.Fatal(err)
+	}
+	s := buf.String()
+	if !strings.Contains(s, "suppressed by config: accepted risk") {
+		t.Errorf("suppressed+preexisting must render as <skipped> with the reason:\n%s", s)
+	}
+	if strings.Contains(s, "<failure") {
+		t.Errorf("suppressed+preexisting must never be a <failure>:\n%s", s)
+	}
+}
+
 func TestPrometheus_golden(t *testing.T) {
 	c := sampleContextForFormats()
 	// add a gauge source so a metric line is exercised
