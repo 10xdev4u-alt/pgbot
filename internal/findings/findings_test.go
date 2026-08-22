@@ -2,6 +2,7 @@ package findings
 
 import (
 	"testing"
+	"unicode/utf8"
 
 	"github.com/pgrundev/pgbot/internal/model"
 )
@@ -444,5 +445,31 @@ func TestLowCacheHit_needsBlockTraffic(t *testing.T) {
 	enough := &model.Context{Health: &model.Health{CacheHitRatio: ptr(0.40), CacheBlocks: i64(model.CacheHitMinBlocks)}}
 	if has(Compute(enough), "low_cache_hit") == nil {
 		t.Fatal("low_cache_hit must fire at the floor with a 40% ratio")
+	}
+}
+
+// truncate must cut by RUNE, not byte: a byte slice can split a multibyte
+// character and emit invalid UTF-8 into the JSON output.
+func TestTruncate_runeSafe(t *testing.T) {
+	// ASCII: unchanged under the limit, cut + ellipsis over it.
+	if got := truncate("hello", 10); got != "hello" {
+		t.Errorf("short ASCII must be unchanged, got %q", got)
+	}
+	if got := truncate("hello world", 6); got != "hello…" {
+		t.Errorf("ASCII over the limit must cut to 5 runes + ellipsis, got %q", got)
+	}
+	// Multibyte: each '日' is 3 bytes. Truncating at 4 runes must yield 3 runes
+	// + ellipsis and stay valid UTF-8 — the old byte slice split a character.
+	in := "日本語のテキスト" // 8 runes, 24 bytes
+	got := truncate(in, 4)
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncate produced invalid UTF-8: %q", got)
+	}
+	if got != "日本語…" {
+		t.Errorf("multibyte must cut on rune boundaries, got %q", got)
+	}
+	// A string of exactly n runes is returned whole.
+	if got := truncate("abcd", 4); got != "abcd" {
+		t.Errorf("exactly n runes must be returned whole, got %q", got)
 	}
 }

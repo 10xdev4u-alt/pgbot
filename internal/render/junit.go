@@ -13,7 +13,9 @@ import (
 // above the --fail-on threshold is a <failure>; a suppressed one is <skipped>
 // (so it's visible, not silently gone); anything below the threshold is a passing
 // case. failOn matches the exit-code contract, so the test pane and the exit code
-// agree.
+// agree. A Preexisting finding (--fail-on-new) is a passing case too: the exit
+// code doesn't fail on it, so the pane must not either — it stays visible as a
+// testcase rather than being omitted.
 func JUnit(w io.Writer, c *model.Context, failOn string) error {
 	threshold := junitRank(failOn)
 	suite := junitSuite{Name: "pgbot"}
@@ -27,6 +29,9 @@ func JUnit(w io.Writer, c *model.Context, failOn string) error {
 		switch {
 		case f.Suppressed:
 			tc.Skipped = &junitSkipped{Message: "suppressed by config: " + f.SuppressionReason}
+		case f.Preexisting:
+			// Not a regression this change introduced: passes, matching the
+			// exit code (inspect.go) and SARIF's exclusion under --fail-on-new.
 		case failOn != "none" && junitRank(f.Severity) >= threshold:
 			text := strings.TrimSpace(f.Detail + "\n" + f.Remediation)
 			if s := safetyText(f); s != "" {

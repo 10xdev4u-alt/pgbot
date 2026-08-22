@@ -35,6 +35,38 @@ func TestExplainPlanTool_refusesNonSelect(t *testing.T) {
 	}
 }
 
+// The diagnose prompt must never re-print the connection string it was given:
+// the rendered prompt lands in agent transcripts and logs, and a postgres://
+// URL carries the password in cleartext.
+func TestDiagnosePrompt_neverEchoesDSN(t *testing.T) {
+	prompts := pgbotPrompts()
+	if len(prompts) != 1 || prompts[0].Name != "diagnose" {
+		t.Fatalf("expected the single diagnose prompt, got %+v", prompts)
+	}
+	dsn := "postgres://appuser:s3cret@db.internal:5432/appdb"
+	msgs, err := prompts[0].Build(context.Background(), map[string]string{"connection_string": dsn})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected one prompt message, got %d", len(msgs))
+	}
+	if strings.Contains(msgs[0].Text, "s3cret") || strings.Contains(msgs[0].Text, dsn) {
+		t.Errorf("the rendered prompt must not contain the DSN or its password:\n%s", msgs[0].Text)
+	}
+	if !strings.Contains(msgs[0].Text, "inspect") {
+		t.Errorf("the prompt must still direct the agent to call inspect:\n%s", msgs[0].Text)
+	}
+	// Without a DSN the prompt still renders and stays DSN-free.
+	msgs, err = prompts[0].Build(context.Background(), map[string]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(msgs[0].Text, "connection_string \"") {
+		t.Errorf("no DSN given, nothing about one should be mentioned:\n%s", msgs[0].Text)
+	}
+}
+
 // Live: explain_plan plans a real SELECT and schema_of returns real metadata.
 func TestIntegration_mcpTools(t *testing.T) {
 	dsn := os.Getenv("PGBOT_TEST_SUPERUSER_DSN")

@@ -134,6 +134,49 @@ func TestJUnit_failOnCritical(t *testing.T) {
 	}
 }
 
+// Under --fail-on-new a Preexisting finding must not fail the test pane: the
+// exit code ignores it, so the pane must agree. It stays visible as a passing
+// testcase (unlike SARIF, which omits it entirely).
+func TestJUnit_preexistingNotAFailure(t *testing.T) {
+	c := sampleContextForFormats()
+	c.Findings[0].Preexisting = true // the critical fsync_off is old news
+	var buf bytes.Buffer
+	if err := JUnit(&buf, c, "critical"); err != nil {
+		t.Fatal(err)
+	}
+	s := buf.String()
+	if !strings.Contains(s, `failures="0"`) {
+		t.Errorf("a preexisting finding must not fail the pane:\n%s", s)
+	}
+	if !strings.Contains(s, `name="fsync_off setting:fsync"`) {
+		t.Errorf("the preexisting finding must stay visible as a testcase:\n%s", s)
+	}
+	if strings.Contains(s, "<failure") {
+		t.Errorf("no <failure> element expected when the only gated finding is preexisting:\n%s", s)
+	}
+}
+
+// A finding that is BOTH suppressed and preexisting must render as <skipped>
+// (suppression stays visible), not fall through to the silent preexisting pass —
+// the switch order in JUnit decides this, and nothing else guards it.
+func TestJUnit_suppressedWinsOverPreexisting(t *testing.T) {
+	c := sampleContextForFormats()
+	c.Findings[0].Preexisting = true
+	c.Findings[0].Suppressed = true
+	c.Findings[0].SuppressionReason = "accepted risk"
+	var buf bytes.Buffer
+	if err := JUnit(&buf, c, "critical"); err != nil {
+		t.Fatal(err)
+	}
+	s := buf.String()
+	if !strings.Contains(s, "suppressed by config: accepted risk") {
+		t.Errorf("suppressed+preexisting must render as <skipped> with the reason:\n%s", s)
+	}
+	if strings.Contains(s, "<failure") {
+		t.Errorf("suppressed+preexisting must never be a <failure>:\n%s", s)
+	}
+}
+
 func TestPrometheus_golden(t *testing.T) {
 	c := sampleContextForFormats()
 	// add a gauge source so a metric line is exercised
@@ -154,6 +197,26 @@ func TestPrometheus_golden(t *testing.T) {
 	}
 	if !strings.Contains(s, "pgbot_cache_hit_ratio{") {
 		t.Error("underlying gauges should be exported")
+	}
+}
+
+// A label value containing a quote or backslash must be escaped exactly once.
+// The old code ran esc() and then %q, double-escaping: a"b came out as a\\\"b,
+// which Prometheus parses as a different (wrong) label value.
+func TestPrometheus_labelEscaping(t *testing.T) {
+	c := sampleContextForFormats()
+	c.Server.Database = `a"b\c`
+	var buf bytes.Buffer
+	if err := Prometheus(&buf, c); err != nil {
+		t.Fatal(err)
+	}
+	s := buf.String()
+	want := `database="a\"b\\c"`
+	if !strings.Contains(s, want) {
+		t.Errorf("label must be single-escaped %s, got:\n%s", want, s)
+	}
+	if strings.Contains(s, `\\\"`) {
+		t.Errorf("double-escaped label value found:\n%s", s)
 	}
 }
 
