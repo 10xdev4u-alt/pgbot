@@ -1747,9 +1747,10 @@ func parsePGDuration(s string) (time.Duration, bool) {
 		return 0, false
 	}
 	neg := false
-	if s[0] == '-' {
+	switch s[0] {
+	case '-':
 		neg, s = true, s[1:]
-	} else if s[0] == '+' {
+	case '+':
 		s = s[1:]
 	}
 	unit := map[string]time.Duration{
